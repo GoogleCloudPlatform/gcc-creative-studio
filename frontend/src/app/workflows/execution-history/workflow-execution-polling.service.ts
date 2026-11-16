@@ -15,7 +15,7 @@
  */
 
 import {Injectable, signal} from '@angular/core';
-import {Observable, timer, of} from 'rxjs';
+import {EMPTY, Observable, timer, of} from 'rxjs';
 import {
   exhaustMap,
   map,
@@ -33,6 +33,7 @@ import {WorkflowService} from '../workflow.service';
 })
 export class WorkflowExecutionPollingService {
   private readonly POLLING_INTERVAL = 3000;
+  private readonly MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
   readonly runs = signal<WorkflowRunSummary[]>([]);
   readonly isPolling = signal<boolean>(false);
@@ -53,6 +54,9 @@ export class WorkflowExecutionPollingService {
    * in-flight request is kept alive and new timer ticks are ignored until the
    * current request completes. Stops polling automatically once all runs reach
    * a terminal or paused state (`completed`, `canceled`, `needs_attention`).
+   * Transient request errors are skipped (the last known runs are kept and
+   * polling continues); polling stops after `MAX_CONSECUTIVE_POLL_FAILURES`
+   * consecutive failures.
    */
   pollRuns(
     workflowId: string,
@@ -60,13 +64,18 @@ export class WorkflowExecutionPollingService {
     status = 'ALL',
   ): Observable<WorkflowRunSummary[]> {
     this.isPolling.set(true);
+    let consecutiveFailures = 0;
     return timer(0, this.POLLING_INTERVAL).pipe(
       exhaustMap(() =>
         this.workflowService.getRuns(workflowId, limit, 0, status).pipe(
           map(response => response?.data ?? response?.runs ?? []),
+          tap(() => (consecutiveFailures = 0)),
           catchError(err => {
             console.error('Error fetching runs in poll:', err);
-            return of([] as WorkflowRunSummary[]);
+            consecutiveFailures++;
+            return consecutiveFailures >= this.MAX_CONSECUTIVE_POLL_FAILURES
+              ? of([] as WorkflowRunSummary[])
+              : EMPTY;
           }),
         ),
       ),

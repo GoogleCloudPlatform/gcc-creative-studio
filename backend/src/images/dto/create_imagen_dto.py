@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import Query
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PositiveInt, field_validator, model_validator
 
 from src.common.media_utils import extract_youtube_video_id
 
@@ -137,6 +137,10 @@ class CreateImagenDto(BaseDto):
     external_url: str | None = Field(
         default=None,
         description="Optional external URL (e.g. YouTube video URL) for Video to Image generation.",
+    )
+    folder_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
     )
 
     @field_validator("external_url")

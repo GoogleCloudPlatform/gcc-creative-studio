@@ -92,7 +92,12 @@ describe('GoogleDriveService', () => {
           }
           build() {
             return {
-              setVisible: () => {
+              // Only showing the picker triggers the user's selection;
+              // hiding it during cleanup must not re-enter the callback.
+              setVisible: (visible: boolean) => {
+                if (!visible) {
+                  return;
+                }
                 this.cb({
                   action: mockPickerAction,
                   docs: mockPickerDocs,

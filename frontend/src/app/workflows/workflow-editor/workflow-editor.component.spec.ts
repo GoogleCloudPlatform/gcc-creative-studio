@@ -20,15 +20,23 @@ import {
   TestBed,
   discardPeriodicTasks,
   fakeAsync,
+  flush,
   tick,
 } from '@angular/core/testing';
-import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
+import {
+  AbstractControl,
+  FormBuilder,
+  FormGroup,
+  ReactiveFormsModule,
+} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatSelectModule} from '@angular/material/select';
 import {MatSnackBar} from '@angular/material/snack-bar';
+import {MatTooltip, MatTooltipModule} from '@angular/material/tooltip';
+import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
@@ -36,10 +44,13 @@ import {MediaResolutionService} from '../shared/media-resolution.service';
 import {collectReferenceEdges} from '../utils/workflow-loop.util';
 import {
   DynamicStepRecord,
+  EditorMode,
   NodeTypes,
+  StepInputUnlinkEvent,
   StepOutputReference,
   StepStatusEnum,
   WorkflowTemplate,
+  WorkflowRunStatusEnum,
 } from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
@@ -48,8 +59,10 @@ import {
   loopLinkedItemsRequiredValidator,
 } from './step-components/step-configs/loop-step.config';
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
-import {EditorMode, WorkflowEditorComponent} from './workflow-editor.component';
+import {WorkflowEditorComponent} from './workflow-editor.component';
 import {WorkflowFormService} from './workflow-form.service';
+import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
+import {FolderService} from '../../common/services/folder.service';
 
 describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   let component: WorkflowEditorComponent;
@@ -136,6 +149,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         MatSelectModule,
         MatInputModule,
         MatMenuModule,
+        MatTooltipModule,
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
@@ -149,6 +163,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         {provide: MatDialog, useValue: dialogMock},
         {provide: MatSnackBar, useValue: snackBarMock},
         {provide: MediaResolutionService, useValue: mediaResolutionMock},
+        {
+          provide: FolderService,
+          useValue: jasmine.createSpyObj<FolderService>('FolderService', [
+            'getFolderTree',
+          ]),
+        },
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -164,6 +184,14 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     expect(component).toBeTruthy();
     expect(component.dragSourcePort).toBeNull();
     expect(component.magneticTargetPort).toBeNull();
+  });
+
+  it('provides the folder tree store at the editor level only', () => {
+    const editorStore = fixture.debugElement.injector.get(
+      WorkflowFolderTreeStore,
+    );
+    expect(editorStore).toBeInstanceOf(WorkflowFolderTreeStore);
+    expect(TestBed.inject(WorkflowFolderTreeStore, null)).toBeNull();
   });
 
   it('should initialize dragSourcePort and candidateMagneticPorts on onPortDragStart', () => {
@@ -368,6 +396,51 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
   });
 
+  it('should keep a canvas-linked user input reference in sync when the parameter is renamed', () => {
+    const definitionId = 'def-city';
+    const originalName = 'City';
+    const renamedName = 'Destination City';
+    formService.addOutputDefinition(originalName, 'text', definitionId);
+
+    const promptControl = fb.control<StepOutputReference | null>(null);
+    const stepTargetForm = fb.group({
+      stepId: ['step_image_node'],
+      type: ['image'],
+      inputs: fb.group({
+        prompt: promptControl,
+        input_images: [null],
+      }),
+    });
+    component.stepsArray.push(stepTargetForm);
+
+    component.dragSourcePort = {
+      stepId: NodeTypes.USER_INPUT,
+      outputName: originalName,
+      type: 'text',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_image_node', inputName: 'prompt'},
+      'step_image_node',
+    );
+
+    expect(promptControl.value).toEqual({
+      step: NodeTypes.USER_INPUT,
+      output: originalName,
+      _definitionId: definitionId,
+    });
+
+    const definitionControl = component.outputDefinitionsArray.controls.find(
+      def => def.get('id')?.value === definitionId,
+    );
+    expect(component.isLoading).toBeFalse();
+    definitionControl?.get('name')?.setValue(renamedName);
+
+    const renamedValue = promptControl.value;
+    expect(renamedValue?.output).toBe(renamedName);
+    expect(renamedValue?._definitionId).toBe(definitionId);
+  });
+
   it('should allow connection from image source to image input in onPortDrop', () => {
     const stepTargetForm = fb.group({
       stepId: ['step_image_node'],
@@ -473,12 +546,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     expect(candidates.find(c => c.portName === 'input_images')).toBeUndefined();
   });
 
-  it('should include enabled video and audio input ports in collectMagneticCandidatePorts', () => {
+  it('should include enabled video input ports and ignore legacy input_audio in collectMagneticCandidatePorts', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
       type: [NodeTypes.GENERATE_VIDEO],
       settings: fb.group({
-        model: ['gemini-experimental-omni'],
+        model: ['gemini-omni-1.2-flash'],
         input_mode: ['Ingredients to Video'],
       }),
       inputs: fb.group({
@@ -507,10 +580,10 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     );
     expect(
       audioCandidates.find(c => c.portName === 'input_audio'),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
-  it('should exclude disabled video/audio input ports in collectMagneticCandidatePorts', () => {
+  it('should exclude disabled video input ports in collectMagneticCandidatePorts', () => {
     const videoControl = fb.control({value: null, disabled: true});
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
@@ -537,10 +610,14 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     ).toBeUndefined();
   });
 
-  it('should allow connection from video source to input_video in onPortDrop', () => {
+  it('should allow up to 3 connections to input_video on Omni 1.2 and reject a 4th in onPortDrop', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
       type: [NodeTypes.GENERATE_VIDEO],
+      settings: fb.group({
+        model: ['gemini-omni-1.2-flash'],
+        input_mode: ['Ingredients to Video'],
+      }),
       inputs: fb.group({
         prompt: [''],
         input_video: [null],
@@ -548,55 +625,65 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
     component.stepsArray.push(videoStepForm);
 
-    component.dragSourcePort = {
-      stepId: 'step_video_source',
-      outputName: 'generated_video',
-      type: 'video',
-    };
-
-    component.onPortDrop(
-      {stepId: 'step_video_node', inputName: 'input_video'},
-      'step_video_node',
-    );
+    for (let i = 1; i <= 4; i++) {
+      component.dragSourcePort = {
+        stepId: `step_video_source_${i}`,
+        outputName: 'generated_video',
+        type: 'video',
+      };
+      component.onPortDrop(
+        {stepId: 'step_video_node', inputName: 'input_video'},
+        'step_video_node',
+      );
+    }
 
     expect(component.dragSourcePort).toBeNull();
     expect(
       videoStepForm.get('inputs')?.get('input_video')?.value as any,
-    ).toEqual({
-      step: 'step_video_source',
-      output: 'generated_video',
-    });
+    ).toEqual([
+      {step: 'step_video_source_1', output: 'generated_video'},
+      {step: 'step_video_source_2', output: 'generated_video'},
+      {step: 'step_video_source_3', output: 'generated_video'},
+    ]);
   });
 
-  it('should allow connection from audio source to input_audio in onPortDrop', () => {
-    const videoStepForm = fb.group({
-      stepId: ['step_video_node'],
-      type: [NodeTypes.GENERATE_VIDEO],
-      inputs: fb.group({
-        prompt: [''],
-        input_audio: [null],
-      }),
+  it('should strip legacy input_audio on GENERATE_VIDEO steps in addStep, getDynamicInputs, and prepareSteps', () => {
+    formService.addStep(NodeTypes.GENERATE_VIDEO, {
+      stepId: 'legacy_video_step',
+      type: NodeTypes.GENERATE_VIDEO,
+      settings: {
+        model: 'gemini-omni-1.2-flash',
+        input_mode: 'Ingredients to Video',
+      },
+      inputs: {
+        prompt: 'hello',
+        input_audio: {step: 'audio_1', output: 'generated_audio'},
+      },
+      outputs: {generated_video: {type: 'video'}},
     });
-    component.stepsArray.push(videoStepForm);
 
-    component.dragSourcePort = {
-      stepId: 'step_audio_source',
-      outputName: 'generated_audio',
-      type: 'audio',
-    };
+    const addedCtrl = component.stepsArray.controls.find(
+      c => c.get('stepId')?.value === 'legacy_video_step',
+    ) as FormGroup;
+    expect(addedCtrl.get('inputs')?.get('input_audio')).toBeNull();
 
-    component.onPortDrop(
-      {stepId: 'step_video_node', inputName: 'input_audio'},
-      'step_video_node',
+    // Even if a legacy control is present on a FormGroup, getDynamicInputs and prepareSteps ignore it
+    (addedCtrl.get('inputs') as FormGroup).addControl(
+      'input_audio',
+      fb.control({step: 'audio_1', output: 'generated_audio'}),
     );
-
-    expect(component.dragSourcePort).toBeNull();
+    const config = component.getStepConfig(NodeTypes.GENERATE_VIDEO);
     expect(
-      videoStepForm.get('inputs')?.get('input_audio')?.value as any,
-    ).toEqual({
-      step: 'step_audio_source',
-      output: 'generated_audio',
-    });
+      component.getDynamicInputs(config, addedCtrl.get('inputs') as FormGroup),
+    ).toEqual([]);
+
+    const prepared = (component as any).prepareSteps(
+      component.workflowForm.getRawValue(),
+    );
+    const preparedVideo = prepared.find(
+      (s: any) => s.stepId === 'legacy_video_step',
+    );
+    expect(preparedVideo.inputs.input_audio).toBeUndefined();
   });
 
   it('should support adding video output definition to user input node and connecting it to video input', () => {
@@ -633,6 +720,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     ).toEqual({
       step: 'user_input',
       output: 'User Video',
+      _definitionId: lastDef.get('id')?.value,
     });
   });
 
@@ -1128,10 +1216,19 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.isRunDisabled).toBeTrue();
       expect(runBtn.disabled).toBeTrue();
 
-      // Set valid name
+      // Set valid name: still disabled while the workflow has never been saved
       component.workflowForm.get('name')?.setValue('My Brand New Workflow');
       fixture.detectChanges();
       expect(component.hasWorkflowName).toBeTrue();
+      expect(component.isUnsavedWorkflow).toBeTrue();
+      expect(component.isRunDisabled).toBeTrue();
+      expect(runBtn.disabled).toBeTrue();
+
+      // Once persisted, Run becomes available
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-saved-1';
+      fixture.detectChanges();
+      expect(component.isUnsavedWorkflow).toBeFalse();
       expect(component.isRunDisabled).toBeFalse();
       expect(runBtn.disabled).toBeFalse();
     });
@@ -1147,6 +1244,79 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(component.saveWorkflow).not.toHaveBeenCalled();
       expect(workflowService.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    describe('Run on unsaved workflows', () => {
+      const runnableTemplate: WorkflowTemplate = {
+        id: 'tpl-run-guard',
+        name: 'Run Guard Template',
+        description: '',
+        steps: [
+          {
+            stepId: 'gen_text',
+            type: NodeTypes.GENERATE_TEXT,
+            inputs: {prompt: 'Prompt'},
+            outputs: {generated_text: {type: 'text'}},
+            settings: {model: 'gemini-3.8-flash', temperature: 0.7},
+          },
+        ],
+      } as unknown as WorkflowTemplate;
+
+      beforeEach(() => {
+        component.onTemplateSelected(runnableTemplate);
+        component.workflowForm.get('name')?.setValue('Unsaved Workflow');
+        fixture.detectChanges();
+      });
+
+      it('should disable Run in Create mode even with steps and a name', () => {
+        expect(component.mode).toBe(EditorMode.Create);
+        expect(component.stepsArray.length).toBeGreaterThan(0);
+        expect(component.hasWorkflowName).toBeTrue();
+        expect(component.isUnsavedWorkflow).toBeTrue();
+        expect(component.isRunDisabled).toBeTrue();
+        const runBtn = fixture.nativeElement.querySelector('#workflow-run-btn');
+        expect(runBtn.disabled).toBeTrue();
+      });
+
+      it('should enable Run in Edit mode once the workflow has an id', () => {
+        component.mode = EditorMode.Edit;
+        component.workflowId = 'wf-existing-1';
+        fixture.detectChanges();
+
+        expect(component.isUnsavedWorkflow).toBeFalse();
+        expect(component.isRunDisabled).toBeFalse();
+        const runBtn = fixture.nativeElement.querySelector('#workflow-run-btn');
+        expect(runBtn.disabled).toBeFalse();
+      });
+
+      it('should not save, create or navigate when run is called on an unsaved workflow', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        const createSpy = workflowService.createWorkflow as jasmine.Spy;
+        createSpy.calls.reset();
+        const navigateSpy = TestBed.inject(Router).navigate as jasmine.Spy;
+        navigateSpy.calls.reset();
+        const saveSpy = spyOn(component, 'saveWorkflow').and.callThrough();
+
+        component.run();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(createSpy).not.toHaveBeenCalled();
+        expect(navigateSpy).not.toHaveBeenCalled();
+      });
+
+      it('should only enable the explanatory tooltip while the workflow is unsaved', () => {
+        const tooltipWrapper = fixture.debugElement.query(
+          By.css('#workflow-run-btn-wrapper'),
+        );
+        const tooltip = tooltipWrapper.injector.get(MatTooltip);
+        expect(tooltip.message).toBe('Save the workflow before running it');
+        expect(tooltip.disabled).toBeFalse();
+
+        component.mode = EditorMode.Edit;
+        component.workflowId = 'wf-existing-2';
+        fixture.detectChanges();
+        expect(tooltip.disabled).toBeTrue();
+      });
     });
 
     it('should open SaveTemplateModalComponent with workflow steps when saveAsNewTemplate succeeds without saving workflow', () => {
@@ -1530,6 +1700,50 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       discardPeriodicTasks();
     }));
 
+    it('should save history immediately when a wire is successfully connected', () => {
+      spyOn(component, 'saveHistoryState');
+      const promptControl = fb.control<StepOutputReference | null>(null);
+      const stepTargetForm = fb.group({
+        stepId: ['step_image_node'],
+        type: ['image'],
+        inputs: fb.group({
+          prompt: promptControl,
+          input_images: [null],
+        }),
+      });
+      component.stepsArray.push(stepTargetForm);
+      component.dragSourcePort = {
+        stepId: 'step_text_node',
+        outputName: 'generated_text',
+        type: 'text',
+      };
+
+      component.onPortDrop(
+        {stepId: 'step_image_node', inputName: 'prompt'},
+        'step_image_node',
+      );
+
+      expect(promptControl.value).toEqual({
+        step: 'step_text_node',
+        output: 'generated_text',
+      });
+      expect(component.saveHistoryState).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not save history when a wire drop is rejected', () => {
+      spyOn(component, 'saveHistoryState');
+      component.dragSourcePort = {
+        stepId: 'step_1',
+        outputName: 'out1',
+        type: 'text',
+      };
+
+      component.onPortDrop({stepId: 'step_1', inputName: 'in1'}, 'step_1');
+
+      expect(component.dragSourcePort).toBeNull();
+      expect(component.saveHistoryState).not.toHaveBeenCalled();
+    });
+
     it('should serialize collapsed state for user_input and generic steps in prepareSteps', () => {
       component.workflowForm.get('userInput.collapsed')?.setValue(true);
 
@@ -1656,6 +1870,147 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(inputPos).toEqual({x: 300, y: 227});
       expect(outputPos).toEqual({x: 700, y: 227});
+    });
+  });
+
+  describe('onUnlinkInput', () => {
+    /** Private editor members the specs need to stub or observe. */
+    interface WorkflowEditorInternals {
+      updateEdges(): void;
+      getPortPosition(
+        stepId: string,
+        portName: string,
+        portType: string,
+      ): {x: number; y: number} | null;
+    }
+
+    const imageStepId = 'image_step_1';
+    const inputName = 'input_images';
+    const refA: StepOutputReference = {
+      step: 'src_a',
+      output: 'generated_image',
+    };
+    const refB: StepOutputReference = {
+      step: 'src_b',
+      output: 'generated_image',
+    };
+    const unlinkEvent: StepInputUnlinkEvent = {
+      stepId: imageStepId,
+      inputName,
+      ref: refA,
+    };
+    let editorInternals: WorkflowEditorInternals;
+
+    /** Looks the control up by step id; undo rebuilds the steps array. */
+    function findInputControl(): AbstractControl | null {
+      const stepForm = component.stepsArray.controls.find(
+        control => control.get('stepId')?.value === imageStepId,
+      );
+      return stepForm?.get(`inputs.${inputName}`) ?? null;
+    }
+
+    beforeEach(() => {
+      editorInternals = component as unknown as WorkflowEditorInternals;
+      spyOn(editorInternals, 'getPortPosition').and.returnValue({x: 5, y: 5});
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: imageStepId,
+        type: NodeTypes.IMAGE,
+        collapsed: false,
+        inputs: {[inputName]: [refA, refB]},
+        outputs: {},
+        settings: {},
+      });
+      editorInternals.updateEdges();
+      component.saveHistoryState();
+    });
+
+    it('removes only the selected reference from the input', () => {
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(findInputControl()?.value).toEqual([refB]);
+    });
+
+    it('marks the input control as dirty', () => {
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(findInputControl()?.dirty).toBeTrue();
+    });
+
+    it('calls updateEdges', () => {
+      const updateEdgesSpy = spyOn(
+        editorInternals,
+        'updateEdges',
+      ).and.callThrough();
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(updateEdgesSpy).toHaveBeenCalled();
+    });
+
+    it('calls saveHistoryState once', () => {
+      const saveHistoryStateSpy = spyOn(
+        component,
+        'saveHistoryState',
+      ).and.callThrough();
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(saveHistoryStateSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops the edge count by 1', () => {
+      const edgeCountBefore = component.edges.length;
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(component.edges.length).toBe(edgeCountBefore - 1);
+    });
+
+    it('restores the reference on undo', fakeAsync(() => {
+      const edgeCountBefore = component.edges.length;
+      component.onUnlinkInput(unlinkEvent);
+
+      component.undo();
+      tick(500);
+
+      expect(findInputControl()?.value).toEqual([refA, refB]);
+      expect(component.edges.length).toBe(edgeCountBefore);
+      discardPeriodicTasks();
+    }));
+
+    it('does nothing in EditorMode.Run (read-only)', () => {
+      component.mode = EditorMode.Run;
+      const updateEdgesSpy = spyOn(editorInternals, 'updateEdges');
+      const saveHistoryStateSpy = spyOn(component, 'saveHistoryState');
+
+      component.onUnlinkInput(unlinkEvent);
+
+      const control = findInputControl();
+      expect(control?.value).toEqual([refA, refB]);
+      expect(control?.dirty).toBeFalse();
+      expect(updateEdgesSpy).not.toHaveBeenCalled();
+      expect(saveHistoryStateSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('step card mode', () => {
+    it('passes the run mode to the step cards', () => {
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: 'image_step_mode',
+        type: NodeTypes.IMAGE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      component.isLoading = false;
+      component.mode = EditorMode.Run;
+      fixture.detectChanges();
+
+      const stepCard = fixture.nativeElement.querySelector(
+        'app-generic-step[data-node-id="image_step_mode"]',
+      ) as (HTMLElement & {mode: EditorMode}) | null;
+      expect(stepCard).not.toBeNull();
+      expect(stepCard?.mode).toBe(EditorMode.Run);
     });
   });
 
@@ -1787,6 +2142,52 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         generated_image: 999,
       });
     });
+
+    it('should keep terminal run status and not push history when polling updates step statuses', fakeAsync(() => {
+      const workflowService = TestBed.inject(WorkflowService);
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-run-terminal';
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'step_text_1',
+        type: NodeTypes.GENERATE_TEXT,
+        status: StepStatusEnum.IDLE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      tick(600);
+
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          id: 'run-terminal',
+          workflow_id: 'wf-run-terminal',
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_states: {
+            step_text_1: {
+              status: 'COMPLETED',
+              attempts: 1,
+              outputs: {generated_text: 'Final text'},
+              last_error: null,
+            },
+          },
+        }),
+      );
+      const historyLengthBeforeUpdate = component.historyStack.length;
+
+      component.onExecutionSelected('run-terminal');
+      tick(600);
+
+      const textStepCtrl = component.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_text_1',
+      );
+      expect(component.currentExecutionState).toBe(
+        WorkflowRunStatusEnum.COMPLETED,
+      );
+      expect(component.historyStack.length).toBe(historyLengthBeforeUpdate);
+      expect(textStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
+      flush();
+      discardPeriodicTasks();
+    }));
 
     describe('Loop workflows', () => {
       function addLoopWorkflow(): void {

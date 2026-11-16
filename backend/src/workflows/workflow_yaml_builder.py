@@ -188,6 +188,10 @@ def _is_loop(step: Any) -> bool:
     return step.type == NodeTypes.LOOP
 
 
+def _is_generate_video(step: Any) -> bool:
+    return step.type == NodeTypes.GENERATE_VIDEO
+
+
 def _dump_model(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump()
@@ -225,6 +229,8 @@ def _step_references(step: Any) -> list[tuple[str, str]]:
     references: list[tuple[str, str]] = []
     for name, value in inputs.items():
         if _is_loop(step) and name == LOOP_ENDING:
+            continue
+        if _is_generate_video(step) and name == "input_audio":
             continue
         references.extend(_iter_references(value))
     return references
@@ -729,6 +735,7 @@ def _call_steps(
         "inputs": {
             name: _resolve_value(value, user_input_ids)
             for name, value in _dump_model(step.inputs).items()
+            if not (_is_generate_video(step) and name == "input_audio")
         },
         "config": _dump_model(step.settings),
     }

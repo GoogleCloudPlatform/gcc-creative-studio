@@ -157,6 +157,33 @@ def test_calls_without_run_id_run_without_a_guard(
     assert kwargs == {"guard": None}
 
 
+@pytest.mark.parametrize(
+    ("config_extra", "expected"),
+    [({}, False), ({"google_search": True}, True)],
+    ids=["missing-key", "enabled"],
+)
+def test_generate_text_forwards_google_search_setting(
+    fake_service, config_extra, expected
+):
+    _, client = _build_client(fake_service)
+    body = {
+        "inputs": {"prompt": "What's the weather in Paris today?"},
+        "config": {
+            "model": "gemini-3-flash-preview",
+            "temperature": 0.2,
+            **config_extra,
+        },
+    }
+
+    response = client.post(
+        f"{PREFIX}/generate_text", json=body, headers={"Authorization": AUTH}
+    )
+
+    assert response.status_code == 200
+    request = fake_service.generate_text.await_args.args[0]
+    assert request.config.google_search is expected
+
+
 @pytest.mark.parametrize(("path", "method", "body"), ROUTES)
 def test_calls_with_run_id_get_a_guard_for_the_user(
     fake_service, path, method, body

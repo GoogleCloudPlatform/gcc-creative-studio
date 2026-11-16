@@ -1102,6 +1102,35 @@ class TestResume:
         }
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("override_workspace_id", [99, "", None])
+    async def test_resume_ignores_workspace_id_override_but_applies_others(
+        self, service, mock_repo, override_workspace_id
+    ):
+        snap = _snapshot_with_two_steps(with_user_input=True)
+        run = _make_run(
+            status=WorkflowRunStatusEnum.NEEDS_ATTENTION,
+            definition_hash=compute_definition_hash(snap["steps"]),
+            workflow_snapshot=snap,
+            workspace_id=42,
+            input_args={"workspace_id": 42, "topic": "dogs"},
+        )
+        mock_repo.lock_run.return_value = run
+
+        resumed = await service.resume(
+            "run-123",
+            user_id=7,
+            args_override={
+                "workspace_id": override_workspace_id,
+                "topic": "otters",
+            },
+            current_workflow_snapshot=snap,
+        )
+
+        resumed_args = resumed.input_args
+        assert resumed_args["workspace_id"] == 42
+        assert resumed_args["topic"] == "otters"
+
+    @pytest.mark.anyio
     async def test_resume_preserves_job_id_only_on_cap_exceeded(
         self, service, mock_repo
     ):

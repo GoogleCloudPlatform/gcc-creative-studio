@@ -104,6 +104,7 @@
             class="history-section-toggle"
             [id]="'step-history-inputs-toggle-' + stepId()"
             [attr.aria-expanded]="isInputsExpanded()"
+            [attr.aria-controls]="inputsControlsId()"
             (click)="toggleInputs()"
           >
             <mat-icon class="history-chevron" [class.open]="isInputsExpanded()"
@@ -112,10 +113,7 @@
             Inputs
           </button>
           @if (isInputsExpanded()) {
-            <div
-              class="history-section-content"
-              [id]="'step-history-inputs-' + stepId()"
-            >
+            <div class="history-section-content" [id]="inputsContentId()">
               @if (hasInputs()) {
                 <app-step-execution-details
                   [stepId]="stepId()"
@@ -139,6 +137,7 @@
             class="history-section-toggle"
             [id]="'step-history-outputs-toggle-' + stepId()"
             [attr.aria-expanded]="isOutputsExpanded()"
+            [attr.aria-controls]="outputsControlsId()"
             (click)="toggleOutputs()"
           >
             <mat-icon
@@ -149,10 +148,7 @@
             Outputs
           </button>
           @if (isOutputsExpanded()) {
-            <div
-              class="history-section-content"
-              [id]="'step-history-outputs-' + stepId()"
-            >
+            <div class="history-section-content" [id]="outputsContentId()">
               @if (hasOutputs()) {
                 <app-step-execution-details
                   [stepId]="stepId()"

@@ -27,8 +27,16 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import {FormBuilder, FormGroup, ValidatorFn, Validators} from '@angular/forms';
+import {
+  AbstractControl,
+  FormBuilder,
+  FormGroup,
+  ValidatorFn,
+  Validators,
+} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
+import {NotificationService} from '../../../../common/services/notification.service';
+import {FloatLabelType} from '@angular/material/form-field';
 import {MatSelectChange} from '@angular/material/select';
 import {Subscription, take} from 'rxjs';
 import {AssetTypeEnum} from '../../../../admin/source-assets-management/source-asset.model';
@@ -41,23 +49,36 @@ import {
   ASPECT_RATIO_LABELS,
   ASPECT_RATIO_SQUARE,
   MODEL_CONFIGS,
-  isGeminiOmniModel,
+  getSupportedModelDurations,
 } from '../../../../common/config/model-config';
-import {
-  FolderSelectionResult,
-  FolderTreeNode,
-} from '../../../../common/models/folder.model';
-import {FolderService} from '../../../../common/services/folder.service';
+import {FolderSelectionResult} from '../../../../common/models/folder.model';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
-import {StepConfig, StepInput, StepOutput, StepSetting} from './step.model';
+import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
+  InputUnlinkState,
+  StepConfig,
+  StepInput,
+  StepOutput,
+  StepSetting,
+  UnlinkMenuItem,
+  UnlinkOption,
+} from './step.model';
+import {
+  AvailableOutput,
   DynamicStepRecord,
+  EditorMode,
   NodeTypes,
   StepEntry,
+  StepInputUnlinkEvent,
+  StepInputValue,
   StepOutputReference,
   StepStatusEnum,
 } from '../../../workflow.models';
-import {isStepOutputReference} from '../../../utils/workflow-step.util';
+import {
+  getLinkedRefs,
+  isSameStepOutput,
+  isStepOutputReference,
+} from '../../../utils/workflow-step.util';
 import {
   getLatestStepInputs,
   getLatestStepOutputs,
@@ -65,8 +86,6 @@ import {
 import {
   LOOP_CURRENT_ITEM_PORT,
   LOOP_ENDING_PORT,
-  LOOP_FOLDER_CHOOSE_VALUE,
-  LOOP_FOLDER_MISSING_TOOLTIP,
   LOOP_FOLDER_SETTING,
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_ITEM_TYPE_MIME_MAP,
@@ -76,17 +95,27 @@ import {
   LOOP_MODE_LINKED_ITEMS,
   LOOP_MODE_SETTING,
   LOOP_MODE_TEXT_INPUT,
-  LoopFolderChooseValue,
   MAX_LOOP_ITEMS,
   getLoopCurrentItemType,
   getLoopLinkedItemsInputType,
-  loopFolderIdValidator,
   loopItemsTextValidator,
   loopLinkedItemsRequiredValidator,
-  toLoopFolderId,
   toLoopItemType,
   toLoopMode,
 } from '../step-configs/loop-step.config';
+import {
+  FOLDER_CHOOSE_VALUE,
+  FOLDER_MISSING_TOOLTIP,
+  FOLDER_PLACEHOLDER_LABEL,
+  FOLDER_ROOT_LABEL,
+  FolderChooseValue,
+  FolderIndex,
+  FolderPreviewMimeType,
+  buildFolderIndex,
+  folderIdValidator,
+  toFolderId,
+} from '../step-configs/folder-setting.util';
+import {getOutputFolderMimeType} from '../step-configs/output-folder-setting';
 import {
   DragSourcePort,
   getMaxAllowedInputs,
@@ -97,15 +126,10 @@ import {
   isPortTypeCompatible,
   PortShortType,
 } from '../../../utils/workflow-magnetic.util';
+import {MatMenuTrigger} from '@angular/material/menu';
 
-/** Name and full path of a Media Gallery folder, indexed by folder id. */
-interface LoopFolderEntry {
-  name: string;
-  path: string;
-}
-
-/** View model of the current-folder option in the Loop folder select. */
-interface LoopFolderOptionView {
+/** View model of the current-folder option in a folder setting select. */
+interface FolderOptionView {
   value: number | null;
   label: string;
   /** Full folder path; empty when unknown. */
@@ -114,8 +138,51 @@ interface LoopFolderOptionView {
   isMissing: boolean;
 }
 
-const FOLDER_PATH_SEPARATOR = ' / ';
-const LOOP_FOLDER_PLACEHOLDER_LABEL = 'No folder selected';
+/**
+ * DOM id/class prefix of the folder control. The Loop keeps its historical
+ * `loop-folder-*` names; media nodes use `output-folder-*`.
+ */
+type FolderDomPrefix = 'loop-folder' | 'output-folder';
+
+type InputUnlinkStates = Record<string, InputUnlinkState>;
+
+/** DOM ids/classes of the folder control (stable for E2E tests). */
+interface FolderDomNames {
+  selectIdPrefix: string;
+  fieldClass: string;
+  rootOptionClass: string;
+  currentOptionClass: string;
+  chooseOptionClass: string;
+  missingIconClass: string;
+}
+
+function buildFolderDomNames(prefix: FolderDomPrefix): FolderDomNames {
+  return {
+    selectIdPrefix: `${prefix}-select-`,
+    fieldClass: `${prefix}-field`,
+    rootOptionClass: `${prefix}-root-option`,
+    currentOptionClass: `${prefix}-current-option`,
+    chooseOptionClass: `${prefix}-choose-option`,
+    missingIconClass: `${prefix}-missing-icon`,
+  };
+}
+
+const LOOP_FOLDER_DOM_NAMES = buildFolderDomNames('loop-folder');
+const OUTPUT_FOLDER_DOM_NAMES = buildFolderDomNames('output-folder');
+const UNLINK_MENU_OPEN_KEYS: ReadonlySet<string> = new Set(['Enter', ' ']);
+
+/** Media kind of a Generate Video reference input. */
+type ReferenceKind = 'image' | 'video';
+
+/** How long the reference trimming notice stays visible. */
+const TRIM_NOTICE_DURATION_MS = 5000;
+
+/** Outcome of trimming one kind of reference to a model's limit. */
+interface TrimmedReferences {
+  removed: number;
+  max: number;
+  kind: ReferenceKind;
+}
 
 @Component({
   selector: 'app-generic-step',
@@ -125,8 +192,8 @@ const LOOP_FOLDER_PLACEHOLDER_LABEL = 'No folder selected';
 export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() stepForm!: FormGroup;
   @Input() stepIndex!: number;
-  @Input() availableOutputs: any[] = [];
-  @Input() mode: 'create' | 'edit' | 'run' = 'create';
+  @Input() availableOutputs: AvailableOutput[] = [];
+  @Input() mode: EditorMode = EditorMode.Create;
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
   @Input() mediaUrlMap!: Map<string, string>;
@@ -136,6 +203,16 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     null;
   @Input() dragSourcePort: DragSourcePort | null = null;
 
+  protected readonly unlinkStateByInput = signal<InputUnlinkStates>({});
+  readonly noUnlinkState: InputUnlinkState = {
+    canUnlink: false,
+    ariaLabel: null,
+    items: [],
+  };
+  readonly trackUnlinkItem = (_i: number, item: UnlinkMenuItem): string =>
+    item.id;
+  /** Unlink chosen in the unlink menu, emitted once the menu has closed. */
+  private pendingUnlink: StepInputUnlinkEvent | null = null;
   private readonly stepExecutionState = signal<StepEntry | null>(null);
   private readonly outputLinkedState = signal<boolean>(false);
   private readonly loopEndingOutputVisibleState = signal<boolean>(false);
@@ -188,8 +265,10 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     mouseEvent: MouseEvent;
   }>();
   @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
+  @Output() unlink = new EventEmitter<StepInputUnlinkEvent>();
 
   StepStatusEnum = StepStatusEnum;
+  EditorMode = EditorMode;
   NodeTypes = NodeTypes;
   readonly maxLoopItems = MAX_LOOP_ITEMS;
 
@@ -230,32 +309,61 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   localConfig!: StepConfig;
   isLoopStep = false;
-  readonly loopFolderSettingName = LOOP_FOLDER_SETTING;
   readonly loopLinkedItemsInputName = LOOP_LINKED_ITEMS_INPUT;
-  readonly loopFolderChooseValue: LoopFolderChooseValue =
-    LOOP_FOLDER_CHOOSE_VALUE;
-  readonly loopFolderMissingTooltip = LOOP_FOLDER_MISSING_TOOLTIP;
+  readonly folderChooseValue: FolderChooseValue = FOLDER_CHOOSE_VALUE;
+  readonly folderMissingTooltip = FOLDER_MISSING_TOOLTIP;
+  /** DOM ids/classes of this node's folder control. */
+  folderDomNames: FolderDomNames = OUTPUT_FOLDER_DOM_NAMES;
+  /**
+   * MatSelect renders a `null` value through its placeholder, so the label is
+   * kept floated when `null` is the visible "All Media (root)" choice.
+   */
+  folderFloatLabel: FloatLabelType = 'auto';
+
+  /** This node's `'folder'` setting (at most one per node), or null. */
+  private folderSetting: StepSetting | null = null;
+  /** True when `null` is the enabled "All Media (root)" choice. */
+  private readonly folderAllowRoot = signal<boolean>(false);
+  /** Workspace whose folder tree resolves the saved folder. */
+  private readonly folderWorkspaceId = signal<number | null>(null);
+  /**
+   * Folders confirmed in the picker by this node. They show at once, before
+   * the refreshed tree lists them, and are cleared when the picker reopens.
+   */
+  private readonly pickedFolders = signal<FolderIndex>(new Map());
+  /** Index of the shared editor tree; null while not loaded. */
+  private readonly storeFolderIndex = computed<FolderIndex | null>(() => {
+    const workspaceId = this.folderWorkspaceId();
+    if (workspaceId === null) return null;
+    const tree = this.folderTreeStore.tree(workspaceId);
+    return tree ? buildFolderIndex(tree) : null;
+  });
 
   /** Folder id → name/path of the workspace tree; null while loading or on error. */
-  readonly loopFolderIndex = signal<ReadonlyMap<
-    number,
-    LoopFolderEntry
-  > | null>(null);
-  /** Saved Loop folder id (never the "Choose folder…" value). */
-  readonly loopFolderId = signal<number | null>(null);
-  /** Current-folder option of the Loop folder select. */
-  readonly loopFolderOption = computed<LoopFolderOptionView>(() => {
-    const id = this.loopFolderId();
+  readonly folderIndex = computed<FolderIndex | null>(() => {
+    const index = this.storeFolderIndex();
+    const picked = this.pickedFolders();
+    if (picked.size === 0) return index;
+    const merged = new Map(index ?? []);
+    picked.forEach((entry, id) => merged.set(id, entry));
+    return merged;
+  });
+  /** Saved folder id (never the "Choose folder…" value). */
+  readonly folderId = signal<number | null>(null);
+  /** Current-folder option of the folder select. */
+  readonly folderOption = computed<FolderOptionView>(() => {
+    const id = this.folderId();
     if (id === null) {
+      const allowRoot = this.folderAllowRoot();
       return {
         value: null,
-        label: LOOP_FOLDER_PLACEHOLDER_LABEL,
+        label: allowRoot ? FOLDER_ROOT_LABEL : FOLDER_PLACEHOLDER_LABEL,
         path: '',
-        isPlaceholder: true,
+        isPlaceholder: !allowRoot,
         isMissing: false,
       };
     }
-    const index = this.loopFolderIndex();
+    const index = this.folderIndex();
     const entry = index?.get(id) ?? null;
     if (entry) {
       return {
@@ -279,31 +387,45 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
    * the mat-option, which makes MatSelect re-match the control value (it does
    * not re-sync when an existing option's value binding changes).
    */
-  readonly loopFolderOptions = computed<ReadonlyArray<LoopFolderOptionView>>(
-    () => [this.loopFolderOption()],
-  );
-  readonly trackLoopFolderOption = (
+  readonly folderOptions = computed<ReadonlyArray<FolderOptionView>>(() => [
+    this.folderOption(),
+  ]);
+  readonly trackFolderOption = (
     _index: number,
-    option: LoopFolderOptionView,
+    option: FolderOptionView,
   ): number | null => option.value;
-  private loopFolderWasPristine = true;
+  readonly folderRootLabel = FOLDER_ROOT_LABEL;
+  /**
+   * Extra "All Media (root)" option shown while a folder is selected, so a
+   * root-allowing setting can always go back to the root (`null`).
+   */
+  readonly showFolderRootOption = computed<boolean>(
+    () => this.folderAllowRoot() && this.folderId() !== null,
+  );
+  private folderWasPristine = true;
 
   private readonly fb = inject(FormBuilder);
-  private readonly folderService = inject(FolderService);
+  private readonly folderTreeStore = inject(WorkflowFolderTreeStore);
   private readonly workspaceStateService = inject(WorkspaceStateService);
   private readonly dialog = inject(MatDialog);
+  private readonly notificationService = inject(NotificationService);
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
   private modeSubscription?: Subscription;
   private inputsSubscription?: Subscription;
   private collapsedSubscription?: Subscription;
   private loopItemTypeSubscription?: Subscription;
-  private loopFolderSubscription?: Subscription;
-  private foldersSubscription?: Subscription;
+  private folderSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
   isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
+  /**
+   * Inputs whose value is currently a single step-output reference (wired).
+   * Used to detect when a wire is removed so the input returns to fixed mode,
+   * without overriding an explicit "Link" mode chosen with no wire yet.
+   */
+  private wiredInputs = new Set<string>();
   compatibleOutputs: {[key: string]: any[]} = {};
   newVariableName = '';
 
@@ -410,18 +532,120 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.isPromptLinkedVariable(inputName)) {
       return 'Prompt is linked - variables inactive';
     }
-    if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
+    if (
+      this.localConfig?.type === NodeTypes.GENERATE_VIDEO &&
+      inputName === 'input_video'
+    ) {
       const currentModel = this.stepForm?.get('settings.model')?.value;
-      if (!isGeminiOmniModel(currentModel)) {
-        if (inputName === 'input_audio') {
-          return 'This model does not support Audio as reference';
-        }
-        if (inputName === 'input_video') {
-          return 'This model does not support Video as reference';
-        }
+      const modelConfig = MODEL_CONFIGS.find(c => c.value === currentModel);
+      if ((modelConfig?.capabilities.maxReferenceVideos ?? 0) === 0) {
+        return 'This model does not support Video as reference';
       }
     }
     return '';
+  }
+
+  private getInputValue(inputName: string): StepInputValue {
+    return this.stepForm?.get('inputs')?.get(inputName)?.value;
+  }
+
+  canUnlink(inputName: string): boolean {
+    if (this.mode === EditorMode.Run || this.isInputDisabled(inputName))
+      return false;
+    return getLinkedRefs(this.getInputValue(inputName)).length > 0;
+  }
+
+  getUnlinkOptions(inputName: string): UnlinkOption[] {
+    const refs = getLinkedRefs(this.getInputValue(inputName));
+    return refs.map(ref => ({
+      ref,
+      label: this.getLinkLabel(ref),
+    }));
+  }
+
+  private getLinkLabel(ref: StepOutputReference): string {
+    return this.availableOutputs.reduce((carry, item) => {
+      const newLabel = isSameStepOutput(item.value, ref)
+        ? item.label.trim()
+        : '';
+      return newLabel === '' ? carry : newLabel;
+    }, `${ref.step}.${ref.output}`);
+  }
+
+  private getStepId(): string {
+    return this.stepForm?.value?.stepId ?? '';
+  }
+
+  private getInputs(): StepInput[] {
+    return this.localConfig?.inputs ?? [];
+  }
+
+  private toUnlinkMenuItem(
+    stepId: string,
+    input: StepInput,
+    option: UnlinkOption,
+  ): UnlinkMenuItem {
+    return {
+      ...option,
+      id: `unlink-option-${stepId}-${input.name}-${option.ref.step}.${option.ref.output}`,
+      text: `Unlink ${option.label}`,
+      ariaLabel: `Unlink ${option.label} from ${input.label}`,
+    };
+  }
+
+  private refreshUnlinkStates(): void {
+    const states: InputUnlinkStates = {};
+    const stepId = this.getStepId();
+    this.getInputs().forEach(input => {
+      const canUnlink = this.canUnlink(input.name);
+      const availableItems = canUnlink ? this.getUnlinkOptions(input.name) : [];
+      const items = availableItems.map(
+        this.toUnlinkMenuItem.bind(this, stepId, input),
+      );
+      const ariaLabel = canUnlink ? `Unlink options for ${input.label}` : null;
+      states[input.name] = {canUnlink, ariaLabel, items};
+    });
+    this.unlinkStateByInput.set(states);
+  }
+
+  private stopPropagationIfUnlinkable(event: Event, inputName: string): void {
+    if (this.canUnlink(inputName)) event.stopPropagation();
+  }
+
+  onInputPortMouseDown(event: MouseEvent, inputName: string): void {
+    this.stopPropagationIfUnlinkable(event, inputName);
+  }
+
+  onInputPortClick(event: MouseEvent, inputName: string): void {
+    this.stopPropagationIfUnlinkable(event, inputName);
+  }
+
+  /**
+   * Stores the chosen link; it is emitted by {@link onUnlinkMenuClosed}.
+   * Emitting right away would unbind the menu (no links left) while the
+   * trigger is still closing, which breaks MatMenuTrigger.
+   */
+  onUnlinkOptionSelected(inputName: string, ref: StepOutputReference): void {
+    this.pendingUnlink = {stepId: this.getStepId(), inputName, ref};
+  }
+
+  /** Emits the pending unlink, if any, once the unlink menu has fully closed. */
+  onUnlinkMenuClosed(): void {
+    const pendingUnlink = this.pendingUnlink;
+    this.pendingUnlink = null;
+    if (pendingUnlink) this.unlink.emit(pendingUnlink);
+  }
+
+  /** A div gets no native click from Enter/Space, so open the menu here. */
+  onInputPortKeydown(
+    event: KeyboardEvent,
+    inputName: string,
+    trigger: MatMenuTrigger,
+  ): void {
+    if (!UNLINK_MENU_OPEN_KEYS.has(event.key) || !this.canUnlink(inputName))
+      return;
+    event.preventDefault();
+    trigger.openMenu();
   }
 
   onInputPortMouseUp(event: MouseEvent, inputName: string): void {
@@ -456,8 +680,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       this.collapsedSubscription.unsubscribe();
     }
     this.loopItemTypeSubscription?.unsubscribe();
-    this.loopFolderSubscription?.unsubscribe();
-    this.foldersSubscription?.unsubscribe();
+    this.folderSubscription?.unsubscribe();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -466,6 +689,9 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     if (changes['availableOutputs']) {
       this.updateCompatibleOutputs();
+    }
+    if (changes['availableOutputs'] || changes['mode']) {
+      this.refreshUnlinkStates();
     }
   }
 
@@ -548,6 +774,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
     }
+    this.wiredInputs = new Set(
+      Object.keys(inputs.controls).filter(key =>
+        isStepOutputReference(inputs.get(key)?.value),
+      ),
+    );
     this.inputsSubscription = inputs.valueChanges.subscribe(value => {
       if (!value) return;
       Object.keys(value).forEach(key => {
@@ -556,7 +787,25 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         if (isLinked && this.inputModes[key] !== 'linked') {
           this.inputModes[key] = 'linked';
         }
+        const wasWired = this.wiredInputs.has(key);
+        if (isLinked) {
+          this.wiredInputs.add(key);
+        } else {
+          this.wiredInputs.delete(key);
+        }
+        if (
+          wasWired &&
+          !isLinked &&
+          !Array.isArray(val) &&
+          !this.isLinkedOnlyInput(key)
+        ) {
+          this.inputModes[key] = 'fixed';
+        }
       });
+      this.refreshUnlinkStates();
+      if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
+        this.syncVideoDurationSetting();
+      }
     });
 
     const settings = this.stepForm.get('settings') as FormGroup;
@@ -584,7 +833,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         }
         this.settingsSubscription = modelControl?.valueChanges.subscribe(
           value => {
-            this.updateDynamicConfig(value);
+            this.updateDynamicConfig(value, true);
           },
         );
 
@@ -600,6 +849,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         }
         this.inputModeSubscription = modeControl?.valueChanges.subscribe(() => {
           this.updateInputVisibility();
+          this.syncVideoDurationSetting();
         });
       }
 
@@ -618,6 +868,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         this.updateImageModeConfig(modeControl?.value);
       }
 
+      this.initializeFolderSetting(settings);
       if (this.isLoopStep) {
         this.initializeLoopStep(settings);
       }
@@ -633,9 +884,17 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
-  private updateDynamicConfig(modelValue: string | null): void {
+  /**
+   * Applies model-dependent settings. `notifyTrimming` is only set for
+   * user-driven model changes so hydrating a saved step stays silent.
+   */
+  private updateDynamicConfig(
+    modelValue: string | null,
+    notifyTrimming = false,
+  ): void {
     if (!modelValue) return;
 
     // Find config in MODEL_CONFIGS
@@ -718,7 +977,18 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
               this.stepForm.get('settings.resolution')?.setValue(firstOption);
             }
           }
+        } else if (
+          this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+          this.stepForm.get('settings.resolution')
+        ) {
+          this.resetVideoResolutionTo1K();
         }
+      } else if (
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+        modelMeta.supportedResolutions.length === 0 &&
+        this.stepForm.get('settings.resolution')
+      ) {
+        this.resetVideoResolutionTo1K();
       }
     }
 
@@ -746,39 +1016,43 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     // 3. Update Duration options
-    const durationSetting = this.localConfig.settings.find(
-      s => s.name === 'duration_seconds',
-    );
-    if (durationSetting) {
-      if (
-        modelMeta.supportedDurations &&
-        modelMeta.supportedDurations.length > 0
-      ) {
-        durationSetting.hidden = false;
-        durationSetting.options = modelMeta.supportedDurations.map(
-          duration => ({
-            value: duration,
-            label: `${duration}s`,
-          }),
-        );
-
-        // Reset value if current value is invalid
-        const currentDuration = this.stepForm.get(
-          'settings.duration_seconds',
-        )?.value;
+    if (this.localConfig.type === NodeTypes.GENERATE_VIDEO) {
+      this.syncVideoDurationSetting();
+    } else {
+      const durationSetting = this.localConfig.settings.find(
+        s => s.name === 'duration_seconds',
+      );
+      if (durationSetting) {
         if (
-          currentDuration &&
-          !modelMeta.supportedDurations.includes(Number(currentDuration))
+          modelMeta.supportedDurations &&
+          modelMeta.supportedDurations.length > 0
         ) {
-          const firstOption = durationSetting.options?.[0]?.value;
-          if (firstOption !== undefined) {
-            this.stepForm
-              .get('settings.duration_seconds')
-              ?.setValue(firstOption);
+          durationSetting.hidden = false;
+          durationSetting.options = modelMeta.supportedDurations.map(
+            duration => ({
+              value: duration,
+              label: `${duration}s`,
+            }),
+          );
+
+          // Reset value if current value is invalid
+          const currentDuration = this.stepForm.get(
+            'settings.duration_seconds',
+          )?.value;
+          if (
+            currentDuration &&
+            !modelMeta.supportedDurations.includes(Number(currentDuration))
+          ) {
+            const firstOption = durationSetting.options?.[0]?.value;
+            if (firstOption !== undefined) {
+              this.stepForm
+                .get('settings.duration_seconds')
+                ?.setValue(firstOption);
+            }
           }
+        } else {
+          durationSetting.hidden = true;
         }
-      } else {
-        durationSetting.hidden = true;
       }
     }
 
@@ -798,16 +1072,170 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       }
     });
 
-    // 4. Update Inputs based on Mode and Max Refs
+    // 5. Update Inputs based on Mode and Max Refs
     const maxRefs = modelMeta.maxReferenceImages; // 0, 1, or more
     this.currentMaxReferenceImages = maxRefs;
 
+    if (
+      this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+      !this.stepForm.disabled
+    ) {
+      const inputs = this.stepForm.get('inputs') as FormGroup | null;
+      const maxImages = modelMeta.maxReferenceImages ?? 0;
+      const maxVideos = modelMeta.maxReferenceVideos ?? 0;
+      const removedImages =
+        this.trimControlToMax(inputs?.get('input_images'), maxImages) +
+        this.trimControlToMax(inputs?.get('reference_images'), maxImages);
+      const removedVideos = this.trimControlToMax(
+        inputs?.get('input_video'),
+        maxVideos,
+      );
+      if (notifyTrimming) {
+        this.notifyTrimmedReferences(
+          modelConfig.viewValue,
+          {removed: removedImages, max: maxImages, kind: 'image'},
+          {removed: removedVideos, max: maxVideos, kind: 'video'},
+        );
+      }
+    }
+
     this.updateInputVisibility();
+  }
+
+  private notifyTrimmedReferences(
+    modelLabel: string,
+    ...trims: TrimmedReferences[]
+  ): void {
+    const messages = trims
+      .filter(trim => trim.removed > 0)
+      .map(trim =>
+        trim.max <= 0
+          ? `Removed the reference ${trim.kind}(s) because ${modelLabel} does not support ${trim.kind} references.`
+          : `Removed ${trim.removed} excess reference ${trim.kind}(s) because ${modelLabel} supports up to ${trim.max}.`,
+      );
+    if (messages.length > 0) {
+      this.notificationService.show(
+        messages.join(' '),
+        'info',
+        undefined,
+        'info',
+        TRIM_NOTICE_DURATION_MS,
+      );
+    }
+  }
+
+  private resetVideoResolutionTo1K(): void {
+    const resolutionControl = this.stepForm.get('settings.resolution');
+    const currentResolution = resolutionControl?.value;
+    if (currentResolution && currentResolution !== '1K') {
+      resolutionControl?.setValue('1K');
+    }
+  }
+
+  private hasStepInputValue(val: unknown): boolean {
+    if (val === null || val === undefined || val === '') {
+      return false;
+    }
+    if (Array.isArray(val)) {
+      return val.length > 0;
+    }
+    if (typeof val === 'object') {
+      return Object.keys(val as Record<string, unknown>).length > 0;
+    }
+    return true;
+  }
+
+  /**
+   * Trims a list input to `maxAllowed` items (clearing it when the limit is 0)
+   * and returns how many items were removed.
+   */
+  private trimControlToMax(
+    control: AbstractControl | null | undefined,
+    maxAllowed: number,
+  ): number {
+    if (!control || control.value === null || control.value === undefined) {
+      return 0;
+    }
+    const value: unknown = control.value;
+    if (maxAllowed <= 0) {
+      control.setValue(null);
+      if (Array.isArray(value)) {
+        return value.length;
+      }
+      return this.hasStepInputValue(value) ? 1 : 0;
+    }
+    if (Array.isArray(value) && value.length > maxAllowed) {
+      control.setValue(value.slice(0, maxAllowed));
+      return value.length - maxAllowed;
+    }
+    return 0;
+  }
+
+  private syncVideoDurationSetting(): void {
+    if (this.localConfig?.type !== NodeTypes.GENERATE_VIDEO) {
+      return;
+    }
+    const durationSetting = this.localConfig.settings.find(
+      s => s.name === 'duration_seconds',
+    );
+    if (!durationSetting) {
+      return;
+    }
+
+    const modelValue = this.stepForm?.get('settings.model')?.value;
+    const modelConfig = MODEL_CONFIGS.find(c => c.value === modelValue);
+    const currentMode =
+      this.stepForm?.get('settings.input_mode')?.value || 'Text to Video';
+    const currentResolution =
+      (this.stepForm?.get('settings.resolution')?.value as
+        | '1K'
+        | '2K'
+        | '4K'
+        | undefined) ?? '1K';
+    const inputs = this.stepForm?.get('inputs') as FormGroup | null;
+    const hasEndFrame = this.hasStepInputValue(inputs?.get('end_frame')?.value);
+    const supportedDurations = getSupportedModelDurations(
+      modelConfig,
+      currentMode,
+      currentResolution,
+      hasEndFrame,
+    );
+
+    if (supportedDurations.length > 0) {
+      durationSetting.hidden = false;
+      durationSetting.options = supportedDurations.map(duration => ({
+        value: duration,
+        label: `${duration}s`,
+      }));
+
+      const durationControl = this.stepForm?.get('settings.duration_seconds');
+      const currentDuration = Number(durationControl?.value);
+      if (
+        durationControl &&
+        !this.stepForm.disabled &&
+        (Number.isNaN(currentDuration) ||
+          !supportedDurations.includes(currentDuration))
+      ) {
+        const maxSupported = supportedDurations[supportedDurations.length - 1];
+        const targetDuration =
+          !Number.isNaN(currentDuration) && currentDuration > maxSupported
+            ? maxSupported
+            : supportedDurations[0];
+        if (durationControl.value !== targetDuration) {
+          durationControl.setValue(targetDuration);
+        }
+      }
+    } else {
+      durationSetting.hidden = true;
+    }
   }
 
   private updateInputVisibility(): void {
     const currentMode = this.stepForm.get('settings.input_mode')?.value;
     const currentModel = this.stepForm.get('settings.model')?.value;
+    const modelConfig = MODEL_CONFIGS.find(c => c.value === currentModel);
+    const supportsVideoRef =
+      (modelConfig?.capabilities.maxReferenceVideos ?? 0) > 0;
     const maxRefs = this.currentMaxReferenceImages;
 
     this.localConfig.inputs.forEach(input => {
@@ -816,13 +1244,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
         (input.name === 'input_images' ||
           input.name === 'reference_images' ||
-          input.name === 'input_video' ||
-          input.name === 'input_audio')
+          input.name === 'input_video')
       ) {
         const showIngredients = currentMode === 'Ingredients to Video';
         const isImageRef =
           input.name === 'input_images' || input.name === 'reference_images';
-        const isAudioRef = input.name === 'input_audio';
         const isVideoRef = input.name === 'input_video';
         const isVisible = isImageRef
           ? showIngredients && maxRefs > 0
@@ -830,7 +1256,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
         if (isVisible) {
           input.hidden = false;
-          if ((isAudioRef || isVideoRef) && !isGeminiOmniModel(currentModel)) {
+          if (isVideoRef && !supportsVideoRef) {
             this.stepForm.get('inputs')?.get(input.name)?.disable();
           } else {
             this.stepForm.get('inputs')?.get(input.name)?.enable();
@@ -840,6 +1266,18 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
               this.inputModes[input.name] = 'mixed';
             }
           }
+        } else {
+          input.hidden = true;
+          this.stepForm.get('inputs')?.get(input.name)?.disable();
+        }
+      } else if (
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+        input.name === 'source_video'
+      ) {
+        if (currentMode === 'Extend Video') {
+          input.hidden = false;
+          this.stepForm.get('inputs')?.get(input.name)?.enable();
+          this.inputModes[input.name] = 'mixed';
         } else {
           input.hidden = true;
           this.stepForm.get('inputs')?.get(input.name)?.disable();
@@ -995,24 +1433,78 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     this.updateCompatibleOutputs();
   }
 
-  private initializeLoopStep(settings: FormGroup): void {
-    const folderControl = settings.get(LOOP_FOLDER_SETTING);
-    this.loopFolderId.set(toLoopFolderId(folderControl?.value));
+  /**
+   * Binds this node's `'folder'` setting (if any) to the folder select state.
+   * The workspace tree is only requested once a folder is actually set (or the
+   * select is opened), through the editor-scoped store.
+   */
+  private initializeFolderSetting(settings: FormGroup): void {
+    this.folderSubscription?.unsubscribe();
+    this.folderSetting =
+      this.localConfig.settings.find(s => s.type === 'folder') ?? null;
+    if (!this.folderSetting) return;
+
+    const folderSetting = this.folderSetting;
+    this.folderDomNames = this.isLoopStep
+      ? LOOP_FOLDER_DOM_NAMES
+      : OUTPUT_FOLDER_DOM_NAMES;
+    this.folderAllowRoot.set(!!folderSetting.allowRoot);
+    this.folderFloatLabel = folderSetting.allowRoot ? 'always' : 'auto';
+    this.syncFolderWorkspace();
+
+    const folderControl = settings.get(folderSetting.name);
+    // The Loop toggles its validators with the source mode.
+    if (folderControl && !this.isLoopStep) {
+      this.applyFolderValidators(folderControl, !!folderSetting.required);
+    }
+    this.setFolderId(folderControl?.value);
     // Follows external updates (history undo/redo, workflow load, reset). The
     // transient "Choose folder…" value is ignored so the revert target is kept.
-    this.loopFolderSubscription?.unsubscribe();
-    this.loopFolderSubscription = folderControl?.valueChanges.subscribe(
-      value => {
-        if (value === LOOP_FOLDER_CHOOSE_VALUE) return;
-        this.loopFolderId.set(toLoopFolderId(value));
-      },
+    this.folderSubscription = folderControl?.valueChanges.subscribe(value => {
+      if (value === FOLDER_CHOOSE_VALUE) return;
+      this.setFolderId(value);
+    });
+  }
+
+  /** Stores the saved folder id and loads the tree when a folder is set. */
+  private setFolderId(value: unknown): void {
+    const folderId = toFolderId(value);
+    this.folderId.set(folderId);
+    if (folderId !== null) {
+      this.ensureFolderTreeLoaded();
+    }
+  }
+
+  private applyFolderValidators(
+    control: AbstractControl,
+    required: boolean,
+  ): void {
+    control.setValidators(
+      required ? [Validators.required, folderIdValidator] : [folderIdValidator],
     );
+    control.updateValueAndValidity({emitEvent: false});
+  }
+
+  /** Follows the active workspace (its tree resolves the saved folder). */
+  private syncFolderWorkspace(): void {
+    this.folderWorkspaceId.set(
+      this.workspaceStateService.getActiveWorkspaceId(),
+    );
+  }
+
+  /** Idempotent: no request when the tree is already loaded or loading. */
+  private ensureFolderTreeLoaded(): void {
+    const workspaceId = this.folderWorkspaceId();
+    if (workspaceId === null) return;
+    this.folderTreeStore.ensureLoaded(workspaceId);
+  }
+
+  private initializeLoopStep(settings: FormGroup): void {
     this.loopItemTypeSubscription?.unsubscribe();
     this.loopItemTypeSubscription = settings
       .get(LOOP_ITEM_TYPE_SETTING)
       ?.valueChanges.subscribe(() => this.updateLoopModeConfig());
     this.updateLoopModeConfig();
-    this.loadLoopFolders();
   }
 
   /**
@@ -1034,6 +1526,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     this.localConfig.settings.forEach(setting => {
       if (setting.name === LOOP_FOLDER_SETTING) {
         setting.hidden = !isFolderMode;
+        setting.required = isFolderMode;
       } else if (setting.name === LOOP_ITEM_TYPE_SETTING) {
         setting.hidden = isTextMode;
       }
@@ -1043,14 +1536,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     const folderControl = settingsGroup?.get(LOOP_FOLDER_SETTING);
     if (folderControl) {
       if (isFolderMode) {
-        folderControl.setValidators([
-          Validators.required,
-          loopFolderIdValidator,
-        ]);
+        this.applyFolderValidators(folderControl, true);
       } else {
         folderControl.clearValidators();
+        folderControl.updateValueAndValidity({emitEvent: false});
       }
-      folderControl.updateValueAndValidity({emitEvent: false});
     }
 
     this.applyLoopSourceInput(LOOP_ITEMS_TEXT_INPUT, isTextMode, [
@@ -1081,6 +1571,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       ?.setValue({type: currentItemType}, {emitEvent: false});
 
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   /**
@@ -1112,75 +1603,60 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     control.updateValueAndValidity({emitEvent: false});
   }
 
-  /** Indexes the active workspace's folders to resolve the saved folder name/path. */
-  private loadLoopFolders(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId === null) return;
-    this.loopFolderIndex.set(null);
-    this.foldersSubscription?.unsubscribe();
-    this.foldersSubscription = this.folderService
-      .getFolderTree(workspaceId)
-      .subscribe({
-        next: tree => {
-          this.loopFolderIndex.set(new Map(this.flattenFolderTree(tree ?? [])));
-        },
-        error: err => {
-          console.error('Failed to load Media Gallery folders', err);
-        },
-      });
+  private getFolderControl(): AbstractControl | null {
+    if (!this.folderSetting) return null;
+    return this.stepForm.get('settings')?.get(this.folderSetting.name) ?? null;
   }
 
-  private flattenFolderTree(
-    nodes: FolderTreeNode[],
-    parentPath = '',
-  ): Array<[number, LoopFolderEntry]> {
-    return nodes.flatMap(node => {
-      const path = parentPath
-        ? `${parentPath}${FOLDER_PATH_SEPARATOR}${node.name}`
-        : node.name;
-      const entry: [number, LoopFolderEntry] = [
-        node.id,
-        {name: node.name, path},
-      ];
-      return [entry, ...this.flattenFolderTree(node.children ?? [], path)];
-    });
+  /** Media previewed by the folder picker for this node. */
+  private getFolderPickerMimeType(): FolderPreviewMimeType {
+    if (!this.isLoopStep) {
+      return getOutputFolderMimeType(this.localConfig.type);
+    }
+    const itemType = toLoopItemType(
+      this.stepForm.get('settings')?.get(LOOP_ITEM_TYPE_SETTING)?.value,
+    );
+    return LOOP_ITEM_TYPE_MIME_MAP[itemType];
   }
 
-  /** Remembers whether the folder control was pristine before the user picks an option. */
-  onLoopFolderOpenedChange(opened: boolean): void {
+  /**
+   * Remembers whether the folder control was pristine before the user picks
+   * an option, and lazily loads the tree to label the options.
+   */
+  onFolderOpenedChange(opened: boolean): void {
     if (!opened) return;
-    const control = this.stepForm.get('settings')?.get(LOOP_FOLDER_SETTING);
-    this.loopFolderWasPristine = control?.pristine ?? true;
+    this.folderWasPristine = this.getFolderControl()?.pristine ?? true;
+    this.syncFolderWorkspace();
+    this.ensureFolderTreeLoaded();
   }
 
   /**
    * "Choose folder…" is an action, not a value: the control is reverted
    * synchronously (so it is never saved) and the folder selector is opened.
    */
-  onLoopFolderSelectionChange(event: MatSelectChange): void {
-    if (event.value !== LOOP_FOLDER_CHOOSE_VALUE) return;
-    const control = this.stepForm.get('settings')?.get(LOOP_FOLDER_SETTING);
+  onFolderSelectionChange(event: MatSelectChange): void {
+    if (event.value !== FOLDER_CHOOSE_VALUE) return;
+    const control = this.getFolderControl();
     if (!control) return;
-    control.setValue(this.loopFolderId());
-    if (this.loopFolderWasPristine) {
+    control.setValue(this.folderId());
+    if (this.folderWasPristine) {
       control.markAsPristine();
     }
-    this.openLoopFolderSelector();
+    this.openFolderSelector();
   }
 
   /** Opens the Media Gallery in folder mode and stores the confirmed folder. */
-  openLoopFolderSelector(): void {
-    const control = this.stepForm.get('settings')?.get(LOOP_FOLDER_SETTING);
+  openFolderSelector(): void {
+    const control = this.getFolderControl();
     if (!control || control.disabled) return;
-    const itemType = toLoopItemType(
-      this.stepForm.get('settings')?.get(LOOP_ITEM_TYPE_SETTING)?.value,
-    );
     const data: ImageSelectorDialogData = {
       selectionTarget: 'folder',
-      initialFolderId: this.loopFolderId(),
-      mimeType: LOOP_ITEM_TYPE_MIME_MAP[itemType],
+      initialFolderId: this.folderId(),
+      mimeType: this.getFolderPickerMimeType(),
       assetType: AssetTypeEnum.GENERIC_IMAGE,
     };
+    // The refreshed tree (requested on close) is the source of truth again.
+    this.pickedFolders.set(new Map());
     this.dialog
       .open<
         ImageSelectorComponent,
@@ -1196,16 +1672,26 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       .afterClosed()
       .pipe(take(1))
       .subscribe(result => {
-        const folderId = toLoopFolderId(result?.folderId);
+        // The picker embeds the Media Gallery, where folders can be created,
+        // renamed, moved or deleted: every node of the workspace must update.
+        this.refreshFolderTree();
+        const folderId = toFolderId(result?.folderId);
         if (!result || folderId === null) return;
-        const index = new Map(this.loopFolderIndex() ?? []);
-        index.set(folderId, {name: result.folderName, path: result.path});
-        this.loopFolderIndex.set(index);
-        this.loopFolderId.set(folderId);
+        this.pickedFolders.set(
+          new Map([[folderId, {name: result.folderName, path: result.path}]]),
+        );
+        this.folderId.set(folderId);
         control.setValue(folderId);
         control.markAsDirty();
         control.markAsTouched();
       });
+  }
+
+  private refreshFolderTree(): void {
+    this.syncFolderWorkspace();
+    const workspaceId = this.folderWorkspaceId();
+    if (workspaceId === null) return;
+    this.folderTreeStore.refresh(workspaceId);
   }
 
   getBaseInputs(): StepInput[] {
@@ -1305,6 +1791,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     this.inputModes[varName] = 'fixed';
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   removeVariable(varName: string): void {
@@ -1323,6 +1810,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     delete this.inputModes[actualName];
     delete this.compatibleOutputs[actualName];
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
@@ -1400,6 +1888,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     });
 
     this.updateCompatibleOutputs();
+  }
+
+  private isLinkedOnlyInput(inputName: string): boolean {
+    return !!this.localConfig?.inputs.find(i => i.name === inputName)
+      ?.linkedOnly;
   }
 
   private initializeInputMode(

@@ -16,9 +16,13 @@
 
 The agent authenticates every Creative Studio call with the
 ``X-User-Authorization`` header, which the auth guard turns into the
-``is_agent_request`` context variable. Generation payloads carry no
-``folder_id``, so this helper is the single place where agent output is
-grouped. The layout is::
+``is_agent_request`` context variable. Generation payloads may carry an
+explicit ``folder_id`` (e.g. the "Output folder" of a workflow node); the
+precedence is resolved by
+:func:`src.folders.output_folder.resolve_output_folder_id`: explicit
+``folder_id`` > agent folder (this helper) > workspace root. When no
+explicit folder is sent, this helper is the single place where agent
+output is grouped. The layout is::
 
     <workspace root>
     └── Izumi Agent/            owned by the workspace owner

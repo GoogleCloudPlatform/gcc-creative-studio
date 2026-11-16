@@ -59,6 +59,7 @@ def _text_step(
     prompt: Any = "Write a story",
     *,
     extra_inputs: dict[str, Any] | None = None,
+    google_search: bool = False,
 ) -> GenerateTextStep:
     inputs_data: dict[str, Any] = {"prompt": prompt}
     if extra_inputs:
@@ -67,7 +68,9 @@ def _text_step(
         step_id=step_id,
         inputs=GenerateTextInputs(**inputs_data),
         settings=GenerateTextSettings(
-            model="gemini-2.5-flash", temperature=0.7
+            model="gemini-2.5-flash",
+            temperature=0.7,
+            google_search=google_search,
         ),
     )
 
@@ -435,6 +438,40 @@ class TestBuildWorkflowYaml:
         ]
         assert prompt_expr == '${step_a_out["weird key"]}'
 
+    @pytest.mark.parametrize("google_search", [True, False])
+    def test_text_step_body_config_carries_google_search(self, google_search):
+        defn = build_workflow_definition(
+            [_text_step("step_a", google_search=google_search)],
+            executor_url=EXECUTOR_URL,
+        )
+        try_steps = _step_map(
+            _step_map(defn["main"]["steps"])["run_steps"]["try"]["steps"]
+        )
+        body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
+        assert body_config == {
+            "model": "gemini-2.5-flash",
+            "temperature": 0.7,
+            "google_search": google_search,
+        }
+
+    @pytest.mark.parametrize("output_folder_id", [42, None])
+    def test_image_step_body_config_carries_output_folder(
+        self, output_folder_id
+    ):
+        image_step = ImageStep(
+            step_id="step_a",
+            inputs=ImageInputs(prompt="A cat"),
+            settings=ImageSettings(output_folder_id=output_folder_id),
+        )
+        defn = build_workflow_definition(
+            [image_step], executor_url=EXECUTOR_URL
+        )
+        try_steps = _step_map(
+            _step_map(defn["main"]["steps"])["run_steps"]["try"]["steps"]
+        )
+        body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
+        assert body_config["output_folder_id"] == output_folder_id
+
     def test_many_steps_split_assignments_into_chunks_of_50(self):
         steps = [_text_step(f"step_{i}") for i in range(55)]
         defn = build_workflow_definition(steps, executor_url=EXECUTOR_URL)
@@ -497,3 +534,44 @@ class TestBuildWorkflowYaml:
                 [_text_step("step_a", prompt=big_prompt)],
                 executor_url=EXECUTOR_URL,
             )
+
+    def test_generate_video_legacy_input_audio_ignored_in_dependencies_and_yaml(
+        self,
+    ):
+        from src.workflows.schema.workflow_model import (
+            GenerateVideoInputs,
+            GenerateVideoSettings,
+            GenerateVideoStep,
+        )
+
+        user_in = _user_input_step("user_in")
+        video_step = GenerateVideoStep(
+            step_id="video_1",
+            inputs=GenerateVideoInputs(
+                prompt="A cinematic shot",
+                input_audio=StepOutputReference(
+                    step="user_in", output="legacy_audio"
+                ),
+                source_video=StepOutputReference(
+                    step="user_in", output="clip_source"
+                ),
+            ),
+            settings=GenerateVideoSettings(
+                model="gemini-omni-1.2-flash",
+                input_mode="Extend Video",
+            ),
+        )
+
+        assert required_args([user_in, video_step]) == [
+            "clip_source",
+            "workspace_id",
+        ]
+        graph = analyze_steps([user_in, video_step])
+        assert graph.dependencies["video_1"] == frozenset({"user_in"})
+
+        yaml_text = build_workflow_yaml(
+            [user_in, video_step], executor_url=EXECUTOR_URL
+        )
+        assert "input_audio" not in yaml_text
+        assert "legacy_audio" not in yaml_text
+        assert "source_video" in yaml_text

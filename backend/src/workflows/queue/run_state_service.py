@@ -736,13 +736,10 @@ class RunStateService:
             cleaned_override = {
                 k: v
                 for k, v in (args_override or {}).items()
-                if k not in RESERVED_ARGS
+                if k not in RESERVED_ARGS and k != "workspace_id"
             }
             effective_args = {**old_args, **cleaned_override}
-            if (
-                run.workspace_id is not None
-                and effective_args.get("workspace_id") is None
-            ):
+            if run.workspace_id is not None:
                 effective_args["workspace_id"] = run.workspace_id
 
             missing = missing_required_args(steps, effective_args)

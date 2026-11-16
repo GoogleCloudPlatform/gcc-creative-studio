@@ -28,7 +28,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'TEXT').map(
 
 export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_TEXT,
-  title: 'Generate Text',
+  title: 'Text',
   icon: 'edit_note',
   inputs: [
     {
@@ -66,6 +66,12 @@ export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
       min: 0,
       max: 1,
       step: 0.1,
+    },
+    {
+      name: 'google_search',
+      label: 'Google search',
+      type: 'checkbox',
+      defaultValue: false,
     },
   ],
   outputs: [

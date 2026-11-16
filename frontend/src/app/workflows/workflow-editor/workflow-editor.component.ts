@@ -48,10 +48,13 @@ import {
 } from '../../utils/handleMessageSnackbar';
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
+  AvailableOutput,
+  EditorMode,
   isNonTerminalRunStatus,
   NodeTypes,
   Point,
   StepEntry,
+  StepInputUnlinkEvent,
   StepInputValue,
   StepOutputReference,
   StepState,
@@ -70,7 +73,11 @@ import {
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
 import {GENERATE_TEXT_STEP_CONFIG} from './step-components/step-configs/generate-text-step.config';
-import {isStepOutputReference, labelToName} from '../utils/workflow-step.util';
+import {
+  isStepOutputReference,
+  labelToName,
+  removeLinkFromInputValue,
+} from '../utils/workflow-step.util';
 import {
   DragSourcePort,
   findClosestMagneticPort,
@@ -106,6 +113,7 @@ import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
 
 import {WorkflowFormService} from './workflow-form.service';
+import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
 import * as d3 from 'd3';
 
 export {Point} from '../workflow.models';
@@ -131,7 +139,7 @@ export type Edge = {
   selector: 'app-workflow-editor',
   templateUrl: './workflow-editor.component.html',
   styleUrls: ['./workflow-editor.component.scss'],
-  providers: [WorkflowFormService],
+  providers: [WorkflowFormService, WorkflowFolderTreeStore],
 })
 export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private platformId = inject(PLATFORM_ID);
@@ -175,9 +183,19 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const name = this.workflowForm?.get('name')?.value;
     return typeof name === 'string' && name.trim().length > 0;
   }
+  /**
+   * True while the workflow has never been persisted (no saved id yet).
+   * Running is blocked in that state because the first save navigates from
+   * `/workflows/new` to `/workflows/edit/:id`, which destroys this editor
+   * instance before the run could be tracked.
+   */
+  get isUnsavedWorkflow(): boolean {
+    return !this.workflowId;
+  }
   get isRunDisabled(): boolean {
     return (
       this.isLoading ||
+      this.isUnsavedWorkflow ||
       !this.stepsArray ||
       this.stepsArray.length === 0 ||
       !this.hasWorkflowName
@@ -232,7 +250,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // availableOutputsPerStep is now an observable, but template expects array.
   // We can subscribe to it or usage async pipe.
   // For minimal template change, we'll subscribe.
-  availableOutputsPerStep: any[][] = [];
+  availableOutputsPerStep: AvailableOutput[][] = [];
   previousOutputDefinitions: any[] = [];
 
   private destroyRef = inject(DestroyRef);
@@ -282,10 +300,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   get activeDragWireColor(): string {
     if (this.dragSourcePort) {
       return this.getTypeColor(
-        this.getOutputType(
-          this.dragSourcePort.stepId,
-          this.dragSourcePort.outputName,
-        ),
+        this.dragSourcePort.type ||
+          this.getOutputType(
+            this.dragSourcePort.stepId,
+            this.dragSourcePort.outputName,
+          ),
       );
     }
     return '#63b3ed';
@@ -884,7 +903,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       label: string;
       type: string;
     }> = [];
-    if (!inputsGroup || !config?.inputs) {
+    if (
+      !inputsGroup ||
+      !config?.inputs ||
+      config.type !== NodeTypes.GENERATE_TEXT
+    ) {
       return dynamicInputs;
     }
 
@@ -1017,9 +1040,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       }
 
       // Connect dragSourcePort to event target
-      const stepForm = this.stepsArray.controls.find(
-        c => c.get('stepId')?.value === targetStepId,
-      ) as FormGroup;
+      const stepForm = this.findStepForm(targetStepId);
       if (stepForm) {
         const inputs = stepForm.get('inputs') as FormGroup;
         if (inputs && inputs.contains(event.inputName)) {
@@ -1029,13 +1050,28 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             step: this.dragSourcePort.stepId,
             output: this.dragSourcePort.outputName,
           };
+          if (this.dragSourcePort.stepId === NodeTypes.USER_INPUT) {
+            const sourceOutputName = this.dragSourcePort.outputName;
+            const definitionControl = this.outputDefinitionsArray.controls.find(
+              def => def.get('name')?.value === sourceOutputName,
+            );
+            const definitionId: string | null =
+              definitionControl?.get('id')?.value ?? null;
+            if (definitionId) {
+              newValue._definitionId = definitionId;
+            }
+          }
 
           const stepType = stepForm.get('type')?.value;
           const config = this.getStepConfig(stepType);
           let inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
-          if (!inputConfig && inputs.contains(event.inputName)) {
+          if (
+            !inputConfig &&
+            stepType === NodeTypes.GENERATE_TEXT &&
+            inputs.contains(event.inputName)
+          ) {
             inputConfig = {
               name: event.inputName,
               label: event.inputName,
@@ -1116,6 +1152,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           }
           control?.markAsDirty();
           this.updateEdges();
+          this.saveHistoryState();
         }
       }
       this.dragSourcePort = null;
@@ -1123,6 +1160,29 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.magneticTargetPort = null;
       this.candidateMagneticPorts = [];
     }
+  }
+
+  onUnlinkInput(event: StepInputUnlinkEvent): void {
+    if (this.isReadOnly) return;
+    const stepForm = this.findStepForm(event.stepId);
+    const control = stepForm?.get('inputs')?.get(event.inputName);
+    if (!control) return;
+    control.setValue(removeLinkFromInputValue(control.value, event.ref));
+    control.markAsDirty();
+    this.updateEdges();
+    this.saveHistoryState();
+  }
+
+  /**
+   * Returns the step form group whose `stepId` matches the given id, or null
+   * when no such step exists.
+   */
+  private findStepForm(stepId: string): FormGroup | null {
+    return (
+      (this.stepsArray.controls.find(c => c.get('stepId')?.value === stepId) as
+        | FormGroup
+        | undefined) ?? null
+    );
   }
 
   private updateEdges(): void {
@@ -1683,11 +1743,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     snackRef?.onAction?.()?.subscribe(() => {
       this.navigateToExecutionHistory();
     });
-    handleErrorSnackbar(
-      this.snackBar,
-      {message: conflictMsg},
-      'Workflow runs in flight',
-    );
   }
 
   saveAsNewTemplate(): void {
@@ -2114,6 +2169,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           }
         });
 
+        if (newStep.type === NodeTypes.GENERATE_VIDEO) {
+          delete newInputs['input_audio'];
+        }
+
         // If generate_text step has a linked/non-fixed prompt, do not save dynamic variables
         if (newStep.type === NodeTypes.GENERATE_TEXT) {
           const promptVal = newInputs['prompt'];
@@ -2366,7 +2425,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
       const rawState = statusByStep.get(stepId);
       if (rawState) {
-        control.patchValue({status: this.mapStepStateToUiStatus(rawState)});
+        control.patchValue(
+          {status: this.mapStepStateToUiStatus(rawState)},
+          {emitEvent: false},
+        );
       }
 
       const stepOutputs = outputsByStep.get(stepId);
@@ -2375,13 +2437,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         if (outputsCtrl instanceof FormGroup) {
           for (const [key, val] of Object.entries(stepOutputs)) {
             if (outputsCtrl.contains(key)) {
-              outputsCtrl.get(key)?.setValue(val);
+              outputsCtrl.get(key)?.setValue(val, {emitEvent: false});
             } else {
-              outputsCtrl.addControl(key, new FormControl(val));
+              outputsCtrl.addControl(key, new FormControl(val), {
+                emitEvent: false,
+              });
             }
           }
         } else {
-          control.patchValue({outputs: stepOutputs});
+          control.patchValue({outputs: stepOutputs}, {emitEvent: false});
         }
       }
     });
@@ -2413,10 +2477,4 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm
 
   // getStepIcon removed, use StepIconPipe in template
-}
-
-export enum EditorMode {
-  Create,
-  Edit,
-  Run,
 }

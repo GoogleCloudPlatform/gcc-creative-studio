@@ -94,3 +94,59 @@ def test_generate_audio_success(
     assert response.json()["id"] == 123
     mock_workspace_auth.authorize.assert_called_once()
     mock_audio_service.start_audio_generation_job.assert_called_once()
+    request_dto = (
+        mock_audio_service.start_audio_generation_job.call_args.kwargs[
+            "request_dto"
+        ]
+    )
+    assert request_dto.folder_id is None
+
+
+AUDIO_PAYLOAD = {
+    "prompt": "Create an epic song",
+    "workspace_id": 1,
+    "model": "lyria-002",
+}
+
+
+@pytest.mark.parametrize("folder_key", ["folderId", "folder_id"])
+def test_generate_audio_accepts_folder_id(
+    client, mock_audio_service, folder_key
+):
+    mock_audio_service.start_audio_generation_job.return_value = (
+        MediaItemResponse(
+            id=124,
+            workspace_id=1,
+            user_id=1,
+            user_email="test@example.com",
+            mime_type=MimeTypeEnum.AUDIO_WAV,
+            status="processing",
+            gcs_uris=[],
+            aspect_ratio="16:9",
+            model="lyria-002",
+        )
+    )
+
+    response = client.post(
+        "/api/audios/generate", json={**AUDIO_PAYLOAD, folder_key: 42}
+    )
+
+    assert response.status_code == 200
+    request_dto = (
+        mock_audio_service.start_audio_generation_job.call_args.kwargs[
+            "request_dto"
+        ]
+    )
+    assert request_dto.folder_id == 42
+
+
+@pytest.mark.parametrize("folder_id", [0, -1, "abc"])
+def test_generate_audio_rejects_invalid_folder_id(
+    client, mock_audio_service, folder_id
+):
+    response = client.post(
+        "/api/audios/generate", json={**AUDIO_PAYLOAD, "folderId": folder_id}
+    )
+
+    assert response.status_code == 422
+    mock_audio_service.start_audio_generation_job.assert_not_called()

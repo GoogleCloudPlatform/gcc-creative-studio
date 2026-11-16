@@ -19,14 +19,14 @@ import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {of} from 'rxjs';
-import {Injector, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
 import {HomeComponent} from './home.component';
 import {SearchService} from '../services/search/search.service';
 import {ImageStateService} from '../services/image-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {NotificationService} from '../common/services/notification.service';
-import {setAppInjector} from '../app-injector';
+import {useTestBedAppInjector} from '../testing/app-injector.testing';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import {MatChipsModule} from '@angular/material/chips';
@@ -130,7 +130,7 @@ describe('HomeComponent', () => {
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
-    setAppInjector(TestBed.inject(Injector));
+    useTestBedAppInjector();
 
     fixture = TestBed.createComponent(HomeComponent);
     component = fixture.componentInstance;
@@ -292,7 +292,7 @@ describe('HomeComponent', () => {
       expect(component.searchRequest.aspectRatio).toBe('1:1');
     });
 
-    it('should fallback to a compatible model (Nano Banana 2) when switching to Video to Image mode from Nano Banana 2 Lite', () => {
+    it('should keep Nano Banana 2 Lite selected when switching to Video to Image mode', () => {
       const nanoBanana2Lite = component.generationModels.find(
         m => m.value === 'gemini-3.1-flash-lite-image',
       )!;
@@ -300,9 +300,30 @@ describe('HomeComponent', () => {
       expect(component.selectedGenerationModel).toBe('Nano Banana 2 Lite');
 
       component.onModeChanged('Video to Image');
-      expect(component.selectedGenerationModel).toBe('Nano Banana 2');
+      expect(component.selectedGenerationModel).toBe('Nano Banana 2 Lite');
       expect(component.selectedGenerationModelObject?.value).toBe(
-        'gemini-3.1-flash-image',
+        'gemini-3.1-flash-lite-image',
+      );
+    });
+
+    it('should fallback to a video-capable model when switching to Video to Image mode from a model without video reference support', () => {
+      const firstVideoCapableModel = component.generationModels.find(
+        m => m.capabilities.supportsVideoReference,
+      )!;
+      const nanoBanana2Lite = component.generationModels.find(
+        m => m.value === 'gemini-3.1-flash-lite-image',
+      )!;
+      component.selectedGenerationModelObject = {
+        ...nanoBanana2Lite,
+        capabilities: {
+          ...nanoBanana2Lite.capabilities,
+          supportsVideoReference: false,
+        },
+      };
+
+      component.onModeChanged('Video to Image');
+      expect(component.selectedGenerationModelObject?.value).toBe(
+        firstVideoCapableModel.value,
       );
     });
   });

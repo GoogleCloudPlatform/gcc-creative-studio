@@ -39,6 +39,7 @@ from src.galleries.repository.unified_gallery_repository import (
 from src.users.user_model import UserModel
 from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import (
+    GenerateTextSettings,
     ReferenceMediaOrAsset,
 )
 from src.workflows.workflow_constants import (
@@ -730,11 +731,24 @@ class WorkflowsExecutorService:
             request.inputs, IMAGE_MODE_ALLOWED_INPUTS.get(mode, ["prompt"])
         )
 
+    @staticmethod
+    def _text_tools(config: GenerateTextSettings) -> list[types.Tool] | None:
+        """Gemini tools for a text step: Google Search grounding when opted in.
+
+        Strict ``is True`` so a missing or non-boolean flag never enables it.
+        """
+        if config.google_search is True:
+            return [types.Tool(google_search=types.GoogleSearch())]
+        return None
+
     async def _generate_text(
         self,
         request: GenerateTextRequest,
         authorization: str | None = None,
     ) -> StepOutputs:
+        # If structured output (response_schema) is ever added here, check the
+        # model supports combining it with the google_search tool first.
+        tools = self._text_tools(request.config)
         generate_content_config = types.GenerateContentConfig(
             temperature=request.config.temperature,
             top_p=0.95,
@@ -757,6 +771,7 @@ class WorkflowsExecutorService:
                     threshold=types.HarmBlockThreshold.OFF,
                 ),
             ],
+            tools=tools,
         )
 
         contents = []
@@ -828,6 +843,18 @@ class WorkflowsExecutorService:
             )
         return text
 
+    @staticmethod
+    def _add_output_folder(
+        body: dict[str, Any], output_folder_id: int | None
+    ) -> None:
+        """Adds the node's output folder to a JSON generation body.
+
+        The key is omitted for the root folder (``None``), so root runs send
+        exactly the same body as before the setting existed.
+        """
+        if output_folder_id is not None:
+            body["folder_id"] = output_folder_id
+
     async def _generate_image(
         self,
         workspace_id: int,
@@ -838,6 +865,7 @@ class WorkflowsExecutorService:
         resolution: str | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Generate image execution")
 
@@ -852,6 +880,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "resolution": resolution,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -873,6 +902,7 @@ class WorkflowsExecutorService:
         resolution: str | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Edit image execution")
 
@@ -891,6 +921,7 @@ class WorkflowsExecutorService:
             "source_asset_ids": asset_ids,
             "resolution": resolution,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -907,12 +938,15 @@ class WorkflowsExecutorService:
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
     ):
+        raw_step_inputs = self._json_inputs(request.inputs)
+        if isinstance(raw_step_inputs, dict):
+            raw_step_inputs.pop("input_audio", None)
         return await self._run_step(
             guard,
             functools.partial(
                 self._generate_video, request, authorization, guard
             ),
-            step_inputs=self._json_inputs(request.inputs),
+            step_inputs=raw_step_inputs,
         )
 
     async def _generate_video(
@@ -925,71 +959,204 @@ class WorkflowsExecutorService:
 
         url = self.backend_url + "/api/videos/generate-videos"
 
-        # 1. Process main reference images
-        media_items, asset_ids = self._normalize_asset_inputs(
-            request.inputs.input_images,
-            default_role=AssetRoleEnum.IMAGE_REFERENCE_ASSET,
-        )
-
-        reference_images = []
-        for aid in asset_ids:
-            reference_images.append(
-                {"asset_id": aid, "reference_type": "ASSET"}
-            )
-
-        # 2. Process Start Frame
-        start_media, start_assets = self._normalize_asset_inputs(
-            request.inputs.start_frame,
-            default_role=AssetRoleEnum.START_FRAME,
-        )
-        media_items.extend(start_media)
-        start_image_asset_id = start_assets[0] if start_assets else None
-
-        # 3. Process End Frame
-        end_media, end_assets = self._normalize_asset_inputs(
-            request.inputs.end_frame,
-            default_role=AssetRoleEnum.END_FRAME,
-        )
-        media_items.extend(end_media)
-        end_image_asset_id = end_assets[0] if end_assets else None
-
-        # 4. Process Reference Video & Audio (Only for models that support them)
-        # config.model is a plain str; unknown values support no refs.
         try:
             video_model = GenerationModelEnum(request.config.model)
         except ValueError:
             video_model = None
-        supports_audio_video_refs = bool(
-            video_model and video_model.is_gemini_omni_model
+
+        resolution = (
+            "1K"
+            if video_model and video_model.is_gemini_omni_model
+            else request.config.resolution
         )
 
-        reference_video = (
-            self._map_to_asset_reference(request.inputs.input_video)
-            if supports_audio_video_refs
+        mapped_source_video = self._map_to_asset_reference(
+            getattr(request.inputs, "source_video", None)
+        )
+        start_media, start_assets = self._normalize_asset_inputs(
+            request.inputs.start_frame,
+            default_role=AssetRoleEnum.START_FRAME,
+        )
+        end_media, end_assets = self._normalize_asset_inputs(
+            request.inputs.end_frame,
+            default_role=AssetRoleEnum.END_FRAME,
+        )
+
+        raw_mode = getattr(request.config, "input_mode", None)
+        configured_mode = (
+            raw_mode.strip()
+            if isinstance(raw_mode, str) and raw_mode.strip()
             else None
         )
-        reference_audio = (
-            self._map_to_asset_reference(request.inputs.input_audio)
-            if supports_audio_video_refs
-            else None
+        valid_modes = {
+            "Text to Video",
+            "Frames to Video",
+            "Ingredients to Video",
+            "Extend Video",
+        }
+        if configured_mode in valid_modes:
+            effective_mode = configured_mode
+        elif mapped_source_video is not None:
+            effective_mode = "Extend Video"
+        elif start_media or start_assets or end_media or end_assets:
+            effective_mode = "Frames to Video"
+        else:
+            effective_mode = "Ingredients to Video"
+
+        media_items: list[dict[str, Any]] = []
+        reference_images: list[dict[str, Any]] = []
+        start_image_asset_id = None
+        end_image_asset_id = None
+        reference_videos = None
+        source_video_asset_id = None
+
+        if effective_mode == "Ingredients to Video":
+            ref_media, asset_ids = self._normalize_asset_inputs(
+                request.inputs.input_images,
+                default_role=AssetRoleEnum.IMAGE_REFERENCE_ASSET,
+            )
+            dedup_media: list[dict[str, Any]] = []
+            seen_image_keys: set[tuple[str, int, int]] = set()
+            for item in ref_media:
+                key = (
+                    "media_item",
+                    item["media_item_id"],
+                    item.get("media_index") or 0,
+                )
+                if key not in seen_image_keys:
+                    seen_image_keys.add(key)
+                    dedup_media.append(item)
+
+            dedup_assets: list[int] = []
+            for aid in asset_ids:
+                key = ("source_asset", aid, 0)
+                if key not in seen_image_keys:
+                    seen_image_keys.add(key)
+                    dedup_assets.append(aid)
+
+            max_images = (
+                video_model.max_reference_images
+                if video_model is not None
+                else 3
+            )
+            total_unique_images = len(dedup_media) + len(dedup_assets)
+            if total_unique_images > max_images:
+                dropped_images = total_unique_images - max_images
+                logger.warning(
+                    "Trimmed %d excess reference image(s) to model limit %d for %s",
+                    dropped_images,
+                    max_images,
+                    request.config.model,
+                )
+            kept_media = dedup_media[:max_images]
+            remaining_slots = max(0, max_images - len(kept_media))
+            kept_assets = dedup_assets[:remaining_slots]
+
+            media_items.extend(kept_media)
+            for aid in kept_assets:
+                reference_images.append(
+                    {"asset_id": aid, "reference_type": "ASSET"}
+                )
+
+            max_videos = (
+                video_model.max_reference_videos
+                if video_model is not None
+                else 0
+            )
+            if max_videos > 0:
+                reference_videos = self._map_to_asset_references(
+                    request.inputs.input_video,
+                    max_items=max_videos,
+                    model_name=request.config.model,
+                )
+            elif (
+                self._map_to_asset_references(
+                    request.inputs.input_video, max_items=1
+                )
+                is not None
+            ):
+                logger.warning(
+                    "Skipping reference video input(s) because model %s does not support video references.",
+                    request.config.model,
+                )
+        elif effective_mode == "Frames to Video":
+            media_items.extend(start_media)
+            media_items.extend(end_media)
+            start_image_asset_id = start_assets[0] if start_assets else None
+            end_image_asset_id = end_assets[0] if end_assets else None
+        elif effective_mode == "Extend Video":
+            source_video_asset_id = mapped_source_video
+
+        if effective_mode == "Extend Video":
+            if source_video_asset_id is None:
+                raise invalid_input_error(
+                    "Source video is required for Extend Video mode."
+                )
+        elif not (
+            isinstance(request.inputs.prompt, str)
+            and request.inputs.prompt.strip()
+        ):
+            raise invalid_input_error(
+                "Prompt is required for video generation."
+            )
+
+        has_any_refs = bool(
+            configured_mode == "Ingredients to Video"
+            or reference_images
+            or reference_videos
+            or (effective_mode == "Ingredients to Video" and media_items)
         )
+        has_source_vid = source_video_asset_id is not None
+        has_end_frm = bool(
+            end_image_asset_id is not None
+            or (effective_mode == "Frames to Video" and end_media)
+        )
+
+        duration_seconds = request.config.duration_seconds
+        if (
+            video_model is not None
+            and isinstance(duration_seconds, int)
+            and not isinstance(duration_seconds, bool)
+        ):
+            max_duration = video_model.max_video_duration(
+                has_any_references=has_any_refs,
+                has_source_video=has_source_vid,
+                has_end_frame=has_end_frm,
+            )
+            if duration_seconds > max_duration:
+                logger.info(
+                    "Clamping workflow video duration from %ds to %ds for model %s (%s)",
+                    duration_seconds,
+                    max_duration,
+                    video_model.value,
+                    effective_mode,
+                )
+                duration_seconds = max_duration
+            elif video_model.is_gemini_omni_model and duration_seconds < 3:
+                logger.info(
+                    "Clamping workflow video duration from %ds up to 3s for model %s",
+                    duration_seconds,
+                    video_model.value,
+                )
+                duration_seconds = 3
 
         body = {
             "prompt": request.inputs.prompt,
             "workspace_id": request.workspace_id,
             "generation_model": request.config.model,
             "aspect_ratio": request.config.aspect_ratio or "16:9",
-            "resolution": request.config.resolution,
+            "resolution": resolution,
             "use_brand_guidelines": request.config.brand_guidelines,
             "reference_images": reference_images,
             "source_media_items": media_items,
             "start_image_asset_id": start_image_asset_id,
             "end_image_asset_id": end_image_asset_id,
-            "reference_video": reference_video,
-            "reference_audio": reference_audio,
+            "reference_videos": reference_videos,
+            "source_video_asset_id": source_video_asset_id,
             "number_of_media": 1,
-            "duration_seconds": request.config.duration_seconds,
+            "duration_seconds": duration_seconds,
         }
+        self._add_output_folder(body, request.config.output_folder_id)
 
         # Creates the job and polls it for completion.
         video_id = await self._submit_job(
@@ -1001,6 +1168,50 @@ class WorkflowsExecutorService:
         )
 
         return {"generated_video": video_id}
+
+    def _map_to_asset_references(
+        self,
+        input_data: Any,
+        max_items: int = 3,
+        model_name: str | None = None,
+    ) -> list[dict] | None:
+        if not input_data or max_items <= 0:
+            return None
+
+        raw_list = input_data if isinstance(input_data, list) else [input_data]
+
+        def flatten(items: list[Any]):
+            for entry in items:
+                if isinstance(entry, list):
+                    yield from flatten(entry)
+                elif entry is not None:
+                    yield entry
+
+        unique_refs: list[dict] = []
+        seen_keys: set[tuple[str, int, int]] = set()
+        for item in flatten(raw_list):
+            mapped = self._map_to_asset_reference(item)
+            if mapped is not None:
+                key = (
+                    mapped["type"],
+                    mapped["id"],
+                    mapped.get("index") or 0,
+                )
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    unique_refs.append(mapped)
+
+        if len(unique_refs) > max_items:
+            dropped = len(unique_refs) - max_items
+            logger.warning(
+                "Trimmed %d excess reference video(s) to model limit %d for %s",
+                dropped,
+                max_items,
+                model_name or "unknown",
+            )
+            unique_refs = unique_refs[:max_items]
+
+        return unique_refs or None
 
     def _map_to_asset_reference(
         self,
@@ -1120,6 +1331,7 @@ class WorkflowsExecutorService:
         shoes_image: Any = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Virtual Try On execution")
 
@@ -1145,6 +1357,7 @@ class WorkflowsExecutorService:
             "dress_image": dress_link,
             "shoe_image": shoes_link,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -1187,6 +1400,7 @@ class WorkflowsExecutorService:
             "language_code": request.config.language_code,
             "negative_prompt": request.config.negative_prompt,
             "seed": request.config.seed,
+            "folder_id": request.config.output_folder_id,
         }
 
         # Filter None values to let DTO defaults take over if needed
@@ -1212,6 +1426,7 @@ class WorkflowsExecutorService:
         image_preservation_factor: float | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Upscale image execution")
         media_items, asset_ids = self._normalize_asset_inputs(input_image)
@@ -1239,6 +1454,8 @@ class WorkflowsExecutorService:
             data["enhance_input_image"] = str(enhance_input_image).lower()
         if image_preservation_factor is not None:
             data["image_preservation_factor"] = str(image_preservation_factor)
+        if output_folder_id is not None:
+            data["folderId"] = str(output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -1271,6 +1488,7 @@ class WorkflowsExecutorService:
     ) -> StepOutputs:
         logger.info("Execute unified image step, mode: %s", request.config.mode)
         mode = request.config.mode or "generate_image"
+        output_folder_id = request.config.output_folder_id
 
         if mode == "generate_image":
             if not request.inputs.prompt:
@@ -1289,6 +1507,7 @@ class WorkflowsExecutorService:
                 resolution=request.config.resolution or "1K",
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1311,6 +1530,7 @@ class WorkflowsExecutorService:
                 resolution=request.config.resolution or "1K",
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1327,6 +1547,7 @@ class WorkflowsExecutorService:
                 image_preservation_factor=request.config.image_preservation_factor,
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1344,6 +1565,7 @@ class WorkflowsExecutorService:
                 shoes_image=request.inputs.shoes_image,
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 

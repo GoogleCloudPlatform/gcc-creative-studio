@@ -33,6 +33,7 @@ import {
   nameToLabel,
 } from '../utils/workflow-step.util';
 import {
+  AvailableOutput,
   DynamicStepRecord,
   LoopItemType,
   LoopMode,
@@ -165,9 +166,16 @@ export class WorkflowFormService {
     const stepData = existingData || this.generateDefaultStepData(type);
 
     // Ensure inputs/outputs/settings are objects
+    const rawInputs = {...(stepData.inputs || {})};
+    if (
+      stepData.type === NodeTypes.GENERATE_VIDEO &&
+      'input_audio' in rawInputs
+    ) {
+      delete rawInputs['input_audio'];
+    }
     const safeStepData = {
       ...stepData,
-      inputs: stepData.inputs || {},
+      inputs: rawInputs,
       outputs: stepData.outputs || {},
       settings: stepData.settings || {},
     };
@@ -540,7 +548,7 @@ export class WorkflowFormService {
     const availableOutputsPerStep = steps.map((_, currentStepIndex) => {
       // Allow connecting to any node except itself to avoid immediate self-loops
       const otherSteps = steps.filter((_, idx) => idx !== currentStepIndex);
-      const availableOutputs: any[] = [...userInputOutputs];
+      const availableOutputs: AvailableOutput[] = [...userInputOutputs];
 
       otherSteps.forEach(stepControl => {
         const step = stepControl.value;
@@ -958,6 +966,7 @@ export class WorkflowFormService {
         aspect_ratio: '1:1',
         resolution: '1K',
         brand_guidelines: false,
+        output_folder_id: null,
       };
     } else if (type === NodeTypes.LOOP) {
       base.settings = {...DEFAULT_LOOP_SETTINGS};

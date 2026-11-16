@@ -281,10 +281,15 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
 
     const currentWorkflow = this.workflow();
     if (!currentWorkflow) {
-      this.workflowService.getWorkflowById(id).subscribe(wf => {
-        const workflowModel = wf as WorkflowModel;
-        this.workflow.set(workflowModel);
-        this.openBatchDialog(workflowModel);
+      this.workflowService.getWorkflowById(id).subscribe({
+        next: wf => {
+          const workflowModel = wf as WorkflowModel;
+          this.workflow.set(workflowModel);
+          this.openBatchDialog(workflowModel);
+        },
+        error: err => {
+          handleErrorSnackbar(this.snackBar, err, 'Load workflow');
+        },
       });
     } else {
       this.openBatchDialog(currentWorkflow);

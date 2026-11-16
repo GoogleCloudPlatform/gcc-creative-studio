@@ -14,8 +14,14 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA} from '@angular/core';
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {NO_ERRORS_SCHEMA, SimpleChange} from '@angular/core';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  flush,
+} from '@angular/core/testing';
+import {NotificationService} from '../../../../common/services/notification.service';
 import {
   AbstractControl,
   FormBuilder,
@@ -26,26 +32,39 @@ import {
   Validators,
 } from '@angular/forms';
 import {By} from '@angular/platform-browser';
+import {OverlayContainer} from '@angular/cdk/overlay';
 import {MatCheckboxModule} from '@angular/material/checkbox';
 import {MatDialog, MatDialogRef} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatIconModule} from '@angular/material/icon';
 import {MatInputModule} from '@angular/material/input';
+import {MatMenuModule, MatMenuTrigger} from '@angular/material/menu';
 import {MatRadioModule} from '@angular/material/radio';
 import {MatSelect, MatSelectModule} from '@angular/material/select';
 import {MatSliderModule} from '@angular/material/slider';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {GENERATE_TEXT_STEP_CONFIG} from '../step-configs/generate-text-step.config';
+import {GENERATE_AUDIO_STEP_CONFIG} from '../step-configs/generate-audio-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from '../step-configs/generate-video-step.config';
-import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
-import {LoopItemType, NodeTypes} from '../../../workflow.models';
-import {StepInput} from './step.model';
+import {
+  IMAGE_MODE_OPTIONS,
+  IMAGE_STEP_CONFIG,
+} from '../step-configs/image-step.config';
+import {
+  EditorMode,
+  LoopItemType,
+  NodeTypes,
+  StepInputUnlinkEvent,
+  StepOutputReference,
+} from '../../../workflow.models';
+import {StepConfig, StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {GenericStepComponent} from './generic-step.component';
 import {NEVER, Subject, of, throwError} from 'rxjs';
 import {FolderService} from '../../../../common/services/folder.service';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
+import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
   FolderSelectionResult,
   FolderTreeNode,
@@ -91,11 +110,13 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         MatRadioModule,
         MatSliderModule,
         MatIconModule,
+        MatMenuModule,
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
       providers: [
         FormBuilder,
+        WorkflowFolderTreeStore,
         {provide: MatDialog, useValue: dialogSpy},
         {
           provide: FolderService,
@@ -574,7 +595,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
   });
 
-  describe('Video Node Ingredients Mode Reference Ports', () => {
+  describe('Video Node Ingredients & Extend Mode Ports', () => {
     let videoStepForm: FormGroup;
 
     beforeEach(() => {
@@ -586,7 +607,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           prompt: ['A dramatic movie scene'],
           input_images: [null],
           input_video: [null],
-          input_audio: [null],
+          source_video: [null],
           start_frame: [null],
           end_frame: [null],
         }),
@@ -607,10 +628,100 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       component.ngOnInit();
     });
 
-    it('should hide and disable input_video and input_audio when input_mode is Text to Video', () => {
+    describe('reference trimming notices on model change', () => {
+      let showSpy: jasmine.Spy;
+
+      beforeEach(() => {
+        videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+        showSpy = spyOn(TestBed.inject(NotificationService), 'show');
+      });
+
+      it('should notify once when switching to a model without video reference support', () => {
+        videoStepForm
+          .get('inputs.input_video')
+          ?.setValue({step: 'v1', output: 'generated_video'});
+
+        videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+
+        expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed the reference video(s) because Veo 3.1 does not support video references.',
+        );
+      });
+
+      it('should notify about excess reference images trimmed to the new model limit', () => {
+        videoStepForm.get('inputs.input_images')?.setValue(
+          Array.from({length: 6}, (_, i) => ({
+            step: `img_${i}`,
+            output: 'generated_image',
+          })),
+        );
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(5);
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed 1 excess reference image(s) because Gemini Omni 1.1 Flash supports up to 5.',
+        );
+      });
+
+      it('should not notify when nothing is trimmed on model change', () => {
+        videoStepForm.get('inputs.input_images')?.setValue([
+          {step: 'img_0', output: 'generated_image'},
+          {step: 'img_1', output: 'generated_image'},
+        ]);
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(showSpy).not.toHaveBeenCalled();
+      });
+
+      it('should not notify when trimming a saved step during initial load', () => {
+        const savedStepForm = fb.group({
+          stepId: ['video_step_saved'],
+          type: [NodeTypes.GENERATE_VIDEO],
+          status: ['idle'],
+          inputs: fb.group({
+            prompt: ['A saved scene'],
+            input_images: [
+              Array.from({length: 6}, (_, i) => ({
+                step: `img_${i}`,
+                output: 'generated_image',
+              })),
+            ],
+            input_video: [{step: 'v1', output: 'generated_video'}],
+          }),
+          settings: fb.group({
+            model: ['veo-3.1-generate-001'],
+            input_mode: ['Ingredients to Video'],
+            duration_seconds: [8],
+          }),
+          outputs: fb.group({
+            generated_video: [{type: 'video'}],
+          }),
+        });
+
+        component.stepForm = savedStepForm;
+        component.ngOnInit();
+
+        expect(savedStepForm.get('inputs.input_images')?.value?.length).toBe(3);
+        expect(showSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    it('should hide and disable input_video, input_images, and source_video in Text to Video and never expose input_audio', () => {
       fixture.detectChanges();
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
+      );
+      const sourceVideo = component.localConfig.inputs.find(
+        i => i.name === 'source_video',
       );
       const inputAudio = component.localConfig.inputs.find(
         i => i.name === 'input_audio',
@@ -619,11 +730,12 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         i => i.name === 'input_images',
       );
 
+      expect(inputAudio).toBeUndefined();
       expect(inputVideo?.hidden).toBeTrue();
-      expect(inputAudio?.hidden).toBeTrue();
+      expect(sourceVideo?.hidden).toBeTrue();
       expect(inputImages?.hidden).toBeTrue();
       expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.source_video')?.disabled).toBeTrue();
       expect(videoStepForm.get('inputs.input_images')?.disabled).toBeTrue();
 
       expect(
@@ -636,11 +748,14 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
       ).toBeNull();
       expect(
+        fixture.nativeElement.querySelector('[data-port-name="source_video"]'),
+      ).toBeNull();
+      expect(
         fixture.nativeElement.querySelector('[data-port-name="input_images"]'),
       ).toBeNull();
     });
 
-    it('should show input_audio and input_video as disabled with message when video model is not Gemini Omni in Ingredients to Video mode', () => {
+    it('should show input_video as disabled with message when video model does not support video references in Ingredients to Video mode', () => {
       // Model is 'veo-3.1-generate-001'
       videoStepForm
         .get('settings.input_mode')
@@ -650,23 +765,16 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputImages = component.localConfig.inputs.find(
         i => i.name === 'input_images',
       );
 
       expect(inputVideo?.hidden).toBeFalse();
-      expect(inputAudio?.hidden).toBeFalse();
       expect(inputImages?.hidden).toBeFalse();
       expect(videoStepForm.get('inputs.input_images')?.enabled).toBeTrue();
 
       expect(
         component.getBaseInputs().find(i => i.name === 'input_video')?.hidden,
-      ).toBeFalse();
-      expect(
-        component.getBaseInputs().find(i => i.name === 'input_audio')?.hidden,
       ).toBeFalse();
       expect(
         component.getBaseInputs().find(i => i.name === 'input_images')?.hidden,
@@ -676,7 +784,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
-      ).not.toBeNull();
+      ).toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_images"]'),
       ).not.toBeNull();
@@ -686,21 +794,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.getInputDisabledMessage('input_video')).toBe(
         'This model does not support Video as reference',
       );
-
-      // input_audio should be disabled and show message
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
-      expect(component.getInputDisabledMessage('input_audio')).toBe(
-        'This model does not support Audio as reference',
-      );
-
-      // Dragging to disabled input_audio should not be compatible
-      component.dragSourcePort = {
-        stepId: 'other_step',
-        outputName: 'generated_audio',
-        type: 'audio',
-      };
-      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeFalse();
-      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeTrue();
 
       // Dragging to disabled input_video should not be compatible
       component.dragSourcePort = {
@@ -712,18 +805,13 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeTrue();
     });
 
-    it('should show and enable input_audio and input_video when model is Gemini Omni in Ingredients to Video mode', () => {
-      videoStepForm
-        .get('settings.model')
-        ?.setValue('gemini-omni-1.1-flash-preview');
+    it('should show and enable input_video when model is Gemini Omni 1.1 or 1.2 in Ingredients to Video mode', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
       fixture.detectChanges();
 
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
@@ -732,27 +820,14 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(videoStepForm.get('inputs.input_video')?.enabled).toBeTrue();
       expect(component.getInputDisabledMessage('input_video')).toBe('');
       expect(component.inputModes['input_video']).toBe('mixed');
-
-      expect(inputAudio?.hidden).toBeFalse();
-      expect(videoStepForm.get('inputs.input_audio')?.enabled).toBeTrue();
-      expect(component.getInputDisabledMessage('input_audio')).toBe('');
-      expect(component.inputModes['input_audio']).toBe('mixed');
+      expect(component.getMaxMediaItems(inputVideo!)).toBe(3);
 
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_video"]'),
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
-      ).not.toBeNull();
-
-      // Dragging to enabled input_audio should be compatible
-      component.dragSourcePort = {
-        stepId: 'other_step',
-        outputName: 'generated_audio',
-        type: 'audio',
-      };
-      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeTrue();
-      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeFalse();
+      ).toBeNull();
 
       // Dragging to enabled input_video should be compatible
       component.dragSourcePort = {
@@ -762,6 +837,91 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       };
       expect(component.isCompatibleWithActiveDrag(inputVideo!)).toBeTrue();
       expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeFalse();
+    });
+
+    it('should enable source_video in Extend Video mode across Omni 1.1, Omni 1.2, and Veo 3.1', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm.get('settings.input_mode')?.setValue('Extend Video');
+      fixture.detectChanges();
+
+      const sourceVideo = component.localConfig.inputs.find(
+        i => i.name === 'source_video',
+      );
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+
+      expect(sourceVideo?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.source_video')?.enabled).toBeTrue();
+      expect(component.inputModes['source_video']).toBe('mixed');
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(
+        fixture.nativeElement.querySelector('[data-port-name="source_video"]'),
+      ).not.toBeNull();
+    });
+
+    it('should clamp duration_seconds on Omni 1.2 mode/frame changes and trim inputs when switching models', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm.get('settings.input_mode')?.setValue('Text to Video');
+      videoStepForm.get('settings.duration_seconds')?.setValue(15);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(15);
+
+      // Switching to Ingredients to Video clamps 15s -> 10s
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(10);
+
+      // Frames to Video with only start_frame allows 15s; adding end_frame (even alone) clamps 15s -> 10s
+      videoStepForm.get('settings.input_mode')?.setValue('Frames to Video');
+      videoStepForm
+        .get('inputs.start_frame')
+        ?.setValue({step: 'f1', output: 'generated_image'});
+      videoStepForm.get('inputs.end_frame')?.setValue(null);
+      videoStepForm.get('settings.duration_seconds')?.setValue(15);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(15);
+      videoStepForm.get('inputs.start_frame')?.setValue(null);
+      videoStepForm
+        .get('inputs.end_frame')
+        ?.setValue({step: 'f2', output: 'generated_image'});
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(10);
+
+      // Return to Ingredients to Video to test model-switch input trimming
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+
+      // Populate 8 images and 2 videos on Omni 1.2, then switch to Omni 1.1 (5 images, 3 videos) -> Veo 3.1 (3 images, 0 videos)
+      videoStepForm.get('inputs.input_images')?.setValue(
+        Array.from({length: 8}, (_, i) => ({
+          step: `img_${i}`,
+          output: 'generated_image',
+        })),
+      );
+      videoStepForm.get('inputs.input_video')?.setValue([
+        {step: 'v1', output: 'generated_video'},
+        {step: 'v2', output: 'generated_video'},
+      ]);
+
+      videoStepForm
+        .get('settings.model')
+        ?.setValue('gemini-omni-1.1-flash-preview');
+      expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(5);
+      expect(videoStepForm.get('inputs.input_video')?.value.length).toBe(2);
+
+      videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+      expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(3);
+      expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(8);
+
+      // Also verify single-object input_video is cleared when switching to Veo 3.1
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm
+        .get('inputs.input_video')
+        ?.setValue({step: 'v_single', output: 'generated_video'});
+      videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+      expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
     });
 
     it('should hide and disable ingredient ports when switching to Frames to Video', () => {
@@ -781,9 +941,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputImages = component.localConfig.inputs.find(
         i => i.name === 'input_images',
       );
@@ -795,10 +952,8 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       );
 
       expect(inputVideo?.hidden).toBeTrue();
-      expect(inputAudio?.hidden).toBeTrue();
       expect(inputImages?.hidden).toBeTrue();
       expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
 
       expect(startFrame?.hidden).toBeFalse();
       expect(endFrame?.hidden).toBeFalse();
@@ -819,9 +974,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_video"]'),
-      ).toBeNull();
-      expect(
-        fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
       ).toBeNull();
     });
 
@@ -845,10 +997,10 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
-      // input_audio is disabled on non-Omni model
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      // input_video is disabled on non-Omni model
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
 
-      component.onInputPortMouseUp(mockEvent, 'input_audio');
+      component.onInputPortMouseUp(mockEvent, 'input_video');
 
       expect(mockEvent.stopPropagation).toHaveBeenCalled();
       expect(component.portDrop.emit).not.toHaveBeenCalled();
@@ -860,8 +1012,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
-      // input_audio is disabled on non-Omni model
-      expect(component.isInputDisabled('input_audio')).toBeTrue();
+      // input_video is disabled on non-Omni model
       expect(component.isInputDisabled('input_video')).toBeTrue();
       expect(component.isInputDisabled('input_images')).toBeFalse();
     });
@@ -971,6 +1122,35 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       const inputsGroup = textStepForm.get('inputs') as FormGroup;
       expect(inputsGroup.contains('custom_var')).toBeTrue();
+    });
+
+    it('should refresh unlink states directly when adding a variable without form events', () => {
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.addControl('silent_var', fb.control(null), {
+        emitEvent: false,
+      });
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.addVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refresh unlink states directly when removing a variable without form events', () => {
+      component.addVariable('silent_var');
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.removeControl('silent_var', {emitEvent: false});
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.removeVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should prevent variable creation when variable name matches a real base port', () => {
@@ -1107,6 +1287,42 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.isInputDisabled('custom_var')).toBeFalse();
     });
 
+    describe('unlinking a wired prompt', () => {
+      const promptRef = {step: 'upstream_step', output: 'generated_text'};
+      const varRef = {step: 'upstream_step', output: 'other_text'};
+
+      it('disables variables while wired and re-enables them once the wire is removed', () => {
+        component.addVariable('custom_var');
+        const promptControl = textStepForm.get('inputs.prompt');
+        const varControl = textStepForm.get('inputs.custom_var');
+
+        promptControl?.setValue(promptRef);
+        varControl?.setValue(varRef);
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+        expect(component.getInputDisabledMessage('custom_var')).toBe(
+          'Prompt is linked - variables inactive',
+        );
+        expect(component.canUnlink('custom_var')).toBeFalse();
+
+        // The editor clears the control when the last link is removed.
+        promptControl?.setValue(null);
+        expect(component.inputModes['prompt']).toBe('fixed');
+        expect(component.isInputDisabled('custom_var')).toBeFalse();
+        expect(component.getInputDisabledMessage('custom_var')).toBe('');
+        expect(component.canUnlink('custom_var')).toBeTrue();
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('keeps an explicitly chosen link mode when no wire was connected', () => {
+        component.addVariable('custom_var');
+        component.toggleInputMode('prompt', 'linked');
+        textStepForm.get('inputs.custom_var')?.setValue('value');
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+      });
+    });
+
     it('should append variable placeholder to prompt when appendToPrompt() is called', () => {
       textStepForm.get('inputs.prompt')?.setValue('Generate a landscape with');
       component.addVariable('weather');
@@ -1214,6 +1430,142 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(component.inputModes['var_fixed']).toBe('fixed');
         expect(component.inputModes['var_linked']).toBe('linked');
       });
+    });
+  });
+
+  describe('Generate Text Google search setting', () => {
+    const GOOGLE_SEARCH_LABEL = 'Google search';
+
+    let fb: FormBuilder;
+
+    const buildTextStepForm = (googleSearch: boolean | null): FormGroup => {
+      const settings: FormGroup = fb.group({
+        model: ['gemini-3.8-flash'],
+        temperature: [0.7],
+      });
+      if (googleSearch !== null) {
+        settings.addControl('google_search', fb.control(googleSearch));
+      }
+      return fb.group({
+        stepId: ['text_step_search'],
+        type: [NodeTypes.GENERATE_TEXT],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['What is the weather today?'],
+          input_images: [null],
+          input_videos: [null],
+        }),
+        settings,
+        outputs: fb.group({
+          generated_text: [{type: 'text'}],
+        }),
+      });
+    };
+
+    const mountStep = (
+      stepForm: FormGroup,
+    ): ComponentFixture<GenericStepComponent> => {
+      const stepFixture = TestBed.createComponent(GenericStepComponent);
+      const stepComponent = stepFixture.componentInstance;
+      stepComponent.stepForm = stepForm;
+      stepComponent.config = GENERATE_TEXT_STEP_CONFIG;
+      stepComponent.stepIndex = 0;
+      stepFixture.detectChanges();
+      return stepFixture;
+    };
+
+    const findGoogleSearchCheckbox = (
+      stepFixture: ComponentFixture<GenericStepComponent>,
+    ): HTMLElement | null => {
+      const checkbox = stepFixture.debugElement
+        .queryAll(By.css('mat-checkbox'))
+        .find(
+          el =>
+            (el.nativeElement as HTMLElement).textContent?.trim() ===
+            GOOGLE_SEARCH_LABEL,
+        );
+      return checkbox ? (checkbox.nativeElement as HTMLElement) : null;
+    };
+
+    const findNativeInput = (checkbox: HTMLElement | null): HTMLInputElement =>
+      checkbox?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    beforeEach(() => {
+      fb = TestBed.inject(FormBuilder);
+    });
+
+    it('declares google_search as an unchecked checkbox after temperature', () => {
+      const settingNames = GENERATE_TEXT_STEP_CONFIG.settings.map(s => s.name);
+      const googleSearchSetting = GENERATE_TEXT_STEP_CONFIG.settings.find(
+        s => s.name === 'google_search',
+      );
+
+      expect(settingNames).toEqual(['model', 'temperature', 'google_search']);
+      expect(googleSearchSetting?.type).toBe('checkbox');
+      expect(googleSearchSetting?.label).toBe(GOOGLE_SEARCH_LABEL);
+      expect(googleSearchSetting?.defaultValue).toBeFalse();
+    });
+
+    it('renders an unchecked "Google search" checkbox for a new step', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const checkbox = findGoogleSearchCheckbox(stepFixture);
+
+      expect(checkbox).not.toBeNull();
+      expect(findNativeInput(checkbox).checked).toBeFalse();
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+    });
+
+    it('adds google_search as false to a legacy step without the key', () => {
+      const stepForm = buildTextStepForm(null);
+      const settings = stepForm.get('settings') as FormGroup;
+      expect(settings.contains('google_search')).toBeFalse();
+
+      const stepFixture = mountStep(stepForm);
+
+      expect(settings.contains('google_search')).toBeTrue();
+      expect(settings.get('google_search')?.value).toBeFalse();
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeFalse();
+    });
+
+    it('does not mark a legacy step or its parent form dirty when backfilling google_search', () => {
+      const stepForm = buildTextStepForm(null);
+      const parentForm = fb.group({steps: fb.array([stepForm])});
+      parentForm.markAsPristine();
+
+      mountStep(stepForm);
+
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+      expect(stepForm.pristine).toBeTrue();
+      expect(parentForm.pristine).toBeTrue();
+    });
+
+    it('renders a persisted true value as checked', () => {
+      const stepFixture = mountStep(buildTextStepForm(true));
+
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeTrue();
+    });
+
+    it('updates settings.google_search when the checkbox is clicked', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const nativeInput = findNativeInput(
+        findGoogleSearchCheckbox(stepFixture),
+      );
+      const googleSearchControl = stepForm.get('settings.google_search');
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeTrue();
+      expect(stepForm.value.settings.google_search).toBeTrue();
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeFalse();
     });
   });
 
@@ -1417,11 +1769,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
     it('indexes workspace folders to resolve the saved folder name and path', () => {
       initLoopStep('folder', 'image', 8);
-      expect(component.loopFolderIndex()?.get(7)).toEqual({
+      expect(component.folderIndex()?.get(7)).toEqual({
         name: 'Campaign',
         path: 'Campaign',
       });
-      expect(component.loopFolderOption()).toEqual({
+      expect(component.folderOption()).toEqual({
         value: 8,
         label: 'Shots',
         path: 'Campaign / Shots',
@@ -1691,7 +2043,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(currentOption.value).toBeNull();
         expect(currentOption.disabled).toBeTrue();
         expect(currentOption.viewValue).toBe('No folder selected');
-        expect(component.loopFolderOption().isPlaceholder).toBeTrue();
+        expect(component.folderOption().isPlaceholder).toBeTrue();
       });
 
       it('shows the resolved folder name with its full path as title', () => {
@@ -1708,13 +2060,13 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('flags a saved folder missing from the tree with a warning icon', () => {
         initLoopStep('folder', 'image', 42);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #42');
         expect(option.isMissing).toBeTrue();
         expect(folderControl().value).toBe(42);
         expect(folderControl().valid).toBeTrue();
         expect(query('.loop-folder-missing-icon')).not.toBeNull();
-        expect(component.loopFolderMissingTooltip).toBe(
+        expect(component.folderMissingTooltip).toBe(
           LOOP_FOLDER_MISSING_TOOLTIP,
         );
       });
@@ -1722,7 +2074,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       it('shows the folder id without a warning while the tree is loading', () => {
         folderServiceSpy.getFolderTree.and.returnValue(NEVER);
         initLoopStep('folder', 'image', 2);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #2');
         expect(option.isMissing).toBeFalse();
         expect(query('.loop-folder-missing-icon')).toBeNull();
@@ -1734,7 +2086,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           throwError(() => new Error('boom')),
         );
         initLoopStep('folder', 'image', 2);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #2');
         expect(option.isMissing).toBeFalse();
       });
@@ -1776,10 +2128,10 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('restores pristine when the control was pristine before choosing', () => {
         initLoopStep('folder', 'image', 2);
-        component.onLoopFolderOpenedChange(true);
+        component.onFolderOpenedChange(true);
         folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
         folderControl().markAsDirty();
-        component.onLoopFolderSelectionChange({
+        component.onFolderSelectionChange({
           source: getFolderSelect(),
           value: LOOP_FOLDER_CHOOSE_VALUE,
         });
@@ -1789,11 +2141,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('ignores regular option selections', () => {
         initLoopStep('folder', 'image', 2);
-        component.onLoopFolderSelectionChange({
+        component.onFolderSelectionChange({
           source: getFolderSelect(),
           value: 2,
         });
-        component.onLoopFolderOpenedChange(false);
+        component.onFolderOpenedChange(false);
         expect(dialogSpy.open).not.toHaveBeenCalled();
         expect(folderControl().value).toBe(2);
       });
@@ -1826,7 +2178,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       (['image', 'video', 'audio'] as LoopItemType[]).forEach(itemType => {
         it(`previews ${itemType} items in the folder dialog`, () => {
           initLoopStep('folder', itemType);
-          component.openLoopFolderSelector();
+          component.openFolderSelector();
           expect(lastDialogData().mimeType).toBe(
             LOOP_ITEM_TYPE_MIME_MAP[itemType],
           );
@@ -1836,7 +2188,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('stores the confirmed folder and shows its name and path', async () => {
         initLoopStep('folder');
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(SUMMER_RESULT);
         await renderSelection();
 
@@ -1844,7 +2196,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(control.value).toBe(2);
         expect(control.dirty).toBeTrue();
         expect(control.touched).toBeTrue();
-        expect(component.loopFolderId()).toBe(2);
+        expect(component.folderId()).toBe(2);
         const select = getFolderSelect();
         const currentOption = select.options.first;
         expect(currentOption.viewValue).toBe('Summer');
@@ -1860,7 +2212,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         await renderSelection();
         expect(selectTriggerText()).toBe('Summer');
 
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(NEW_FOLDER_RESULT);
         await renderSelection();
 
@@ -1869,24 +2221,24 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('shows a newly created folder that is not in the loaded tree', () => {
         initLoopStep('folder', 'image', 2);
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(NEW_FOLDER_RESULT);
         fixture.detectChanges();
 
         expect(folderControl().value).toBe(99);
-        expect(component.loopFolderOption()).toEqual({
+        expect(component.folderOption()).toEqual({
           value: 99,
           label: 'Fresh Shoot',
           path: 'Archive / Fresh Shoot',
           isPlaceholder: false,
           isMissing: false,
         });
-        expect(component.loopFolderIndex()?.get(2)?.name).toBe('Summer');
+        expect(component.folderIndex()?.get(2)?.name).toBe('Summer');
       });
 
       it('ignores an invalid dialog result', () => {
         initLoopStep('folder', 'image', 2);
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next({...SUMMER_RESULT, folderId: 0});
         expect(folderControl().value).toBe(2);
         expect(folderControl().pristine).toBeTrue();
@@ -1895,7 +2247,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       it('does not open the dialog when the form is read-only', () => {
         const loopForm = initLoopStep('folder', 'image', 2);
         loopForm.disable();
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         expect(dialogSpy.open).not.toHaveBeenCalled();
       });
 
@@ -1923,7 +2275,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         loopForm.patchValue({settings: {folder_id: 4}});
         await renderSelection();
 
-        expect(component.loopFolderId()).toBe(4);
+        expect(component.folderId()).toBe(4);
         const select = getFolderSelect();
         const currentOption = select.options.first;
         expect(currentOption.value).toBe(4);
@@ -1933,23 +2285,310 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
         loopForm.reset();
         fixture.detectChanges();
-        expect(component.loopFolderId()).toBeNull();
-        expect(component.loopFolderOption().isPlaceholder).toBeTrue();
+        expect(component.folderId()).toBeNull();
+        expect(component.folderOption().isPlaceholder).toBeTrue();
       });
 
       it('keeps the current folder when the choose value is emitted', () => {
         initLoopStep('folder', 'image', 2);
         folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
-        expect(component.loopFolderId()).toBe(2);
-        expect(component.loopFolderOption().label).toBe('Summer');
+        expect(component.folderId()).toBe(2);
+        expect(component.folderOption().label).toBe('Summer');
       });
 
       it('stops following folder_id changes once destroyed', () => {
         const loopForm = initLoopStep('folder', 'image', 2);
         component.ngOnDestroy();
         loopForm.patchValue({settings: {folder_id: 4}});
-        expect(component.loopFolderId()).toBe(2);
+        expect(component.folderId()).toBe(2);
       });
+    });
+  });
+
+  describe('Output folder setting', () => {
+    const OUTPUT_TREE: FolderTreeNode[] = [
+      {
+        id: 1,
+        name: 'Campaign',
+        children: [{id: 2, name: 'Q4', children: []}],
+      },
+    ];
+    const RENAMED_TREE: FolderTreeNode[] = [
+      {
+        id: 1,
+        name: 'Campaign',
+        children: [{id: 2, name: 'Q4 Final', children: []}],
+      },
+    ];
+    const Q4_RESULT: FolderSelectionResult = {
+      folderId: 2,
+      folderName: 'Q4',
+      path: 'Campaign / Q4',
+    };
+
+    interface MountedStep {
+      fixture: ComponentFixture<GenericStepComponent>;
+      component: GenericStepComponent;
+      form: FormGroup;
+    }
+
+    let folderServiceSpy: jasmine.SpyObj<FolderService>;
+    let store: WorkflowFolderTreeStore;
+    let afterClosed$: Subject<FolderSelectionResult | null | undefined>;
+
+    beforeEach(() => {
+      folderServiceSpy = TestBed.inject(
+        FolderService,
+      ) as jasmine.SpyObj<FolderService>;
+      folderServiceSpy.getFolderTree.calls.reset();
+      folderServiceSpy.getFolderTree.and.returnValue(of(OUTPUT_TREE));
+      store = TestBed.inject(WorkflowFolderTreeStore);
+      (dialogSpy.open as jasmine.Spy).and.callFake(() => {
+        afterClosed$ = new Subject();
+        const ref = {
+          afterClosed: () => afterClosed$.asObservable(),
+        } as unknown as FolderDialogRef;
+        return ref;
+      });
+    });
+
+    /** Binds a media node form to a component, as the editor does. */
+    function mountMediaStep(
+      config: StepConfig,
+      stepId: string,
+      folderId: number | null,
+      target: ComponentFixture<GenericStepComponent> = fixture,
+    ): MountedStep {
+      const form = fb.group({
+        stepId: [stepId],
+        type: [config.type],
+        status: ['idle'],
+        collapsed: [false],
+        inputs: fb.group({}),
+        settings: fb.group({output_folder_id: [folderId]}),
+        outputs: fb.group({}),
+      });
+      const targetComponent = target.componentInstance;
+      targetComponent.stepForm = form;
+      targetComponent.config = config;
+      targetComponent.ngOnChanges({
+        stepForm: {
+          currentValue: form,
+          previousValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+      target.detectChanges();
+      return {fixture: target, component: targetComponent, form};
+    }
+
+    const querySelect = (
+      target: ComponentFixture<GenericStepComponent>,
+      stepId: string,
+    ): MatSelect | null =>
+      target.debugElement
+        .query(By.css(`#output-folder-select-${stepId}`))
+        ?.injector.get(MatSelect) ?? null;
+
+    it('renders on the Image node in every mode', () => {
+      IMAGE_MODE_OPTIONS.forEach(({value}) => {
+        component.stepForm.get('settings.mode')?.setValue(value);
+        fixture.detectChanges();
+        expect(querySelect(fixture, 'image_step_1'))
+          .withContext(value)
+          .not.toBeNull();
+      });
+    });
+
+    it('renders on the Generate Video and Generate Audio nodes', () => {
+      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
+      expect(querySelect(fixture, 'video_1')).not.toBeNull();
+
+      mountMediaStep(GENERATE_AUDIO_STEP_CONFIG, 'audio_1', null);
+      expect(querySelect(fixture, 'audio_1')).not.toBeNull();
+    });
+
+    it('defaults to an enabled "All Media (root)" option with a null value', () => {
+      const select = querySelect(fixture, 'image_step_1');
+      const rootOption = select?.options.first;
+      const host: HTMLElement = fixture.nativeElement;
+
+      expect(component.stepForm.get('settings.output_folder_id')?.value).toBe(
+        null,
+      );
+      expect(rootOption?.value).toBeNull();
+      expect(rootOption?.disabled).toBeFalse();
+      expect(rootOption?.viewValue).toBe('All Media (root)');
+      expect(select?.placeholder).toBe('All Media (root)');
+      expect(component.folderOption().isPlaceholder).toBeFalse();
+      expect(host.querySelector('.output-folder-field')).not.toBeNull();
+      expect(host.querySelector('#loop-folder-select-image_step_1')).toBeNull();
+    });
+
+    it('sets the confirmed folder id from the picker', () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      component.openFolderSelector();
+      afterClosed$.next(Q4_RESULT);
+      fixture.detectChanges();
+
+      const control = form.get('settings.output_folder_id');
+      const option = component.folderOption();
+      expect(control?.value).toBe(2);
+      expect(control?.dirty).toBeTrue();
+      expect(option.label).toBe('Q4');
+      expect(option.path).toBe('Campaign / Q4');
+    });
+
+    it('previews the generated media type in the picker', () => {
+      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
+      component.openFolderSelector();
+      const data = dialogSpy.open.calls.mostRecent().args[1]
+        ?.data as ImageSelectorDialogData;
+      expect(data).toEqual(
+        jasmine.objectContaining({
+          selectionTarget: 'folder',
+          initialFolderId: null,
+          mimeType: 'video/*',
+        }),
+      );
+    });
+
+    it('goes back to the root (null) through the root option', async () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
+      await fixture.whenStable();
+      const select = querySelect(fixture, 'img_1');
+      const options = select?.options.toArray() ?? [];
+      expect(options.map(o => o.value)).toEqual([
+        null,
+        2,
+        component.folderChooseValue,
+      ]);
+
+      select?.open();
+      fixture.detectChanges();
+      options[0]._selectViaInteraction();
+      fixture.detectChanges();
+
+      expect(form.get('settings.output_folder_id')?.value).toBeNull();
+      expect(component.folderId()).toBeNull();
+      expect(component.showFolderRootOption()).toBeFalse();
+    });
+
+    it('flags a saved folder missing from the tree', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 42);
+      const host: HTMLElement = fixture.nativeElement;
+      const option = component.folderOption();
+      expect(option.label).toBe('Folder #42');
+      expect(option.isMissing).toBeTrue();
+      expect(host.querySelector('.output-folder-missing-icon')).not.toBeNull();
+    });
+
+    it('never requires a folder', () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      const control = form.get('settings.output_folder_id');
+      control?.markAsTouched();
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(control?.hasValidator(Validators.required)).toBeFalse();
+      expect(control?.valid).toBeTrue();
+      expect(host.querySelector('.output-folder-field mat-error')).toBeNull();
+    });
+
+    it('does not load the tree while the value is root and the select was never opened', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      expect(folderServiceSpy.getFolderTree).not.toHaveBeenCalled();
+    });
+
+    it('loads the tree once when the select is opened', () => {
+      component.onFolderOpenedChange(true);
+      component.onFolderOpenedChange(false);
+      component.onFolderOpenedChange(true);
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledOnceWith(1);
+    });
+
+    it('does not refresh the tree when the select is opened', () => {
+      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
+      component.onFolderOpenedChange(true);
+      expect(refreshSpy).not.toHaveBeenCalled();
+    });
+
+    it('shares one request between nodes of the same workspace', () => {
+      const response$ = new Subject<FolderTreeNode[]>();
+      folderServiceSpy.getFolderTree.and.returnValue(response$);
+      const first = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
+      const second = mountMediaStep(
+        GENERATE_AUDIO_STEP_CONFIG,
+        'audio_1',
+        1,
+        TestBed.createComponent(GenericStepComponent),
+      );
+
+      response$.next(OUTPUT_TREE);
+      response$.complete();
+
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
+      expect(first.component.folderOption().label).toBe('Q4');
+      expect(second.component.folderOption().label).toBe('Campaign');
+    });
+
+    it('sends a single request when ngOnChanges and ngOnInit both initialize', () => {
+      folderServiceSpy.getFolderTree.and.returnValue(new Subject());
+      const freshFixture = TestBed.createComponent(GenericStepComponent);
+      const freshComponent = freshFixture.componentInstance;
+      const form = fb.group({
+        stepId: ['img_fresh'],
+        type: [NodeTypes.IMAGE],
+        status: ['idle'],
+        collapsed: [false],
+        inputs: fb.group({}),
+        settings: fb.group({output_folder_id: [2]}),
+        outputs: fb.group({}),
+      });
+      freshComponent.stepForm = form;
+      freshComponent.config = IMAGE_STEP_CONFIG;
+      freshComponent.ngOnChanges({
+        stepForm: {
+          currentValue: form,
+          previousValue: null,
+          firstChange: true,
+          isFirstChange: () => true,
+        },
+      });
+      freshFixture.detectChanges();
+
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes the shared tree after the picker closes, whatever the result', () => {
+      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+
+      component.openFolderSelector();
+      afterClosed$.next(undefined);
+      expect(refreshSpy).toHaveBeenCalledOnceWith(1);
+
+      component.openFolderSelector();
+      afterClosed$.next(Q4_RESULT);
+      expect(refreshSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('updates other nodes of the workspace after the picker refresh', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      const other = mountMediaStep(
+        GENERATE_VIDEO_STEP_CONFIG,
+        'video_1',
+        2,
+        TestBed.createComponent(GenericStepComponent),
+      );
+      expect(other.component.folderOption().label).toBe('Q4');
+
+      folderServiceSpy.getFolderTree.and.returnValue(of(RENAMED_TREE));
+      component.openFolderSelector();
+      afterClosed$.next(null);
+
+      expect(other.component.folderOption().label).toBe('Q4 Final');
     });
   });
 
@@ -2059,6 +2698,401 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
     it('keeps the loop_ending control in the outputs form group', () => {
       expect(component.stepForm.get('outputs.loop_ending')).not.toBeNull();
+    });
+  });
+
+  describe('Input unlink menu', () => {
+    const linkedRef: StepOutputReference = {step: 'src_step', output: 'out'};
+    const promptPortSelector =
+      '[data-port-type="input"][data-port-name="prompt"]';
+    let emitted: StepInputUnlinkEvent[];
+    let portElement: HTMLElement;
+    let trigger: MatMenuTrigger;
+    let overlayElement: HTMLElement;
+
+    /** Runs change detection and lets the menu animations settle. */
+    function settle(): void {
+      fixture.detectChanges();
+      flush();
+      fixture.detectChanges();
+    }
+
+    function openMenu(): void {
+      trigger.openMenu();
+      settle();
+    }
+
+    function findUnlinkOption(): HTMLButtonElement | null {
+      return overlayElement.querySelector<HTMLButtonElement>(
+        '.unlink-menu-item',
+      );
+    }
+
+    beforeEach(() => {
+      component.stepForm.get('inputs.prompt')?.setValue(linkedRef);
+      fixture.detectChanges();
+
+      emitted = [];
+      component.unlink.subscribe(event => emitted.push(event));
+      const port = fixture.debugElement.query(By.css(promptPortSelector));
+      portElement = port.nativeElement;
+      trigger = port.injector.get(MatMenuTrigger);
+      overlayElement = TestBed.inject(OverlayContainer).getContainerElement();
+    });
+
+    it('emits unlink only after the menu has closed', fakeAsync(() => {
+      openMenu();
+      const option = findUnlinkOption();
+      expect(option).not.toBeNull();
+
+      option?.click();
+      expect(emitted).toEqual([]);
+
+      settle();
+      expect(trigger.menuOpen).toBeFalse();
+      expect(emitted).toEqual([
+        {stepId: 'image_step_1', inputName: 'prompt', ref: linkedRef},
+      ]);
+    }));
+
+    it('emits nothing when the menu closes without a selection', fakeAsync(() => {
+      openMenu();
+      trigger.closeMenu();
+      settle();
+
+      expect(trigger.menuOpen).toBeFalse();
+      expect(emitted).toEqual([]);
+    }));
+
+    it('emits a selection only once', fakeAsync(() => {
+      openMenu();
+      findUnlinkOption()?.click();
+      settle();
+      openMenu();
+      trigger.closeMenu();
+      settle();
+
+      expect(emitted.length).toBe(1);
+    }));
+
+    it('does not throw when the last link is removed on selection', fakeAsync(() => {
+      component.unlink.subscribe(() =>
+        component.stepForm.get('inputs.prompt')?.setValue(null),
+      );
+      openMenu();
+      findUnlinkOption()?.click();
+
+      expect(() => settle()).not.toThrow();
+      expect(emitted.length).toBe(1);
+      expect(trigger.menu).toBeNull();
+    }));
+
+    it('opens the menu from the keyboard', fakeAsync(() => {
+      portElement.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+      settle();
+
+      expect(trigger.menuOpen).toBeTrue();
+      trigger.closeMenu();
+      settle();
+    }));
+  });
+
+  describe('Input unlink state and port handlers', () => {
+    const linkedRef: StepOutputReference = {step: 'src_step', output: 'out'};
+    const unmatchedRef: StepOutputReference = {
+      step: 'gone_step',
+      output: 'gone_out',
+    };
+    const promptPortSelector =
+      '[data-port-type="input"][data-port-name="prompt"]';
+    const unlinkMenuItemSelector = '.unlink-menu-item';
+    let promptControl: AbstractControl;
+    let portElement: HTMLElement;
+    let trigger: MatMenuTrigger;
+    let overlayElement: HTMLElement;
+
+    /** Runs change detection and lets the menu animations settle. */
+    function settle(): void {
+      fixture.detectChanges();
+      flush();
+      fixture.detectChanges();
+    }
+
+    function queryPromptPort(): HTMLElement {
+      return fixture.nativeElement.querySelector(promptPortSelector);
+    }
+
+    function queryMenuItems(): NodeListOf<HTMLElement> {
+      return overlayElement.querySelectorAll<HTMLElement>(
+        unlinkMenuItemSelector,
+      );
+    }
+
+    function unlinkPrompt(): void {
+      promptControl.setValue(null);
+      fixture.detectChanges();
+    }
+
+    function disablePrompt(): void {
+      promptControl.disable();
+      fixture.detectChanges();
+    }
+
+    function switchToRunMode(): void {
+      const previousMode = component.mode;
+      component.mode = EditorMode.Run;
+      component.ngOnChanges({
+        mode: new SimpleChange(previousMode, EditorMode.Run, false),
+      });
+      fixture.detectChanges();
+    }
+
+    /** Dispatches a mouse event on the port and spies on stopPropagation. */
+    function dispatchMouseEvent(port: HTMLElement, type: string): jasmine.Spy {
+      const event = new MouseEvent(type, {bubbles: true, cancelable: true});
+      const stopPropagationSpy = spyOn(
+        event,
+        'stopPropagation',
+      ).and.callThrough();
+      port.dispatchEvent(event);
+      return stopPropagationSpy;
+    }
+
+    /** Dispatches a keydown on the port and spies on preventDefault. */
+    function dispatchKeydown(port: HTMLElement, key: string): jasmine.Spy {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      const preventDefaultSpy = spyOn(
+        event,
+        'preventDefault',
+      ).and.callThrough();
+      port.dispatchEvent(event);
+      return preventDefaultSpy;
+    }
+
+    function expectNoUnlinkAttributes(port: HTMLElement): void {
+      expect(port.classList.contains('has-links')).toBeFalse();
+      expect(port.getAttribute('tabindex')).toBeNull();
+      expect(port.getAttribute('role')).toBeNull();
+      expect(port.getAttribute('aria-label')).toBeNull();
+    }
+
+    beforeEach(() => {
+      const availableOutputs = [
+        {value: linkedRef, label: ' my-step-input ', type: 'image'},
+      ];
+      component.availableOutputs = availableOutputs;
+      component.ngOnChanges({
+        availableOutputs: new SimpleChange([], availableOutputs, false),
+      });
+      promptControl = component.stepForm.get('inputs.prompt')!;
+      promptControl.setValue(linkedRef);
+      fixture.detectChanges();
+
+      const port = fixture.debugElement.query(By.css(promptPortSelector));
+      portElement = port.nativeElement;
+      trigger = port.injector.get(MatMenuTrigger);
+      overlayElement = TestBed.inject(OverlayContainer).getContainerElement();
+    });
+
+    describe('getUnlinkOptions', () => {
+      it('uses the trimmed availableOutputs label', () => {
+        expect(component.getUnlinkOptions('prompt')).toEqual([
+          {ref: linkedRef, label: 'my-step-input'},
+        ]);
+      });
+
+      it('falls back to step.output when no output matches', () => {
+        promptControl.setValue(unmatchedRef);
+
+        expect(component.getUnlinkOptions('prompt')).toEqual([
+          {
+            ref: unmatchedRef,
+            label: `${unmatchedRef.step}.${unmatchedRef.output}`,
+          },
+        ]);
+      });
+    });
+
+    describe('canUnlink', () => {
+      it('returns true when the input has a link', () => {
+        expect(component.canUnlink('prompt')).toBeTrue();
+      });
+
+      it('returns false when the input has no link', () => {
+        promptControl.setValue(null);
+
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('returns false when the input is disabled', () => {
+        promptControl.disable();
+
+        expect(component.isInputDisabled('prompt')).toBeTrue();
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+    });
+
+    describe('port attributes', () => {
+      it('sets has-links, tabindex, role and aria-label when linked', () => {
+        expect(portElement.classList.contains('has-links')).toBeTrue();
+        expect(portElement.getAttribute('tabindex')).toBe('0');
+        expect(portElement.getAttribute('role')).toBe('button');
+        expect(portElement.getAttribute('aria-label')).toBe(
+          'Unlink options for Prompt',
+        );
+      });
+
+      it('sets none of them when not linked', () => {
+        unlinkPrompt();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+
+      it('sets none of them when disabled', () => {
+        disablePrompt();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+    });
+
+    describe('click', () => {
+      it('opens the menu with one item per link', fakeAsync(() => {
+        promptControl.setValue([linkedRef, unmatchedRef]);
+        fixture.detectChanges();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeTrue();
+        expect(queryMenuItems().length).toBe(2);
+        trigger.closeMenu();
+        settle();
+      }));
+
+      it('opens no menu when the input has no link', fakeAsync(() => {
+        unlinkPrompt();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+
+      it('opens no menu when the input is disabled', fakeAsync(() => {
+        disablePrompt();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+
+      it('opens no menu in run mode', fakeAsync(() => {
+        switchToRunMode();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+    });
+
+    describe('run mode', () => {
+      it('canUnlink returns false for a linked input', () => {
+        component.mode = EditorMode.Run;
+
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('removes the unlink attributes when the mode switches to run', () => {
+        switchToRunMode();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+    });
+
+    describe('stopPropagation', () => {
+      it('is called on mousedown when linked', () => {
+        const stopPropagationSpy = dispatchMouseEvent(portElement, 'mousedown');
+
+        expect(stopPropagationSpy).toHaveBeenCalled();
+      });
+
+      it('is called on click when linked', () => {
+        const stopPropagationSpy = dispatchMouseEvent(portElement, 'click');
+
+        expect(stopPropagationSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('is not called on mousedown without links', () => {
+        unlinkPrompt();
+
+        const stopPropagationSpy = dispatchMouseEvent(
+          queryPromptPort(),
+          'mousedown',
+        );
+
+        expect(stopPropagationSpy).not.toHaveBeenCalled();
+      });
+
+      it('is not called on click without links', () => {
+        unlinkPrompt();
+
+        const stopPropagationSpy = dispatchMouseEvent(
+          queryPromptPort(),
+          'click',
+        );
+
+        expect(stopPropagationSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('keydown', () => {
+      it('opens the menu on Space', fakeAsync(() => {
+        dispatchKeydown(portElement, ' ');
+        settle();
+
+        expect(trigger.menuOpen).toBeTrue();
+        expect(queryMenuItems().length).toBe(1);
+        trigger.closeMenu();
+        settle();
+      }));
+
+      it('calls preventDefault on Enter', () => {
+        const preventDefaultSpy = dispatchKeydown(portElement, 'Enter');
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('calls preventDefault on Space', () => {
+        const preventDefaultSpy = dispatchKeydown(portElement, ' ');
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('does nothing without links', fakeAsync(() => {
+        unlinkPrompt();
+
+        const unlinkedPort = queryPromptPort();
+        const enterPreventDefaultSpy = dispatchKeydown(unlinkedPort, 'Enter');
+        const spacePreventDefaultSpy = dispatchKeydown(unlinkedPort, ' ');
+        settle();
+
+        expect(enterPreventDefaultSpy).not.toHaveBeenCalled();
+        expect(spacePreventDefaultSpy).not.toHaveBeenCalled();
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
     });
   });
 });

@@ -27,13 +27,13 @@ import {AuthService} from './../common/services/auth.service';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
-import {Injector, NgZone} from '@angular/core';
+import {NgZone} from '@angular/core';
 import {environment} from '../../environments/environment';
 import {MatCardModule} from '@angular/material/card';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {AppInjector, setAppInjector} from '../app-injector';
+import {useTestBedAppInjector} from '../testing/app-injector.testing';
 import {NotificationService} from '../common/services/notification.service';
 
 // Define a MockAuthService class
@@ -85,7 +85,7 @@ describe('LoginComponent', () => {
       ],
     }).compileComponents();
 
-    setAppInjector(TestBed.inject(Injector));
+    useTestBedAppInjector();
 
     fixture = TestBed.createComponent(LoginComponent);
     component = fixture.componentInstance;

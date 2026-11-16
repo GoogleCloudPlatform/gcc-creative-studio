@@ -23,6 +23,7 @@ import {
 import {MatIconModule} from '@angular/material/icon';
 import {MatTabsModule} from '@angular/material/tabs';
 import {FormsModule} from '@angular/forms';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {of, throwError} from 'rxjs';
 import {
   CopyToFolderDialogComponent,
@@ -117,7 +118,13 @@ describe('CopyToFolderDialogComponent', () => {
 
     await TestBed.configureTestingModule({
       declarations: [CopyToFolderDialogComponent, MockStudioButtonComponent],
-      imports: [MatDialogModule, MatIconModule, MatTabsModule, FormsModule],
+      imports: [
+        MatDialogModule,
+        MatIconModule,
+        MatTabsModule,
+        FormsModule,
+        NoopAnimationsModule,
+      ],
       providers: [
         {provide: MatDialogRef, useValue: mockDialogRef},
         {provide: MAT_DIALOG_DATA, useValue: mockData},

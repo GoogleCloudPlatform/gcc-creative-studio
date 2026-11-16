@@ -97,6 +97,32 @@ export class StepHistorySidebarComponent {
 
   readonly stepId = computed(() => this.entryState()?.step_id ?? '');
 
+  /** DOM id of the collapsible Inputs content container. */
+  readonly inputsContentId = computed(
+    () => `step-history-inputs-${this.stepId()}`,
+  );
+
+  /** DOM id of the collapsible Outputs content container. */
+  readonly outputsContentId = computed(
+    () => `step-history-outputs-${this.stepId()}`,
+  );
+
+  /**
+   * `aria-controls` value of the Inputs toggle. Null while collapsed because
+   * the content container is not rendered then.
+   */
+  readonly inputsControlsId = computed<string | null>(() =>
+    this.isInputsExpanded() ? this.inputsContentId() : null,
+  );
+
+  /**
+   * `aria-controls` value of the Outputs toggle. Null while collapsed because
+   * the content container is not rendered then.
+   */
+  readonly outputsControlsId = computed<string | null>(() =>
+    this.isOutputsExpanded() ? this.outputsContentId() : null,
+  );
+
   readonly history = computed<StepHistoryEntry[]>(
     () => this.entryState()?.history ?? [],
   );

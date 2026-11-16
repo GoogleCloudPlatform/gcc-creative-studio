@@ -45,9 +45,9 @@ import {
 } from '../common/config/model-config';
 import {JobStatus, MediaItem} from '../common/models/media-item.model';
 import {
+  AssetReferenceDto,
   ReferenceImage,
   ReferenceVideo,
-  ReferenceAudio,
   SourceMediaItemLink,
   VeoRequest,
 } from '../common/models/search.model';
@@ -63,7 +63,11 @@ import {
   ConcatenationInput,
   SearchService,
 } from '../services/search/search.service';
-import {VideoStateService} from '../services/video-state.service';
+import {
+  DEFAULT_OMNI_MODEL,
+  DEFAULT_VIDEO_MODEL,
+  VideoStateService,
+} from '../services/video-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {GalleryService} from '../gallery/gallery.service';
 
@@ -111,8 +115,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   isExtensionMode = false;
   referenceImages: ReferenceImage[] = [];
   referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
-  referenceVideo: ReferenceVideo | null = null;
-  referenceAudio: ReferenceAudio | null = null;
+  referenceVideos: ReferenceVideo[] = [];
   parentMediaItemId: number | null = null;
   currentMode = 'Text to Video';
   modes = [
@@ -135,7 +138,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   searchRequest: VeoRequest = {
     prompt: '',
-    generationModel: 'gemini-omni-1.1-flash-preview',
+    generationModel: DEFAULT_VIDEO_MODEL,
     aspectRatio: '16:9',
     numberOfMedia: 1,
     style: null,
@@ -228,11 +231,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
     this.generationModels = MODEL_CONFIGS.filter(m => m.type === 'VIDEO');
-    this.searchRequest.generationModel = 'gemini-omni-1.1-flash-preview';
+    this.searchRequest.generationModel = DEFAULT_VIDEO_MODEL;
     this.selectedGenerationModel =
-      this.generationModels.find(
-        m => m.value === 'gemini-omni-1.1-flash-preview',
-      )?.viewValue || this.generationModels[0].viewValue;
+      this.generationModels.find(m => m.value === DEFAULT_VIDEO_MODEL)
+        ?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
@@ -297,8 +299,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       mode: this.currentMode,
       referenceImages: this.referenceImages,
       referenceImagesType: this.referenceImagesType,
-      referenceVideo: this.referenceVideo,
-      referenceAudio: this.referenceAudio,
+      referenceVideos: this.referenceVideos,
     });
   }
 
@@ -313,7 +314,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
       state.model === 'gemini-omni-flash-preview' ||
-      state.model === 'gemini-omni-1.1-flash-preview'
+      state.model === 'gemini-omni-1.1-flash-preview' ||
+      state.model === 'gemini-omni-1.2-flash'
         ? 1
         : state.numberOfMedia;
     this.selectedOutputs.set(this.searchRequest.numberOfMedia || 1);
@@ -324,10 +326,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.useBrandGuidelines = state.useBrandGuidelines;
     this.searchRequest.enhancePrompt = state.enhancePrompt;
     this.currentMode = state.mode || 'Text to Video';
+    this.selectedMode.set(this.currentMode);
     this.referenceImages = state.referenceImages || [];
     this.referenceImagesType = state.referenceImagesType || 'ASSET';
-    this.referenceVideo = state.referenceVideo || null;
-    this.referenceAudio = state.referenceAudio || null;
+    this.referenceVideos = state.referenceVideos || [];
 
     this.negativePhrases = state.negativePrompt
       ? state.negativePrompt.split(', ').filter(Boolean)
@@ -360,11 +362,53 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
   }
 
-  selectModel(model: {value: string; viewValue: string}): void {
+  selectModel(
+    model: {value: string; viewValue: string},
+    options?: {suppressTrimNotice?: boolean},
+  ): void {
     this.searchRequest.generationModel = model.value;
     this.selectedGenerationModel = model.viewValue;
 
     this.clearOtherImage(1);
+
+    const config = MODEL_CONFIGS.find(c => c.value === model.value);
+    const maxImages = config?.capabilities.maxReferenceImages ?? 3;
+    const maxVideos = config?.capabilities.maxReferenceVideos ?? 0;
+
+    const trimmedImages = Math.max(0, this.referenceImages.length - maxImages);
+    const trimmedVideos = Math.max(0, this.referenceVideos.length - maxVideos);
+    if (trimmedImages > 0) {
+      this.referenceImages = this.referenceImages.slice(0, maxImages);
+    }
+    if (trimmedVideos > 0) {
+      this.referenceVideos = this.referenceVideos.slice(0, maxVideos);
+      if (
+        this.parentMediaItemId !== null &&
+        !this.referenceVideos.some(
+          v => v.type === 'media_item' && v.id === this.parentMediaItemId,
+        )
+      ) {
+        this.parentMediaItemId = null;
+      }
+    }
+    if (
+      (trimmedImages > 0 || trimmedVideos > 0) &&
+      !options?.suppressTrimNotice
+    ) {
+      let notice = '';
+      if (maxVideos === 0 && trimmedVideos > 0 && trimmedImages > 0) {
+        notice = `Removed ${trimmedImages} excess reference image(s) (kept the first ${maxImages}) and removed ${trimmedVideos} reference video(s) because ${model.viewValue} supports up to ${maxImages} images and no video references.`;
+      } else if (maxVideos === 0 && trimmedVideos > 0) {
+        notice = `Removed ${trimmedVideos} reference video(s) because ${model.viewValue} does not support video references.`;
+      } else if (trimmedImages > 0 && trimmedVideos > 0) {
+        notice = `Removed ${trimmedImages} excess reference image(s) and ${trimmedVideos} excess reference video(s) (kept the first ${maxImages} images and ${maxVideos} videos) for ${model.viewValue}.`;
+      } else if (trimmedImages > 0) {
+        notice = `Removed ${trimmedImages} excess reference image(s) (kept the first ${maxImages}) because ${model.viewValue} supports up to ${maxImages}.`;
+      } else {
+        notice = `Removed ${trimmedVideos} excess reference video(s) (kept the first ${maxVideos}) because ${model.viewValue} supports up to ${maxVideos}.`;
+      }
+      this._snackBar.open(notice, 'OK', {duration: 5000});
+    }
 
     // Active video models (Veo 3.1 & Omni) support audio.
     this.isAudioGenerationDisabled = false;
@@ -382,7 +426,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
     if (
       model.value === 'gemini-omni-flash-preview' ||
-      model.value === 'gemini-omni-1.1-flash-preview'
+      model.value === 'gemini-omni-1.1-flash-preview' ||
+      model.value === 'gemini-omni-1.2-flash'
     ) {
       this.searchRequest.numberOfMedia = 1;
       this.selectedOutputs.set(1);
@@ -488,6 +533,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
       return;
     }
 
+    this.parentMediaItemId = null;
+
     // If we are switching FROM Concatenate TO Extend, we should keep the first video
     // but clear the second one (as Extend only takes one video input).
     if (this.currentMode === 'Concatenate Video' && mode === 'Extend Video') {
@@ -519,6 +566,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
 
     this.currentMode = mode;
+    this.selectedMode.set(mode);
 
     if (mode === 'Extend Video') {
       this.isExtensionMode = true;
@@ -609,7 +657,15 @@ export class VideoComponent implements OnInit, AfterViewInit {
         });
       return;
     }
-    if (!this.searchRequest.prompt && !this.isExtensionMode) {
+    const hasExtensionSource =
+      (this.startImageAssetId !== null &&
+        (this.currentMode === 'Extend Video' || this._input1IsVideo)) ||
+      this.sourceMediaItems.some(i => i?.role === 'video_extension_source');
+    if (this.isExtensionMode && !hasExtensionSource) {
+      handleInfoSnackbar(this._snackBar, 'Please select a video to extend.');
+      return;
+    }
+    if (!this.isExtensionMode && !this.searchRequest.prompt?.trim()) {
       handleInfoSnackbar(
         this._snackBar,
         'Please enter a prompt to generate a video.',
@@ -632,7 +688,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       !this.isConcatenateMode
     ) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-1.1-flash-preview',
+        m => m.value === DEFAULT_OMNI_MODEL,
       );
       if (omniModel) {
         this.selectModel(omniModel);
@@ -688,6 +744,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
     }
 
+    const referenceVideosPayload: AssetReferenceDto[] =
+      this.referenceVideos.map(v => ({
+        id: v.id,
+        type: v.type,
+        index: v.index,
+      }));
+
     const payload: VeoRequest = {
       ...this.searchRequest,
       startImageAssetId:
@@ -718,23 +781,20 @@ export class VideoComponent implements OnInit, AfterViewInit {
               this.currentMode === 'Extend Video'
             ? validSourceMediaItems
             : undefined,
-      referenceVideo:
-        this.currentMode === 'Ingredients to Video' && this.referenceVideo
-          ? {
-              id: this.referenceVideo.id,
-              type: this.referenceVideo.type,
-              index: this.referenceVideo.index,
-            }
+      referenceVideos:
+        this.currentMode === 'Ingredients to Video' &&
+        referenceVideosPayload.length > 0
+          ? referenceVideosPayload
           : undefined,
-      referenceAudio:
-        this.currentMode === 'Ingredients to Video' && this.referenceAudio
-          ? {
-              id: this.referenceAudio.id,
-              type: this.referenceAudio.type,
-              index: this.referenceAudio.index,
-            }
+      parentMediaItemId:
+        this.currentMode === 'Ingredients to Video' &&
+        this.parentMediaItemId !== null &&
+        this.referenceImages.length === 0 &&
+        this.referenceVideos.length === 1 &&
+        this.referenceVideos[0].type === 'media_item' &&
+        this.referenceVideos[0].id === this.parentMediaItemId
+          ? this.parentMediaItemId
           : undefined,
-      parentMediaItemId: this.parentMediaItemId ?? undefined,
     };
 
     // TODO: Add notification when video is completed after the pooling
@@ -798,8 +858,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
   resetAllFilters() {
     this.searchRequest = {
       prompt: '',
-      generationModel: 'veo-3.0-generate-001',
+      generationModel: DEFAULT_VIDEO_MODEL,
       aspectRatio: '16:9',
+      resolution: '1K',
       numberOfMedia: 1,
       style: null,
       lighting: null,
@@ -811,6 +872,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
       useBrandGuidelines: false,
       enhancePrompt: false,
     };
+    this.referenceImages = [];
+    this.referenceVideos = [];
+    this.parentMediaItemId = null;
+    this.currentMode = 'Text to Video';
+    this.selectedMode.set('Text to Video');
     this.videoStateService.resetState();
   }
 
@@ -926,7 +992,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
       if (isVeo30) {
         const omniModel = this.generationModels.find(
-          m => m.value === 'gemini-omni-1.1-flash-preview',
+          m => m.value === DEFAULT_OMNI_MODEL,
         );
         if (omniModel) {
           this.selectModel(omniModel);
@@ -1207,9 +1273,33 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.image2Preview = null;
     this.startImageAssetId = null;
     this.endImageAssetId = null;
+    this._input1IsVideo = false;
+    this._input2IsVideo = false;
+    this.parentMediaItemId = null;
+    this.referenceImages = [];
+    this.referenceVideos = [];
     this.isExtensionMode = false;
     this.isConcatenateMode = false;
     this.service.clearActiveVideoJob();
+  }
+
+  private clearStartEndFramesForIngredients(targetLabel: string): void {
+    if (this.image1Preview || this.image2Preview) {
+      this.startImageAssetId = null;
+      this.image1Preview = null;
+      this._input1IsVideo = false;
+      this.sourceMediaItems[0] = null;
+      this.endImageAssetId = null;
+      this.image2Preview = null;
+      this._input2IsVideo = false;
+      this.sourceMediaItems[1] = null;
+      this.updateModeAndNotify();
+      this._snackBar.open(
+        `Start/end frames and extension videos have been cleared to use ${targetLabel}.`,
+        'OK',
+        {duration: 5000},
+      );
+    }
   }
 
   private updateModeAndNotify() {
@@ -1298,6 +1388,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     isOmniMode?: boolean;
     parentMediaItemId?: number;
     parentMediaIndex?: number;
+    referenceVideos?: Array<{
+      id: number;
+      type: 'source_asset' | 'media_item';
+      previewUrl?: string;
+      index?: number;
+      name?: string;
+    }>;
     referenceVideo?: {
       id: number;
       type: 'source_asset' | 'media_item';
@@ -1313,7 +1410,23 @@ export class VideoComponent implements OnInit, AfterViewInit {
     };
   }): void {
     this.resetInputs();
-    if (remixState.prompt) this.searchRequest.prompt = remixState.prompt;
+
+    if (remixState.generationModel) {
+      const modelVal =
+        remixState.generationModel === 'gemini-omni'
+          ? DEFAULT_OMNI_MODEL
+          : remixState.generationModel;
+      const modelOption = this.generationModels.find(
+        m => m.value === modelVal || m.value.startsWith(modelVal),
+      );
+      if (modelOption) {
+        this.selectModel(modelOption, {suppressTrimNotice: true});
+      }
+    }
+
+    if (remixState.prompt !== undefined) {
+      this.searchRequest.prompt = remixState.prompt;
+    }
     if (remixState.startImageAssetId) {
       this.startImageAssetId = remixState.startImageAssetId;
       this.sourceMediaItems[0] = null;
@@ -1322,10 +1435,17 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.endImageAssetId = remixState.endImageAssetId;
       this.sourceMediaItems[1] = null;
     }
-    if (remixState.startImagePreviewUrl)
+    if (remixState.startImagePreviewUrl) {
       this.image1Preview = remixState.startImagePreviewUrl;
-    if (remixState.endImagePreviewUrl)
+    }
+    if (remixState.endImagePreviewUrl) {
       this.image2Preview = remixState.endImagePreviewUrl;
+    }
+
+    const incomingRefVideos = [
+      ...(remixState.referenceVideos ?? []),
+      ...(remixState.referenceVideo ? [remixState.referenceVideo] : []),
+    ];
 
     if (remixState.sourceMediaItems?.length) {
       remixState.sourceMediaItems.forEach(item => {
@@ -1333,61 +1453,100 @@ export class VideoComponent implements OnInit, AfterViewInit {
           this.sourceMediaItems[0] = item;
           this.startImageAssetId = null;
           this.image1Preview = remixState.startImagePreviewUrl || null;
-          // Switch to Ingredients to Video mode if we have start or end frames
           this.currentMode = 'Frames to Video';
-          this.saveState();
+          this.selectedMode.set('Frames to Video');
         } else if (item.role === 'end_frame') {
           this.sourceMediaItems[1] = item;
           this.endImageAssetId = null;
           this.image2Preview = remixState.endImagePreviewUrl || null;
-          // Switch to Ingredients to Video mode if we have start or end frames
           this.currentMode = 'Frames to Video';
-          this.saveState();
+          this.selectedMode.set('Frames to Video');
         } else if (item.role === 'video_extension_source') {
-          // This is the case for extending a video
           this.sourceMediaItems[0] = item;
           this._input1IsVideo = true;
           this.startImageAssetId = null;
           this.image1Preview = remixState.startImagePreviewUrl || null;
+          this.currentMode = 'Extend Video';
+          this.selectedMode.set('Extend Video');
           this.isExtensionMode = true;
-          this.searchRequest.prompt = ''; // Clear prompt for extension
+          this.parentMediaItemId = null;
+          this.searchRequest.prompt = '';
         } else if (item.role === 'concatenation_source') {
           this.sourceMediaItems[0] = {...item, role: 'video_source'};
           this.image1Preview = remixState.startImagePreviewUrl || null;
           this._input1IsVideo = true;
+          this.currentMode = 'Concatenate Video';
+          this.selectedMode.set('Concatenate Video');
           this.isConcatenateMode = true;
+          this.parentMediaItemId = null;
           this.searchRequest.prompt = '';
+        } else if (item.role === 'video_reference') {
+          incomingRefVideos.push({
+            id: item.mediaItemId,
+            type: 'media_item',
+            previewUrl: '',
+            index: item.mediaIndex,
+          });
+        } else if (
+          item.role === 'image_reference_asset' ||
+          item.role === 'image_reference_style'
+        ) {
+          const config = MODEL_CONFIGS.find(
+            c => c.value === this.searchRequest.generationModel,
+          );
+          const maxImages = config?.capabilities.maxReferenceImages ?? 3;
+          if (item.role === 'image_reference_style') {
+            this.referenceImagesType = 'STYLE';
+          }
+          if (this.referenceImages.length < maxImages) {
+            this.referenceImages.push({
+              previewUrl: '',
+              sourceMediaItem: item,
+            });
+          }
         }
       });
     }
 
     if (remixState.startConcatenation) {
+      this.currentMode = 'Concatenate Video';
+      this.selectedMode.set('Concatenate Video');
       this.isConcatenateMode = true;
     }
 
-    if (remixState.isOmniMode) {
+    if (incomingRefVideos.length > 0) {
+      const seen = new Set<string>();
+      const deduped: ReferenceVideo[] = [];
+      for (const v of incomingRefVideos) {
+        const key = `${v.type}:${v.id}:${v.index ?? 0}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduped.push({
+            id: v.id,
+            type: v.type,
+            previewUrl: v.previewUrl || '',
+            index: v.index,
+          });
+        }
+      }
+      this.referenceVideos = deduped;
+      this.handleOmniModelSwitch();
+      const maxVideos =
+        MODEL_CONFIGS.find(c => c.value === this.searchRequest.generationModel)
+          ?.capabilities.maxReferenceVideos ?? 3;
+      this.referenceVideos = this.referenceVideos.slice(0, maxVideos);
+    }
+
+    if (
+      remixState.isOmniMode ||
+      this.referenceVideos.length > 0 ||
+      this.referenceImages.length > 0
+    ) {
       this.currentMode = 'Ingredients to Video';
+      this.selectedMode.set('Ingredients to Video');
       if (remixState.parentMediaItemId !== undefined) {
         this.parentMediaItemId = remixState.parentMediaItemId;
       }
-    }
-
-    if (remixState.referenceVideo) {
-      this.referenceVideo = {
-        id: remixState.referenceVideo.id,
-        type: remixState.referenceVideo.type,
-        previewUrl: remixState.referenceVideo.previewUrl || '',
-        index: remixState.referenceVideo.index,
-      };
-    }
-
-    if (remixState.referenceAudio) {
-      this.referenceAudio = {
-        id: remixState.referenceAudio.id,
-        type: remixState.referenceAudio.type,
-        name: remixState.referenceAudio.name,
-        index: remixState.referenceAudio.index,
-      };
     }
 
     if (remixState.aspectRatio) {
@@ -1400,35 +1559,43 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
     }
 
-    if (remixState.generationModel) {
-      const modelVal = remixState.generationModel;
-      // Try either exact value match or prefix/partial match (like gemini-omni)
-      const modelOption = this.generationModels.find(
-        m => m.value === modelVal || m.value.startsWith(modelVal),
-      );
-      if (modelOption) this.selectModel(modelOption);
-    }
+    this.saveState();
   }
 
   handleEditWithOmni(event: {mediaItem: MediaItem; selectedIndex: number}) {
+    if (event.mediaItem.mimeType?.startsWith('audio/')) {
+      return;
+    }
+    this.resetInputs();
     this.parentMediaItemId = event.mediaItem.id;
     this.currentMode = 'Ingredients to Video';
     this.selectedMode.set('Ingredients to Video');
 
+    const itemModelConfig = MODEL_CONFIGS.find(
+      cfg => cfg.type === 'VIDEO' && cfg.value === event.mediaItem.model,
+    );
+    const targetModelValue =
+      (itemModelConfig?.capabilities.maxReferenceVideos ?? 0) > 0
+        ? itemModelConfig!.value
+        : DEFAULT_OMNI_MODEL;
     const omniModel = this.generationModels.find(
-      m => m.value === 'gemini-omni-1.1-flash-preview',
+      m => m.value === targetModelValue,
     );
     if (omniModel) {
-      this.selectModel(omniModel);
+      this.selectModel(omniModel, {suppressTrimNotice: true});
     }
 
-    this.referenceVideo = {
-      id: event.mediaItem.id,
-      type: 'media_item',
-      previewUrl:
-        event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] || '',
-      index: event.selectedIndex,
-    };
+    this.referenceVideos = [
+      {
+        id: event.mediaItem.id,
+        type: 'media_item',
+        previewUrl:
+          event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] ||
+          event.mediaItem.presignedUrls?.[event.selectedIndex] ||
+          '',
+        index: event.selectedIndex,
+      },
+    ];
 
     this.saveState();
 
@@ -1440,6 +1607,20 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   handleExtendWithAi(event: {mediaItem: MediaItem; selectedIndex: number}) {
+    const itemModelConfig = MODEL_CONFIGS.find(
+      m => m.type === 'VIDEO' && m.value === event.mediaItem.model,
+    );
+    const currentModelConfig = MODEL_CONFIGS.find(
+      m => m.type === 'VIDEO' && m.value === this.searchRequest.generationModel,
+    );
+    const extendModel = itemModelConfig?.capabilities.supportedModes.includes(
+      'Extend Video',
+    )
+      ? itemModelConfig.value
+      : currentModelConfig?.capabilities.supportedModes.includes('Extend Video')
+        ? currentModelConfig.value
+        : DEFAULT_OMNI_MODEL;
+
     const remixState = {
       sourceMediaItems: [
         {
@@ -1449,7 +1630,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
         },
       ],
       startImagePreviewUrl:
-        event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
+        event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] ||
+        event.mediaItem.presignedUrls?.[event.selectedIndex],
+      generationModel: extendModel,
     };
     this.applyRemixState(remixState);
   }
@@ -1475,13 +1658,22 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   openVideoSelectorForReference(): void {
+    const config = MODEL_CONFIGS.find(
+      cfg => cfg.value === this.searchRequest.generationModel,
+    );
+    const maxReferenceVideos = config?.capabilities.maxReferenceVideos ?? 0;
+    const remainingSlots = maxReferenceVideos - this.referenceVideos.length;
+    if (remainingSlots <= 0) return;
+
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
       height: '80vh',
       maxWidth: '90vw',
       data: {
         mimeType: 'video/*',
-        multiSelect: false,
+        multiSelect: true,
+        maxSelection: remainingSlots,
+        showFooter: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -1489,117 +1681,153 @@ export class VideoComponent implements OnInit, AfterViewInit {
     dialogRef.afterClosed().subscribe((result: any) => {
       if (!result) return;
 
-      const res = Array.isArray(result) ? result[0] : result;
-      if ('gcsUri' in res) {
-        this.referenceVideo = {
-          id: res.id,
-          type: 'source_asset',
-          previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
-          index: 0,
-        };
-      } else {
-        const thumbnail =
-          res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
-        const previewUrl =
-          thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
-        if (previewUrl) {
-          this.referenceVideo = {
-            id: res.mediaItem.id,
-            type: 'media_item',
-            previewUrl: previewUrl,
-            index: res.selectedIndex,
-          };
+      const results = Array.isArray(result) ? result : [result];
+      const existingKeys = new Set(
+        this.referenceVideos.map(v => `${v.type}:${v.id}:${v.index ?? 0}`),
+      );
+      let added = false;
+
+      results.forEach(res => {
+        if (this.referenceVideos.length >= maxReferenceVideos) return;
+
+        if ('gcsUri' in res) {
+          const key = `source_asset:${res.id}:0`;
+          if (!existingKeys.has(key)) {
+            existingKeys.add(key);
+            this.referenceVideos.push({
+              id: res.id,
+              type: 'source_asset',
+              previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
+              index: 0,
+            });
+            added = true;
+          }
+        } else if (res?.mediaItem) {
+          const idx = res.selectedIndex ?? 0;
+          const key = `media_item:${res.mediaItem.id}:${idx}`;
+          if (!existingKeys.has(key)) {
+            existingKeys.add(key);
+            const previewUrl =
+              res.mediaItem.presignedThumbnailUrls?.[idx] ||
+              res.mediaItem.presignedUrls?.[idx] ||
+              '';
+            this.referenceVideos.push({
+              id: res.mediaItem.id,
+              type: 'media_item',
+              previewUrl,
+              index: idx,
+            });
+            added = true;
+          }
         }
+      });
+
+      if (added) {
+        this.clearStartEndFramesForIngredients('reference videos');
+        this.handleOmniModelSwitch();
+        this.saveState();
       }
-      this.handleOmniModelSwitch();
-      this.saveState();
     });
   }
 
-  clearReferenceVideo(event: Event): void {
-    event.stopPropagation();
-    this.referenceVideo = null;
-    this.saveState();
+  onReferenceVideoDrop(event: DragEvent): void {
+    event.preventDefault();
+    const config = MODEL_CONFIGS.find(
+      cfg => cfg.value === this.searchRequest.generationModel,
+    );
+    const maxReferenceVideos = config?.capabilities.maxReferenceVideos ?? 0;
+    const remainingSlots = maxReferenceVideos - this.referenceVideos.length;
+    if (remainingSlots <= 0) return;
+
+    const files = Array.from(event.dataTransfer?.files || [])
+      .filter(f => f.type.startsWith('video/'))
+      .slice(0, remainingSlots);
+    if (files.length === 0) return;
+
+    this.isLoading = true;
+    let completed = 0;
+    let notifiedSkip = false;
+    files.forEach(file => {
+      this.sourceAssetService
+        .uploadAsset(file)
+        .pipe(
+          finalize(() => {
+            completed += 1;
+            if (completed === files.length) {
+              this.isLoading = false;
+            }
+          }),
+        )
+        .subscribe({
+          next: (asset: SourceAssetResponseDto) => {
+            const currentConfig = MODEL_CONFIGS.find(
+              cfg => cfg.value === this.searchRequest.generationModel,
+            );
+            const currentMaxVideos =
+              currentConfig?.capabilities.maxReferenceVideos ?? 0;
+            if (currentMaxVideos <= 0) {
+              if (!notifiedSkip) {
+                notifiedSkip = true;
+                handleInfoSnackbar(
+                  this._snackBar,
+                  `Skipped uploaded reference video because ${this.selectedGenerationModel} does not support video references.`,
+                );
+              }
+              return;
+            }
+            if (this.referenceVideos.length >= currentMaxVideos) return;
+            const exists = this.referenceVideos.some(
+              v => v.type === 'source_asset' && v.id === asset.id,
+            );
+            if (!exists) {
+              this.referenceVideos.push({
+                id: asset.id,
+                type: 'source_asset',
+                previewUrl:
+                  asset.presignedThumbnailUrl || asset.presignedUrl || '',
+                index: 0,
+              });
+              this.clearStartEndFramesForIngredients('reference videos');
+              this.handleOmniModelSwitch();
+              this.saveState();
+            }
+          },
+          error: (error: any) => {
+            handleErrorSnackbar(this._snackBar, error, 'Video upload');
+          },
+        });
+    });
   }
 
-  openAudioSelectorForReference(): void {
-    const dialogRef = this.dialog.open(ImageSelectorComponent, {
-      width: '90vw',
-      height: '80vh',
-      maxWidth: '90vw',
-      data: {
-        mimeType: 'audio/*',
-        multiSelect: false,
-      },
-      panelClass: 'image-selector-dialog',
-    });
-
-    dialogRef.afterClosed().subscribe((result: any) => {
-      if (!result) return;
-
-      const res = Array.isArray(result) ? result[0] : result;
-      if ('gcsUri' in res) {
-        this.referenceAudio = {
-          id: res.id,
-          type: 'source_asset',
-          name: res.name || 'Audio Reference',
-          index: 0,
-        };
-      } else {
-        this.referenceAudio = {
-          id: res.mediaItem.id,
-          type: 'media_item',
-          name: res.mediaItem.titles?.[0] || 'Audio Reference',
-          index: res.selectedIndex,
-        };
-      }
-      this.handleOmniModelSwitch();
-      this.saveState();
-    });
-  }
-
-  clearReferenceAudio(event: Event): void {
-    event.stopPropagation();
-    this.referenceAudio = null;
+  onClearReferenceVideo(data: {index: number; event: Event}): void {
+    data.event.stopPropagation();
+    const [removed] = this.referenceVideos.splice(data.index, 1);
+    if (
+      removed?.type === 'media_item' &&
+      removed.id === this.parentMediaItemId
+    ) {
+      this.parentMediaItemId = null;
+    }
     this.saveState();
   }
 
   private handleOmniModelSwitch(): void {
-    if (this.referenceVideo || this.referenceAudio) {
-      const currentModel = this.searchRequest.generationModel;
-      if (
-        currentModel === 'gemini-omni-flash-preview' ||
-        currentModel === 'gemini-omni-1.1-flash-preview'
-      ) {
+    if (this.referenceVideos.length > 0) {
+      const currentConfig = MODEL_CONFIGS.find(
+        cfg => cfg.value === this.searchRequest.generationModel,
+      );
+      if ((currentConfig?.capabilities.maxReferenceVideos ?? 0) > 0) {
         return;
       }
       const omniModel = this.generationModels.find(
-        m =>
-          m.value === 'gemini-omni-1.1-flash-preview' ||
-          m.value === 'gemini-omni-flash-preview',
+        m => m.value === DEFAULT_OMNI_MODEL,
       );
-      if (omniModel) {
-        if (this.searchRequest.generationModel !== omniModel.value) {
-          this.selectModel(omniModel);
-          handleSuccessSnackbar(
-            this._snackBar,
-            "We've switched to the Gemini Omni model, as this one supports video and audio references.",
-          );
-        }
-      } else {
-        const veo31Model = this.generationModels.find(
-          m => m.value === 'veo-3.1-generate-001',
+      if (omniModel && this.searchRequest.generationModel !== omniModel.value) {
+        this.selectModel(omniModel, {suppressTrimNotice: true});
+        handleSuccessSnackbar(
+          this._snackBar,
+          "We've switched to Gemini Omni 1.2 Flash because this model supports video references.",
         );
-        if (
-          veo31Model &&
-          this.searchRequest.generationModel !== veo31Model.value
-        ) {
-          this.selectModel(veo31Model);
-          handleSuccessSnackbar(
-            this._snackBar,
-            "We've switched to the Veo 3.1 model, as this one supports reference inputs.",
-          );
-        }
       }
     }
   }
@@ -1621,6 +1849,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
         mimeType: 'image/*', // Only allow images for references
         multiSelect: true,
         maxSelection: remainingSlots,
+        showFooter: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -1660,7 +1889,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
   // Called when DROPPING a file on the new drop zone
   onReferenceImageDrop(event: DragEvent) {
     event.preventDefault();
-    if (this.referenceImages.length >= 3) return;
+    const config = MODEL_CONFIGS.find(
+      cfg => cfg.value === this.searchRequest.generationModel,
+    );
+    const maxReferenceImages = config?.capabilities.maxReferenceImages ?? 3;
+    if (this.referenceImages.length >= maxReferenceImages) return;
     const file = event.dataTransfer?.files[0];
     if (file && file.type.startsWith('image/')) {
       // For a direct drop, go straight to the cropper
@@ -1680,59 +1913,25 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   private handleReferenceImageAdded(): void {
-    if (this.referenceImages.length === 1) {
-      // If there's a start/end frame or a video for extension/concatenation, clear them.
-      const hadInputs = this.image1Preview || this.image2Preview;
-      const snackbarMessage =
-        'Start/end frames and extension videos have been cleared to use reference images.';
-      if (this.image1Preview || this.image2Preview) {
-        this.startImageAssetId = null;
-        this.image1Preview = null;
-        this._input1IsVideo = false;
-        this.sourceMediaItems[0] = null;
-        this.endImageAssetId = null;
-        this.image2Preview = null;
-        this._input2IsVideo = false;
-        this.sourceMediaItems[1] = null;
-        this.updateModeAndNotify();
-        this._snackBar.open(snackbarMessage, 'OK', {duration: 5000});
+    if (this.referenceImages.length > 0) {
+      this.clearStartEndFramesForIngredients('reference images');
+
+      const currentConfig = MODEL_CONFIGS.find(
+        cfg => cfg.value === this.searchRequest.generationModel,
+      );
+      if ((currentConfig?.capabilities.maxReferenceImages ?? 0) > 0) {
+        return;
       }
 
-      const currentModel = this.searchRequest.generationModel;
-      if (
-        currentModel === 'gemini-omni-flash-preview' ||
-        currentModel === 'gemini-omni-1.1-flash-preview'
-      ) {
-        // Already on an Omni model
-      } else {
-        const omniModel = this.generationModels.find(
-          m =>
-            m.value === 'gemini-omni-1.1-flash-preview' ||
-            m.value === 'gemini-omni-flash-preview',
+      const omniModel = this.generationModels.find(
+        m => m.value === DEFAULT_OMNI_MODEL,
+      );
+      if (omniModel && this.searchRequest.generationModel !== omniModel.value) {
+        this.selectModel(omniModel, {suppressTrimNotice: true});
+        handleSuccessSnackbar(
+          this._snackBar,
+          "We've switched to Gemini Omni 1.2 Flash because this model supports reference images.",
         );
-        if (omniModel) {
-          if (this.searchRequest.generationModel !== omniModel.value) {
-            this.selectModel(omniModel);
-            handleSuccessSnackbar(
-              this._snackBar,
-              "We've switched to the Gemini Omni model for you, as this one supports reference images.",
-            );
-          }
-        } else {
-          const veo31Model = this.generationModels.find(
-            m => m.value === 'veo-3.1-generate-001',
-          );
-          if (
-            veo31Model &&
-            this.searchRequest.generationModel !== veo31Model.value
-          ) {
-            this.selectModel(veo31Model);
-            handleSuccessSnackbar(
-              this._snackBar,
-              "We've switched to the Veo 3.1 model for you, as this one supports reference images.",
-            );
-          }
-        }
       }
     }
   }
@@ -1751,42 +1950,105 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.resetInputs();
 
     let hasAddedReferenceImage = false;
+    let hasAddedReferenceVideo = false;
 
     for (const asset of sourceAssets) {
-      if (asset.role === 'image_reference_asset') {
-        if (this.referenceImages.length < 3) {
+      if (asset.role === 'audio_reference') {
+        continue;
+      }
+
+      if (
+        asset.role === 'image_reference_asset' ||
+        asset.role === 'image_reference_style'
+      ) {
+        const maxImages =
+          MODEL_CONFIGS.find(
+            cfg => cfg.value === this.searchRequest.generationModel,
+          )?.capabilities.maxReferenceImages ?? 3;
+        if (asset.role === 'image_reference_style') {
+          this.referenceImagesType = 'STYLE';
+        }
+        if (this.referenceImages.length < maxImages) {
           this.referenceImages.push({
             sourceAssetId: asset.assetId,
             previewUrl: asset.presignedUrl,
           });
           hasAddedReferenceImage = true;
         }
-      } else {
-        // Assume other roles like 'input' are for start/end frames.
-        // Currently, we only process the first one.
-        if (!this.image1Preview) {
-          this.processInput(
-            // Construct a valid SourceAssetResponseDto from the EnrichedSourceAsset
-            {
-              id: asset.assetId,
-              gcsUri: asset.gcsUri,
-              presignedUrl: asset.presignedUrl,
-              mimeType: asset.gcsUri.endsWith('.mp4')
-                ? 'video/mp4'
-                : 'image/png',
-              originalFilename: 'remix-asset',
-              // Add other required fields with default/null values
-            } as SourceAssetResponseDto,
-            1,
-          );
+      } else if (asset.role === 'video_reference') {
+        const exists = this.referenceVideos.some(
+          v => v.type === 'source_asset' && v.id === asset.assetId,
+        );
+        if (!exists) {
+          this.referenceVideos.push({
+            id: asset.assetId,
+            type: 'source_asset',
+            previewUrl: asset.presignedUrl || '',
+            index: 0,
+          });
+          hasAddedReferenceVideo = true;
         }
+      } else if (asset.role === 'video_extension_source') {
+        this.processInput(
+          {
+            id: asset.assetId,
+            gcsUri: asset.gcsUri,
+            presignedUrl: asset.presignedUrl,
+            mimeType: 'video/mp4',
+            originalFilename: 'remix-asset',
+          } as SourceAssetResponseDto,
+          1,
+        );
+      } else if (asset.role === 'end_frame') {
+        this.processInput(
+          {
+            id: asset.assetId,
+            gcsUri: asset.gcsUri,
+            presignedUrl: asset.presignedUrl,
+            mimeType: 'image/png',
+            originalFilename: 'remix-asset',
+          } as SourceAssetResponseDto,
+          2,
+        );
+      } else if (!this.image1Preview) {
+        const isVideo = asset.gcsUri?.toLowerCase().endsWith('.mp4');
+        this.processInput(
+          {
+            id: asset.assetId,
+            gcsUri: asset.gcsUri,
+            presignedUrl: asset.presignedUrl,
+            mimeType: isVideo ? 'video/mp4' : 'image/png',
+            originalFilename: 'remix-asset',
+          } as SourceAssetResponseDto,
+          1,
+        );
       }
+    }
+
+    if (hasAddedReferenceVideo) {
+      this.handleOmniModelSwitch();
+      const maxVideos =
+        MODEL_CONFIGS.find(
+          cfg => cfg.value === this.searchRequest.generationModel,
+        )?.capabilities.maxReferenceVideos ?? 3;
+      this.referenceVideos = this.referenceVideos.slice(0, maxVideos);
     }
 
     if (hasAddedReferenceImage) {
       this.handleReferenceImageAdded();
-      this.currentMode = 'Ingredients to Video';
     }
+
+    if (hasAddedReferenceImage || hasAddedReferenceVideo) {
+      this.currentMode = 'Ingredients to Video';
+      this.selectedMode.set('Ingredients to Video');
+    } else if (
+      (this.image1Preview && !this._input1IsVideo) ||
+      (this.image2Preview && !this._input2IsVideo)
+    ) {
+      this.currentMode = 'Frames to Video';
+      this.selectedMode.set('Frames to Video');
+    }
+
     this.updateModeAndNotify();
     this.saveState();
   }

@@ -15,7 +15,7 @@
 from typing import Annotated
 
 from fastapi import Query
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PositiveInt, field_validator, model_validator
 
 from src.audios.audio_constants import LanguageEnum, VoiceEnum
 from src.common.base_dto import BaseDto, GenerationModelEnum
@@ -87,6 +87,10 @@ class CreateAudioDto(BaseDto):
     file_name: str | None = Field(
         default=None,
         description="Optional name for the generated media.",
+    )
+    folder_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
     )
 
     @field_validator("model")

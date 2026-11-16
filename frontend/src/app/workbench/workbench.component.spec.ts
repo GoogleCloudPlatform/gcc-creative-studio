@@ -17,6 +17,7 @@
 import {
   ComponentFixture,
   TestBed,
+  discardPeriodicTasks,
   fakeAsync,
   flush,
   tick,
@@ -1222,6 +1223,8 @@ describe('WorkbenchComponent', () => {
         'NotificationService not available',
         jasmine.any(Error),
       );
+      flush();
+      discardPeriodicTasks();
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
@@ -1285,6 +1288,8 @@ describe('WorkbenchComponent', () => {
         'NotificationService not available',
         jasmine.any(Error),
       );
+      flush();
+      discardPeriodicTasks();
     }));
   });
 

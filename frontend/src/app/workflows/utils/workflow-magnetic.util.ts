@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import {MODEL_CONFIGS} from '../../common/config/model-config';
+import {
+  MODEL_CONFIGS,
+  isGeminiOmniModel,
+} from '../../common/config/model-config';
 import {ReferenceImage} from '../../common/models/search.model';
 import {StepInputValue, StepOutputReference} from '../workflow.models';
 import {
@@ -245,8 +248,29 @@ export function getMaxAllowedInputs(
       if (modelConfig?.capabilities?.maxReferenceImages !== undefined) {
         return modelConfig.capabilities.maxReferenceImages;
       }
+      if (
+        isGeminiOmniModel(modelValue) ||
+        modelValue.toLowerCase().startsWith('veo-')
+      ) {
+        return 3;
+      }
     }
     return 14;
+  }
+  if (inputName === 'input_video') {
+    if (modelValue) {
+      const modelConfig = MODEL_CONFIGS.find(m => m.value === modelValue);
+      if (modelConfig?.type === 'VIDEO') {
+        return modelConfig.capabilities.maxReferenceVideos ?? 0;
+      }
+      if (
+        isGeminiOmniModel(modelValue) ||
+        modelValue.toLowerCase().startsWith('veo-')
+      ) {
+        return 0;
+      }
+    }
+    return 1;
   }
   if (inputName === LOOP_LINKED_ITEMS_INPUT) {
     return MAX_LOOP_LINKED_ITEMS;

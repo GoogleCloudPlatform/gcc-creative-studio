@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from pydantic import Field, model_validator
+from pydantic import Field, PositiveInt, model_validator
 
 from src.common.base_dto import BaseDto
 
@@ -86,6 +86,10 @@ class VtoDto(BaseDto):
     shoe_image: VtoInputLink | None = Field(
         default=None,
         description="The input for the shoes.",
+    )
+    folder_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
     )
 
     @model_validator(mode="after")

@@ -9,8 +9,8 @@ Welcome to the **Workflows** module! A workflow lets you chain multiple AI gener
 A workflow is a chain of connected **Steps** (nodes). Each step can use outputs from previous steps as its inputs.
 
 ```text
-[ User Input ] ──► [ Generate Text ] ──► [ Generate Image ] ──► [ Generate Video ]
-  (prompt)           (script/idea)         (keyframe img)         (final video)
+[ User Input ] ───► [ Text ] ────► [ Image ] ────► [ Video ]
+   (prompt)      (script/idea)   (keyframe img)  (final video)
 ```
 
 ### Lifecycle of a Run
@@ -24,10 +24,22 @@ When you click **Run**, your workflow doesn't just fire blindly—it goes throug
                     └──► (Needs user fix)  ──► [ NEEDS_ATTENTION (Paused) ] ──► Resume!
 ```
 
-1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`, `loop`) and link their inputs/outputs in the **Workflow Editor**.
+1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`, `loop`) and link their inputs/outputs in the **Workflow Editor**. A brand-new workflow must be **saved once** before **Run** is enabled (the button shows a "Save the workflow before running it" tooltip until then); after that, Run auto-saves any pending edits before starting.
 2. **Queue (`QUEUED`):** Submitted runs enter a fair round-robin queue across users so no single user hogs capacity.
 3. **Execute (`RUNNING`):** Steps run in order. The UI polls run progress and updates each step's state live.
 4. **Finish (`COMPLETED`):** All generated media and text outputs are saved and viewable in **Execution History**.
+
+### Text
+
+#### Google Search
+
+The Text step has a **"Google search"** checkbox (persisted as `settings.google_search`).
+
+- **What it does:** when checked, the step's Gemini call enables the Google Search grounding tool, so the model can answer with up-to-date web information. The output is still only `generated_text` (no citations or grounding metadata).
+- **Off by default:** new steps, predefined templates and older workflows without the key all behave exactly as before (`google_search: false`).
+- **Data egress:** when enabled, the model may send queries derived from your prompt to public Google Search. Avoid enabling it for prompts containing PII or secrets.
+- **Cost & latency:** grounded requests are billed separately by Vertex AI and add some latency to each call (the normal step timeout still applies).
+- **Restricted environments:** grounding may be unavailable under VPC Service Controls or data-residency restrictions; the step then fails like any other generation error.
 
 ---
 
@@ -103,9 +115,9 @@ To prevent one user's huge batch from blocking everyone else, the system uses a 
 Need to run the same steps for every image in a folder or every word in a list? The **Loop** node repeats its body once per item—inside a single run.
 
 ```text
-[ Loop ] ──current_item──► [ Generate Text ] ──► [ Generate Image ]
-    ▲       (1 per iteration)                            │
-    └──────────────────── loop_ending ◄──────────────────┘
+[ Loop ] ──current_item──► [ Text ] ──► [ Image ]
+    ▲       (1 per iteration)               │
+    └──────────── loop_ending ◄─────────────┘
 ```
 
 ### Step-by-Step
@@ -147,4 +159,16 @@ Every step in a run (loop or not) exposes its data through a single **`history`*
 * **Progress:** Loop and loop-body steps include `total_iterations`, so the UI can show `2 / 3`.
 * **History Sidebar:** Clicking a step opens a sidebar. With more than 1 entry, a left column lists `Iteration 1`, `Iteration 2`, ...; the right column shows collapsible **Inputs** (collapsed) and **Outputs** (expanded).
 * **Node Card Preview:** Cards only preview the **latest** entry (`history.at(-1)`), and only when none of the step's outputs are linked.
+
+---
+
+## 7. Output Folder (Image, Video, Audio)
+
+The **Output folder** setting (`settings.output_folder_id`) picks the Media Gallery folder where the node saves what it generates.
+
+* **Default = root:** `null` always means the root, shown as **All Media (root)**. The predefined value is save into the root. While a folder is selected, the select still offers **All Media (root)** to go back.
+* **Choosing a folder:** **Choose folder…** opens the same folder picker as the Loop node (full path on hover). The picker never returns the root; use the **All Media (root)** option for that.
+* **Same workspace only:** the folder must belong to the workspace the run executes in. Any workspace member may save into any folder of that workspace (same rule as moving items into a folder).
+* **Missing folder:** in the editor, a deleted, foreign or inaccessible folder shows as `Folder #<id>` with a warning icon. At run time the step fails with `INVALID_INPUT` before generating anything and the run pauses in `NEEDS_ATTENTION`; pick another folder (or the root) and resume.
+* **Folder names in the editor:** the folder tree is loaded lazily (only when a node has a folder or its select is opened), once per workspace, and shared by every node of the editor. It is refreshed after the folder picker closes; folders changed elsewhere (another tab or user) show after reloading the editor.
 

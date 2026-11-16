@@ -237,6 +237,43 @@ describe('ExecutionDetailsModalComponent', () => {
     expect(dialogRefSpy.close).toHaveBeenCalledWith({updated: true});
   });
 
+  it('should exclude system args like workspace_id from the resume form and args_override', () => {
+    workflowServiceSpy.getRunDetails.and.returnValue(
+      of({
+        ...mockNeedsAttentionRun,
+        input_args: {
+          ...mockNeedsAttentionRun.input_args,
+          workspace_id: 42,
+        },
+      }),
+    );
+    component.loadDetails();
+
+    const fieldNames = component.resumeFieldNames();
+    expect(fieldNames).not.toContain('workspace_id');
+    expect(fieldNames).toContain('prompt');
+    expect(component.resumeForm.contains('workspace_id')).toBeFalse();
+
+    workflowServiceSpy.resumeRun.and.returnValue(
+      of({
+        run_id: 'run-attention-1',
+        status: WorkflowRunStatusEnum.RUNNING,
+        execution_id: 'exec-3',
+      }),
+    );
+
+    component.submitResume();
+
+    expect(workflowServiceSpy.resumeRun).toHaveBeenCalledWith(
+      'wf-1',
+      'run-attention-1',
+      {
+        prompt: 'Original prompt text',
+        style: 'cinematic',
+      },
+    );
+  });
+
   it('should surface missing_inputs field errors when resumeRun fails with HTTP 422', () => {
     workflowServiceSpy.resumeRun.and.returnValue(
       throwError(() => ({
@@ -455,17 +492,15 @@ describe('ExecutionDetailsModalComponent', () => {
       expect(component.stepViewModels()[0].isExpanded).toBe(!wasExpanded);
     });
 
-    it('opens the sidebar on Enter only when the header itself is focused', () => {
+    it('opens the sidebar exactly once from the step history button', () => {
       const header = query('#modal-step-header-generate_image_1');
-      query('#modal-step-expand-generate_image_1').dispatchEvent(
-        new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}),
-      );
-      expect(dialogSpy.open).not.toHaveBeenCalled();
+      const historyButton = query('#modal-step-history-generate_image_1');
 
-      header.dispatchEvent(
-        new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}),
-      );
+      historyButton.click();
+
       expect(dialogSpy.open).toHaveBeenCalledTimes(1);
+      expect(historyButton.tagName).toBe('BUTTON');
+      expect(header.hasAttribute('role')).toBeFalse();
     });
   });
 });
