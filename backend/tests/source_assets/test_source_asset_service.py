@@ -1100,8 +1100,8 @@ async def test_finalize_direct_upload_skips_oversize_thumbnail_and_reloads_blob(
     assert service._get_gcs_blob_size("https://example.com/a.png") is None
     assert service._get_gcs_blob_size("gs://bucket-only") is None
     non_int_blob = MagicMock()
-    non_int_blob.size = True
+    non_int_blob.size = "not-an-int"
     mock_dependencies[
         "gcs_service"
     ].client.bucket.return_value.blob.return_value = non_int_blob
-    assert service._get_gcs_blob_size("gs://bucket/bool.png") is None
+    assert service._get_gcs_blob_size("gs://bucket/invalid.png") is None

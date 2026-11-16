@@ -778,8 +778,8 @@ class WorkflowDispatcher:
 # --- Process-wide throttled tick & post-auth hook wiring -----
 
 _last_tick_monotonic: float | None = None
-# SHA-256 digests (never raw tokens) skip redundant DB writes when unchanged;
-# _PENDING_POST_AUTH_ROTATIONS keeps only the latest coalesced rotation.
+# Track SHA-256 digests to skip redundant DB writes; pending coalescing queue
+# holds the latest (user, token, expiry) tuple so the background writer stays current.
 _LAST_STORED_USER_TOKEN_HASH: dict[int, str] = {}
 _BACKGROUND_POST_AUTH_TASKS: set[asyncio.Task[Any]] = set()
 _INFLIGHT_POST_AUTH_TOKEN_HASH: dict[int, str] = {}

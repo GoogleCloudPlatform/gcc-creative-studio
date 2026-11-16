@@ -732,11 +732,7 @@ class SourceAssetService:
         blob = bucket.blob(parts[1])
         if blob.size is None:
             blob.reload()
-        return (
-            blob.size
-            if isinstance(blob.size, int) and not isinstance(blob.size, bool)
-            else None
-        )
+        return blob.size if isinstance(blob.size, int) else None
 
     async def convert_to_png(self, file: UploadFile) -> bytes:
         """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
