@@ -56,7 +56,7 @@ async def generate_audio(
     """Generates audio based on the selected model (Lyria for music,
     Chirp/Gemini for speech).
     """
-    await workspace_auth.authorize_write(
+    await workspace_auth.authorize(
         workspace_id=create_audio_dto.workspace_id,
         user=current_user,
     )

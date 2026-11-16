@@ -17,10 +17,39 @@
 <div class="image-selector-container">
   <div class="selector-header">
     <h2 class="selector-title">{{ title }}</h2>
-    <ng-container *ngIf="!isFolderMode">
+    <div *ngIf="!isFolderMode" class="selector-header-actions">
+      <div *ngIf="canChooseUploadDestination()" class="upload-target-group">
+        <span class="workspace-control-label">Save to</span>
+        <div
+          class="segmented-toggle"
+          role="group"
+          aria-label="Upload destination"
+        >
+          <button
+            id="selector-upload-personal-btn"
+            type="button"
+            class="segment-btn"
+            [class.active]="uploadTargetMode() === 'personal'"
+            [attr.aria-pressed]="uploadTargetMode() === 'personal'"
+            (click)="setUploadTargetMode('personal')"
+          >
+            <span>My Workspace (Private)</span>
+          </button>
+          <button
+            id="selector-upload-active-btn"
+            type="button"
+            class="segment-btn"
+            [class.active]="uploadTargetMode() === 'active'"
+            [attr.aria-pressed]="uploadTargetMode() === 'active'"
+            (click)="setUploadTargetMode('active')"
+          >
+            <span>{{ activeWorkspaceName() }} (Team)</span>
+          </button>
+        </div>
+      </div>
       <mat-slide-toggle
         [(ngModel)]="shouldCrop"
-        class="mr-4"
+        class="mr-2"
         color="primary"
       >
         <span class="text-sm text-neutral-300">Edit before upload</span>
@@ -49,7 +78,7 @@
         [accept]="getAcceptTypes()"
         [disabled]="isUploading"
       />
-    </ng-container>
+    </div>
   </div>
 
   <div class="gallery-wrapper" 
@@ -66,6 +95,34 @@
       </div>
     </div>
 
+    <div *ngIf="canSwitchSource()" class="workspace-source-bar">
+      <span class="workspace-control-label">Browse</span>
+      <div class="segmented-toggle" role="group" aria-label="Source workspace">
+        <button
+          id="selector-source-personal-btn"
+          type="button"
+          class="segment-btn"
+          [class.active]="sourceMode() === 'personal'"
+          [attr.aria-pressed]="sourceMode() === 'personal'"
+          (click)="setSourceMode('personal')"
+        >
+          <mat-icon>person</mat-icon>
+          <span>My Workspace</span>
+        </button>
+        <button
+          id="selector-source-active-btn"
+          type="button"
+          class="segment-btn"
+          [class.active]="sourceMode() === 'active'"
+          [attr.aria-pressed]="sourceMode() === 'active'"
+          (click)="setSourceMode('active')"
+        >
+          <mat-icon>workspaces</mat-icon>
+          <span>{{ activeWorkspaceName() }}</span>
+        </button>
+      </div>
+    </div>
+
     <mat-tab-group>
       <mat-tab label="All Assets">
         <ng-template matTabContent>
@@ -78,8 +135,11 @@
             [includeExternal]="data.includeExternal ?? false"
             [firstIndexOnly]="data.firstIndexOnly ?? false"
             [initialFolderId]="initialFolderId"
+            [workspaceIdOverride]="selectedSourceWorkspaceId()"
+            [selectedKeys]="selectedKeysSet"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
+            (selectionCleared)="onSelectionCleared()"
             (currentFolderChange)="onCurrentFolderChange($event)"
           ></app-media-gallery>
         </ng-template>
@@ -95,8 +155,11 @@
             [itemType]="'source_asset'"
             [includeExternal]="data.includeExternal ?? false"
             [firstIndexOnly]="data.firstIndexOnly ?? false"
+            [workspaceIdOverride]="selectedSourceWorkspaceId()"
+            [selectedKeys]="selectedKeysSet"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
+            (selectionCleared)="onSelectionCleared()"
           ></app-media-gallery>
         </ng-template>
       </mat-tab>

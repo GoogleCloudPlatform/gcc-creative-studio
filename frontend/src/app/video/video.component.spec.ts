@@ -90,12 +90,17 @@ describe('VideoComponent', () => {
             startVeoGeneration: jasmine
               .createSpy('startVeoGeneration')
               .and.returnValue(of({})),
+            concatenateVideos: jasmine
+              .createSpy('concatenateVideos')
+              .and.returnValue(of({})),
           },
         },
         {
           provide: WorkspaceStateService,
           useValue: {
             getActiveWorkspaceId: () => 1,
+            personalWorkspaceId: () => 1,
+            getReferencedGenerationWorkspaceParams: () => ({workspaceId: 1}),
           },
         },
         {
@@ -329,5 +334,49 @@ describe('VideoComponent', () => {
     expect(component.startImageAssetId).toBe(321);
     expect(component.image1Preview).toBe('https://example.com/frame.png');
     expect(showSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should send personal workspaceId and shared contextWorkspaceId on searchTerm', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 11,
+      contextWorkspaceId: 22,
+    });
+    component.searchRequest.prompt = 'sunrise timelapse';
+    component.currentMode = 'Text to Video';
+
+    component.searchTerm();
+
+    const payload = searchService.startVeoGeneration.calls.mostRecent().args[0];
+    expect(payload.workspaceId).toBe(11);
+    expect(payload.contextWorkspaceId).toBe(22);
+  });
+
+  it('should send concatenateVideos payload without contextWorkspaceId in concatenate mode', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 11,
+      contextWorkspaceId: 22,
+    });
+    component.onModeChanged('Concatenate Video');
+    component.startImageAssetId = 101;
+    component.endImageAssetId = 102;
+    component.searchRequest.aspectRatio = '16:9';
+
+    component.searchTerm();
+
+    const payload = searchService.concatenateVideos.calls.mostRecent().args[0];
+    expect(payload).toEqual({
+      workspaceId: 11,
+      name: 'Concatenated Video',
+      inputs: [
+        {id: 101, type: 'source_asset'},
+        {id: 102, type: 'source_asset'},
+      ],
+      aspectRatio: '16:9',
+    });
+    expect('contextWorkspaceId' in payload).toBeFalse();
   });
 });

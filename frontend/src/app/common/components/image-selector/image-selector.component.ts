@@ -41,6 +41,7 @@ import {
 } from '../../models/folder.model';
 import {MediaGalleryComponent} from '../../../gallery/media-gallery/media-gallery.component';
 import {ImageCropperDialogComponent} from '../image-cropper-dialog/image-cropper-dialog.component';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 
 export type SelectorMimeType =
   | 'image/*'
@@ -77,6 +78,12 @@ export interface ImageSelectorDialogData {
    * and always resolve its first index.
    */
   firstIndexOnly?: boolean;
+  /** Optional initial browse source override ('personal' vs 'active'). */
+  defaultSourceMode?: 'personal' | 'active';
+  /** Locks both browse and upload destinations to the personal workspace. */
+  lockToPersonalWorkspace?: boolean;
+  /** Optional dialog header override. */
+  titleOverride?: string;
 }
 
 const ROOT_FOLDER_LABEL = 'All Media';
@@ -91,6 +98,7 @@ export class ImageSelectorComponent implements OnInit {
   isUploading = false;
   isDragging = false;
   selectedMediaItems = new Map<string, any>();
+  selectedKeysSet = new Set<string>();
   shouldCrop = false;
   currentUserEmail: string | null = null;
 
@@ -112,6 +120,60 @@ export class ImageSelectorComponent implements OnInit {
   readonly canConfirmFolder = computed(
     () => this.currentLocation().folderId !== null,
   );
+  readonly sourceMode = signal<'personal' | 'active'>('active');
+  readonly uploadTargetMode = signal<'personal' | 'active'>('personal');
+  readonly activeWorkspaceName = computed(
+    () =>
+      this.workspaceStateService.activeWorkspace()?.name || 'Active Workspace',
+  );
+  readonly canSwitchSource = computed(() => {
+    const personalId = this.workspaceStateService.personalWorkspaceId();
+    const activeId = this.workspaceStateService.activeWorkspaceId();
+    return (
+      !this.isFolderMode &&
+      !this.data.lockToPersonalWorkspace &&
+      personalId !== null &&
+      activeId !== null &&
+      personalId !== activeId
+    );
+  });
+  readonly selectedSourceWorkspaceId = computed<number | null>(() => {
+    if (this.data.lockToPersonalWorkspace) {
+      return this.workspaceStateService.personalWorkspaceId();
+    }
+    if (!this.canSwitchSource()) {
+      return null;
+    }
+    return this.sourceMode() === 'personal'
+      ? this.workspaceStateService.personalWorkspaceId()
+      : this.workspaceStateService.activeWorkspaceId();
+  });
+  readonly canChooseUploadDestination = computed(() => {
+    const personalId = this.workspaceStateService.personalWorkspaceId();
+    const activeId = this.workspaceStateService.activeWorkspaceId();
+    return (
+      !this.isFolderMode &&
+      !this.data.lockToPersonalWorkspace &&
+      personalId !== null &&
+      activeId !== null &&
+      personalId !== activeId &&
+      this.workspaceStateService.canEditActiveWorkspace()
+    );
+  });
+  readonly uploadTargetWorkspaceId = computed<number | null>(() => {
+    if (
+      !this.data.lockToPersonalWorkspace &&
+      this.uploadTargetMode() === 'active' &&
+      this.workspaceStateService.canEditActiveWorkspace()
+    ) {
+      return this.workspaceStateService.activeWorkspaceId();
+    }
+    return (
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.activeWorkspaceId() ??
+      null
+    );
+  });
 
   @ViewChild(MediaGalleryComponent) mediaGallery!: MediaGalleryComponent;
 
@@ -120,18 +182,35 @@ export class ImageSelectorComponent implements OnInit {
     private sourceAssetService: SourceAssetService,
     private dialog: MatDialog,
     private userService: UserService,
+    private workspaceStateService: WorkspaceStateService,
     @Inject(MAT_DIALOG_DATA)
     public data: ImageSelectorDialogData,
   ) {
     this.dialogRef.addPanelClass('image-selector-dialog');
     this.isFolderMode = (data.selectionTarget ?? 'media') === 'folder';
-    this.title = this.isFolderMode ? 'Select a Folder' : 'Select Media';
+    this.title =
+      data.titleOverride ??
+      (this.isFolderMode ? 'Select a Folder' : 'Select Media');
     this.initialFolderId = data.initialFolderId ?? null;
+    if (data.lockToPersonalWorkspace) {
+      this.sourceMode.set('personal');
+      this.uploadTargetMode.set('personal');
+    } else if (data.defaultSourceMode) {
+      this.sourceMode.set(data.defaultSourceMode);
+    }
   }
 
   ngOnInit(): void {
     const userDetails = this.userService.getUserDetails();
     this.currentUserEmail = userDetails?.email || null;
+  }
+
+  setSourceMode(mode: 'personal' | 'active'): void {
+    this.sourceMode.set(mode);
+  }
+
+  setUploadTargetMode(mode: 'personal' | 'active'): void {
+    this.uploadTargetMode.set(mode);
   }
 
   onCurrentFolderChange(location: GalleryFolderLocation): void {
@@ -166,6 +245,8 @@ export class ImageSelectorComponent implements OnInit {
       file.type.startsWith('audio/') ||
       /\.(mp4|webm|mov|avi|mkv|mp3|wav|ogg|m4a|aac|flac|wma)$/i.test(file.name);
 
+    const targetWorkspaceId = this.uploadTargetWorkspaceId();
+
     if (isImage) {
       if (this.shouldCrop) {
         // If shouldCrop is true, open the cropper dialog
@@ -173,6 +254,7 @@ export class ImageSelectorComponent implements OnInit {
           imageFile: file,
           assetType: this.data.assetType,
           enableUpscale: this.data.enableUpscale,
+          targetWorkspaceId,
         });
 
         cropperDialogRef.subscribe(
@@ -186,7 +268,12 @@ export class ImageSelectorComponent implements OnInit {
         // If shouldCrop is false, upload directly
         this.isUploading = true;
         this.sourceAssetService
-          .uploadAsset(file, {assetType: this.data.assetType})
+          .uploadAsset(
+            file,
+            {assetType: this.data.assetType},
+            targetWorkspaceId,
+            null,
+          )
           .pipe(finalize(() => (this.isUploading = false)))
           .subscribe(asset => {
             if (asset) {
@@ -209,7 +296,12 @@ export class ImageSelectorComponent implements OnInit {
 
   private uploadMediaDirectly(file: File): Observable<SourceAssetResponseDto> {
     // No options needed; backend handles video/audio aspect ratio
-    return this.sourceAssetService.uploadAsset(file);
+    return this.sourceAssetService.uploadAsset(
+      file,
+      {},
+      this.uploadTargetWorkspaceId(),
+      null,
+    );
   }
 
   // Keep for backwards compatibility
@@ -323,8 +415,17 @@ export class ImageSelectorComponent implements OnInit {
       }
       this.selectedMediaItems.set(id, selection);
     }
-    // Recreate Map to trigger change detection
+    // Recreate Map and Set to trigger change detection
     this.selectedMediaItems = new Map(this.selectedMediaItems);
+    this.selectedKeysSet = new Set(this.selectedMediaItems.keys());
+  }
+
+  onSelectionCleared(): void {
+    if (this.selectedMediaItems.size === 0) {
+      return;
+    }
+    this.selectedMediaItems = new Map();
+    this.selectedKeysSet = new Set();
   }
 
   onMediaItemSelected(selection: MediaItemSelection): void {

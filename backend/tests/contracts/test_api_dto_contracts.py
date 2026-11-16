@@ -19,21 +19,39 @@ import pathlib
 import re
 import typing
 
+from fastapi.testclient import TestClient
 import fastapi.routing as fr
 from pydantic import BaseModel, ValidationError
 import pytest
 
 from main import app
-from src.common.base_dto import AspectRatioEnum, MimeTypeEnum
+from src.audios.audio_service import AudioService
+from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.auth.auth_guard import get_current_user
+from src.common.base_dto import (
+    AspectRatioEnum,
+    GenerationModelEnum,
+    MimeTypeEnum,
+)
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
     MediaItemModel,
     SourceMediaItemLink,
 )
-from src.galleries.dto.gallery_response_dto import SourceMediaItemLinkResponse
+from src.galleries.dto.gallery_response_dto import (
+    MediaItemResponse,
+    SourceMediaItemLinkResponse,
+)
 from src.images.dto.create_imagen_dto import CreateImagenDto
-from src.workbench.dto.workbench_dto import VideoTimeline
+from src.images.dto.vto_dto import VtoDto
+from src.images.imagen_service import ImagenService
+from src.users.user_model import UserModel, UserRoleEnum
+from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
+from src.videos.dto.create_veo_dto import CreateVeoDto
+from src.videos.veo_service import VeoService
+from src.workbench.dto.workbench_dto import RenderTimelineRequest, VideoTimeline
 from src.workflows.queue.run_state_service import _snapshot_steps
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.workflows.schema.workflow_model import (
     GenerateAudioInputs,
     GenerateAudioSettings,
@@ -507,3 +525,239 @@ def test_request_dtos_stay_strict_while_persisted_models_ignore_extra_keys(
         }
     )
     assert resp_link.media_item_id == 5
+
+
+def test_generation_context_workspace_contract_strictness() -> None:
+    """Only context-aware DTOs accept contextWorkspaceId; strict ones reject it."""
+    CreateImagenDto.model_validate(
+        {"prompt": "chair", "workspaceId": 1, "contextWorkspaceId": 5}
+    )
+    CreateVeoDto.model_validate(
+        {"prompt": "clip", "workspaceId": 1, "contextWorkspaceId": 5}
+    )
+    VtoDto.model_validate(
+        {
+            "workspaceId": 1,
+            "contextWorkspaceId": 5,
+            "personImage": {"sourceAssetId": 5},
+            "topImage": {"sourceAssetId": 6},
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        CreateAudioDto.model_validate(
+            {"prompt": "synth", "workspaceId": 1, "contextWorkspaceId": 5}
+        )
+    with pytest.raises(ValidationError):
+        ConcatenateVideosDto.model_validate(
+            {
+                "workspaceId": 1,
+                "contextWorkspaceId": 5,
+                "inputs": [
+                    {"id": 10, "type": "media_item"},
+                    {"id": 11, "type": "source_asset"},
+                ],
+            }
+        )
+    with pytest.raises(ValidationError):
+        RenderTimelineRequest.model_validate(
+            {"timeline_id": 7, "context_workspace_id": 5}
+        )
+
+
+def test_shared_workspace_generation_routes_accept_browser_payloads() -> None:
+    """FastAPI generation routes accept browser shared-workspace JSON shapes."""
+
+    class _StubWorkspaceAuth:
+        def __init__(self) -> None:
+            self.authorized_ids: list[int] = []
+
+        async def authorize(self, workspace_id: int, user: UserModel) -> None:
+            del user
+            self.authorized_ids.append(workspace_id)
+
+    def _stub_response(mime_type: MimeTypeEnum) -> MediaItemResponse:
+        return MediaItemResponse(
+            id=101,
+            workspace_id=1,
+            user_email="creator@example.com",
+            mime_type=mime_type,
+            model=GenerationModelEnum.IMAGEN_3_002,
+            aspect_ratio=AspectRatioEnum.RATIO_1_1,
+            gcs_uris=[],
+            presigned_urls=[],
+            presigned_thumbnail_urls=[],
+        )
+
+    class _StubImagenService:
+        def __init__(self) -> None:
+            self.imagen_dtos: list[CreateImagenDto] = []
+            self.vto_dtos: list[VtoDto] = []
+
+        async def start_image_generation_job(
+            self,
+            request_dto: CreateImagenDto,
+            user: UserModel,
+            executor: object,
+        ) -> MediaItemResponse:
+            del user, executor
+            self.imagen_dtos.append(request_dto)
+            return _stub_response(MimeTypeEnum.IMAGE_PNG)
+
+        async def start_vto_generation_job(
+            self, request_dto: VtoDto, user: UserModel, executor: object
+        ) -> MediaItemResponse:
+            del user, executor
+            self.vto_dtos.append(request_dto)
+            return _stub_response(MimeTypeEnum.IMAGE_PNG)
+
+    class _StubVeoService:
+        def __init__(self) -> None:
+            self.veo_dtos: list[CreateVeoDto] = []
+            self.concat_dtos: list[ConcatenateVideosDto] = []
+
+        async def start_video_generation_job(
+            self,
+            request_dto: CreateVeoDto,
+            user: UserModel,
+            executor: object,
+        ) -> MediaItemResponse:
+            del user, executor
+            self.veo_dtos.append(request_dto)
+            return _stub_response(MimeTypeEnum.VIDEO_MP4)
+
+        async def start_video_concatenation_job(
+            self,
+            request_dto: ConcatenateVideosDto,
+            user: UserModel,
+            executor: object,
+        ) -> MediaItemResponse:
+            del user, executor
+            self.concat_dtos.append(request_dto)
+            return _stub_response(MimeTypeEnum.VIDEO_MP4)
+
+    class _StubAudioService:
+        def __init__(self) -> None:
+            self.audio_dtos: list[CreateAudioDto] = []
+
+        async def start_audio_generation_job(
+            self,
+            request_dto: CreateAudioDto,
+            user: UserModel,
+            executor: object,
+        ) -> MediaItemResponse:
+            del user, executor
+            self.audio_dtos.append(request_dto)
+            return _stub_response(MimeTypeEnum.AUDIO_WAV)
+
+    stub_user = UserModel(
+        id=1,
+        email="creator@example.com",
+        roles=[UserRoleEnum.USER],
+        name="Creator",
+    )
+    stub_auth = _StubWorkspaceAuth()
+    stub_imagen = _StubImagenService()
+    stub_veo = _StubVeoService()
+    stub_audio = _StubAudioService()
+
+    try:
+        prev_executor = app.state.executor
+        had_executor = True
+    except AttributeError:
+        prev_executor = None
+        had_executor = False
+    app.state.executor = object()
+    app.dependency_overrides[get_current_user] = lambda: stub_user
+    app.dependency_overrides[WorkspaceAuth] = lambda: stub_auth
+    app.dependency_overrides[ImagenService] = lambda: stub_imagen
+    app.dependency_overrides[VeoService] = lambda: stub_veo
+    app.dependency_overrides[AudioService] = lambda: stub_audio
+
+    try:
+        client = TestClient(app)
+
+        vto_res = client.post(
+            "/api/images/generate-images-for-vto",
+            json={
+                "workspaceId": 1,
+                "contextWorkspaceId": 5,
+                "numberOfMedia": 4,
+                "personImage": {"sourceAssetId": 5},
+                "topImage": {
+                    "sourceMediaItem": {"mediaItemId": 9, "mediaIndex": 0}
+                },
+            },
+        )
+        assert vto_res.status_code == 200, vto_res.text
+        assert stub_imagen.vto_dtos[0].context_workspace_id == 5
+
+        img_res = client.post(
+            "/api/images/generate-images",
+            json={
+                "prompt": "studio bottle",
+                "workspaceId": 1,
+                "contextWorkspaceId": 5,
+                "aspectRatio": "1:1",
+                "numberOfMedia": 1,
+                "useBrandGuidelines": True,
+            },
+        )
+        assert img_res.status_code == 200, img_res.text
+        assert stub_imagen.imagen_dtos[0].context_workspace_id == 5
+
+        veo_res = client.post(
+            "/api/videos/generate-videos",
+            json={
+                "prompt": "slow dolly shot",
+                "workspaceId": 1,
+                "contextWorkspaceId": 5,
+                "aspectRatio": "16:9",
+                "numberOfMedia": 1,
+            },
+        )
+        assert veo_res.status_code == 200, veo_res.text
+        assert stub_veo.veo_dtos[0].context_workspace_id == 5
+
+        concat_res = client.post(
+            "/api/videos/concatenate",
+            json={
+                "name": "Concatenated Video",
+                "workspaceId": 1,
+                "inputs": [
+                    {"id": 10, "type": "media_item"},
+                    {"id": 11, "type": "source_asset"},
+                ],
+                "aspectRatio": "16:9",
+            },
+        )
+        assert concat_res.status_code == 200, concat_res.text
+        assert len(stub_veo.concat_dtos) == 1
+
+        audio_res = client.post(
+            "/api/audios/generate",
+            json={
+                "prompt": "warm acoustic guitar",
+                "workspaceId": 1,
+                "sampleCount": 1,
+            },
+        )
+        assert audio_res.status_code == 200, audio_res.text
+        assert len(stub_audio.audio_dtos) == 1
+
+        audio_extra_res = client.post(
+            "/api/audios/generate",
+            json={
+                "prompt": "warm acoustic guitar",
+                "workspaceId": 1,
+                "contextWorkspaceId": 5,
+            },
+        )
+        assert audio_extra_res.status_code == 422
+        assert stub_auth.authorized_ids == [1, 1, 1, 1, 1]
+    finally:
+        app.dependency_overrides.clear()
+        if had_executor:
+            app.state.executor = prev_executor
+        else:
+            del app.state.executor

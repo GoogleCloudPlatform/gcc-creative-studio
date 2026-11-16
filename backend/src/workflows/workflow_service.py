@@ -34,6 +34,7 @@ from src.folders.repository.folder_repository import FolderRepository
 from src.images.imagen_service import ImagenService
 from src.source_assets.source_asset_service import SourceAssetService
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import resolve_generation_context
 from src.workflows.dto.batch_execution_dto import (
     BatchExecutionRequestDto,
     BatchExecutionResponseDto,
@@ -609,12 +610,19 @@ class WorkflowService:
                                 )
 
                             w_id = int(workspace_id)
+                            gen_ctx = await resolve_generation_context(
+                                self.workflow_run_repository.db,
+                                w_id,
+                                user,
+                                resolve_folder=False,
+                            )
+                            ingest_ws_id = gen_ctx.output_workspace_id
                             uris = [value] if is_gcs_string else value
 
                             assets = [
                                 await self.source_asset_service.create_from_gcs_uri(
                                     user=user,
-                                    workspace_id=w_id,
+                                    workspace_id=ingest_ws_id,
                                     gcs_uri=uri,
                                 )
                                 for uri in uris

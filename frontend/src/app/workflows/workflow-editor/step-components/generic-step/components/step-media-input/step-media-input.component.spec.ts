@@ -23,6 +23,7 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {of, throwError} from 'rxjs';
 import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
 import {SourceAssetService} from '../../../../../../common/services/source-asset.service';
+import {WorkspaceStateService} from '../../../../../../services/workspace/workspace-state.service';
 import {StepMediaInputComponent} from './step-media-input.component';
 
 describe('StepMediaInputComponent', () => {
@@ -30,6 +31,7 @@ describe('StepMediaInputComponent', () => {
   let fixture: ComponentFixture<StepMediaInputComponent>;
   let mockSourceAssetService: jasmine.SpyObj<SourceAssetService>;
   let mockDialog: jasmine.SpyObj<MatDialog>;
+  let mockWorkspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
 
   const mockCompatibleOutputs = [
     {
@@ -53,6 +55,12 @@ describe('StepMediaInputComponent', () => {
     mockSourceAssetService = jasmine.createSpyObj('SourceAssetService', [
       'uploadAsset',
     ]);
+    mockWorkspaceStateService = jasmine.createSpyObj('WorkspaceStateService', [
+      'personalWorkspaceId',
+      'getActiveWorkspaceId',
+    ]);
+    mockWorkspaceStateService.personalWorkspaceId.and.returnValue(null);
+    mockWorkspaceStateService.getActiveWorkspaceId.and.returnValue(null);
     mockDialog = jasmine.createSpyObj('MatDialog', ['open']);
     mockDialog.open.and.returnValue({
       afterClosed: () => of(null),
@@ -63,6 +71,10 @@ describe('StepMediaInputComponent', () => {
       imports: [ReactiveFormsModule, MatMenuModule],
       providers: [
         {provide: SourceAssetService, useValue: mockSourceAssetService},
+        {
+          provide: WorkspaceStateService,
+          useValue: mockWorkspaceStateService,
+        },
         {provide: MatDialog, useValue: mockDialog},
         {
           provide: MatSnackBar,
@@ -402,6 +414,8 @@ describe('StepMediaInputComponent', () => {
       expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledOnceWith(
         mockFile,
         {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE},
+        null,
+        null,
       );
       expect(component.control.value).toEqual([
         {
@@ -435,6 +449,8 @@ describe('StepMediaInputComponent', () => {
       expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledOnceWith(
         mockFile,
         {assetType: AssetTypeEnum.GENERIC_VIDEO},
+        null,
+        null,
       );
       expect(component.control.value).toEqual([
         {
@@ -442,6 +458,36 @@ describe('StepMediaInputComponent', () => {
           previewUrl: 'https://example.com/video_thumb.png',
         },
       ]);
+    });
+
+    it('should route dropped uploads to personal workspace while viewing shared workspace', () => {
+      component.type = 'image';
+      component.control.setValue(null);
+      mockWorkspaceStateService.personalWorkspaceId.and.returnValue(11);
+      mockWorkspaceStateService.getActiveWorkspaceId.and.returnValue(22);
+      const mockFile = new File(['image content'], 'shared-drop.png', {
+        type: 'image/png',
+      });
+      const mockDropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {files: [mockFile]},
+      } as unknown as DragEvent;
+      mockSourceAssetService.uploadAsset.and.returnValue(
+        of({
+          id: 555,
+          presignedUrl: 'https://example.com/shared.png',
+          presignedThumbnailUrl: 'https://example.com/shared_thumb.png',
+        } as any),
+      );
+
+      component.onReferenceImageDrop(mockDropEvent);
+
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledOnceWith(
+        mockFile,
+        {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE},
+        11,
+        null,
+      );
     });
 
     it('should log the error and not add an item when the upload fails', () => {

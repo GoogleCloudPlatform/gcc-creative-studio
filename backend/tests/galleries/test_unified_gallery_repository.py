@@ -303,6 +303,41 @@ async def test_filter_linked_loop_items_without_ids_skips_query(mock_db):
 
 
 @pytest.mark.anyio
+async def test_lookup_linked_loop_item_workspaces_maps_and_skips_empty(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+    assert (
+        await repo.lookup_linked_loop_item_workspaces(
+            media_item_ids=[],
+            source_asset_ids=[],
+            mime_type_prefix="image",
+        )
+        == {}
+    )
+    mock_db.execute.assert_not_awaited()
+
+    result = MagicMock()
+    result.__iter__.return_value = iter(
+        [
+            ("media_item", 3, 20),
+            ("source_asset", 4, 30),
+            ("media_item", 5, None),
+        ]
+    )
+    mock_db.execute.return_value = result
+
+    ws_map = await repo.lookup_linked_loop_item_workspaces(
+        media_item_ids=[3, 5],
+        source_asset_ids=[4],
+        mime_type_prefix="image",
+    )
+
+    assert ws_map == {("media_item", 3): 20, ("source_asset", 4): 30}
+    sql = _compiled_sql(mock_db.execute.await_args.args[0])
+    assert "workspace_id =" not in sql
+    assert "deleted_at IS NULL" in sql
+
+
+@pytest.mark.anyio
 async def test_query_contradictory_filters_prune_both_branches(mock_db):
     repo = UnifiedGalleryRepository(db=mock_db)
 

@@ -99,7 +99,7 @@ def test_generate_videos_success(client, mock_veo_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 123
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
     mock_veo_service.start_video_generation_job.assert_called_once()
 
 
@@ -172,7 +172,7 @@ def test_concatenate_videos_success(
 
     assert response.status_code == 200
     assert response.json()["id"] == 456
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
     mock_veo_service.start_video_concatenation_job.assert_called_once()
 
 
@@ -199,7 +199,7 @@ def test_generate_videos_value_error(client, mock_veo_service):
 def test_generate_videos_http_exception(client, mock_workspace_auth):
     from fastapi import HTTPException
 
-    mock_workspace_auth.authorize_write.side_effect = HTTPException(
+    mock_workspace_auth.authorize.side_effect = HTTPException(
         status_code=403, detail="Forbidden workspace access"
     )
 
@@ -237,7 +237,7 @@ def test_generate_videos_general_exception(client, mock_veo_service):
 def test_concatenate_videos_http_exception(client, mock_workspace_auth):
     from fastapi import HTTPException
 
-    mock_workspace_auth.authorize_write.side_effect = HTTPException(
+    mock_workspace_auth.authorize.side_effect = HTTPException(
         status_code=403, detail="Forbidden workspace access"
     )
 

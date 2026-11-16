@@ -32,6 +32,7 @@ import {
   FolderTreeNode,
 } from '../../../../../../common/models/folder.model';
 import {FolderService} from '../../../../../../common/services/folder.service';
+import {WorkspaceScope} from '../../../../../../common/models/workspace.model';
 import {WorkspaceStateService} from '../../../../../../services/workspace/workspace-state.service';
 import {WorkflowFolderTreeStore} from '../../../../workflow-folder-tree.store';
 import {
@@ -629,6 +630,40 @@ describe('StepFolderInputComponent', () => {
       afterClosed$.next(null);
 
       expect(other.component.folderOption().label).toBe('Summer Final');
+    });
+
+    it('hides the Output folder picker in a shared workspace while keeping Loop folders enabled', () => {
+      const wsSpy = TestBed.inject(WorkspaceStateService) as unknown as Record<
+        string,
+        unknown
+      >;
+      wsSpy['activeWorkspace'] = () => ({
+        id: 5,
+        name: 'Team Space',
+        scope: WorkspaceScope.PRIVATE,
+        ownerId: 1,
+        members: [],
+        createdAt: '',
+        updatedAt: '',
+      });
+      try {
+        const output = mountOutput(2);
+        expect(query(output.fixture, '.output-folder-field')).toBeNull();
+        expect(
+          query(output.fixture, '.output-folder-personal-notice')?.textContent,
+        ).toContain("Outputs save to each runner's My Workspace");
+
+        output.component.openFolderSelector();
+        expect(dialogSpy.open).not.toHaveBeenCalled();
+
+        const loop = mountLoop(2);
+        expect(query(loop.fixture, '.loop-folder-field')).not.toBeNull();
+        expect(
+          query(loop.fixture, '.output-folder-personal-notice'),
+        ).toBeNull();
+      } finally {
+        delete wsSpy['activeWorkspace'];
+      }
     });
   });
 });

@@ -67,7 +67,6 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
-from src.folders.output_folder import resolve_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
@@ -79,6 +78,7 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.source_assets.schema.source_asset_model import AssetScopeEnum
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import resolve_generation_context
 
 logger = logging.getLogger(__name__)
 
@@ -1305,13 +1305,12 @@ class AudioService:
         user: UserModel,
         executor: ThreadPoolExecutor,
     ) -> MediaItemResponse:
-
         is_music = request_dto.model in self.MUSIC_MODELS
-        folder_id = await resolve_output_folder_id(
+        ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
             user,
-            request_dto.folder_id,
+            requested_folder_id=request_dto.folder_id,
         )
         media_post_to_save = MediaItemModel(
             user_email=user.email,
@@ -1319,8 +1318,8 @@ class AudioService:
             mime_type=MimeTypeEnum.AUDIO_WAV,
             model=request_dto.model,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=ctx.resolved_folder_id,
             prompt=request_dto.prompt,
             original_prompt=request_dto.prompt,
             num_media=request_dto.sample_count,
@@ -1335,11 +1334,14 @@ class AudioService:
             descriptions=request_dto.descriptions,
         )
         saved_item = await self.media_repo.create(media_post_to_save)
+        worker_dto = request_dto.model_copy(
+            update={"workspace_id": ctx.output_workspace_id}
+        )
 
         executor.submit(
             _process_audio_in_background,
             saved_item.id,
-            request_dto,
+            worker_dto,
             user.email,
             user.id,
         )

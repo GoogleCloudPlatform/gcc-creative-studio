@@ -29,6 +29,7 @@ export type ImagenRequest = {
   sourceAssetIds?: number[];
   sourceMediaItems?: SourceMediaItemLink[];
   workspaceId?: number;
+  contextWorkspaceId?: number;
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   googleSearch?: boolean;
@@ -78,6 +79,7 @@ export type VeoRequest = {
   sourceVideoAssetId?: AssetReferenceDto;
   sourceMediaItems?: SourceMediaItemLink[];
   workspaceId?: number;
+  contextWorkspaceId?: number;
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   referenceImages?: ReferenceImageDto[];

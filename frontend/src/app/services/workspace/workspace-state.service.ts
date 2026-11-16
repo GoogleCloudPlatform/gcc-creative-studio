@@ -20,6 +20,15 @@ import {UserModel, UserRolesEnum} from '../../common/models/user.model';
 import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 
+export interface TargetWorkspaceParam {
+  workspaceId: number | null;
+}
+
+export interface ReferencedGenerationWorkspaceParams {
+  workspaceId: number | null;
+  contextWorkspaceId?: number;
+}
+
 export type PermissionUser = Pick<UserModel, 'id' | 'roles'> | null | undefined;
 export type IdentityUser = Pick<UserModel, 'id' | 'email'> | null | undefined;
 
@@ -288,5 +297,22 @@ export class WorkspaceStateService {
       );
     }
     return false;
+  }
+
+  getTargetWorkspaceParam(): TargetWorkspaceParam {
+    return {
+      workspaceId: this.personalWorkspaceId() ?? this.getActiveWorkspaceId(),
+    };
+  }
+
+  getReferencedGenerationWorkspaceParams(): ReferencedGenerationWorkspaceParams {
+    const activeId = this.getActiveWorkspaceId();
+    const personalId = this.personalWorkspaceId();
+    const workspaceId = personalId ?? activeId;
+    const contextWorkspaceId =
+      activeId && personalId && activeId !== personalId ? activeId : undefined;
+    return contextWorkspaceId !== undefined
+      ? {workspaceId, contextWorkspaceId}
+      : {workspaceId};
   }
 }

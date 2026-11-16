@@ -14,45 +14,55 @@
  limitations under the License.
 -->
 
-<mat-form-field
-  [class]="domNames().fieldClass"
-  appearance="outline"
-  [title]="folderOption().path"
-  (mousedown)="$event.stopPropagation()"
+<div
+  *ngIf="isOutputFolderRoutedToPersonal(); else folderSelect"
+  class="output-folder-personal-notice text-xs text-neutral-400 flex items-center gap-1.5 py-1"
 >
-  <mat-select
-    [formControl]="control()"
-    [id]="selectId()"
-    [aria-label]="label()"
-    [placeholder]="folderOption().label"
-    (openedChange)="onOpenedChange($event)"
-    (selectionChange)="onSelectionChange($event)"
+  <mat-icon class="text-base !w-4 !h-4 leading-none">folder_special</mat-icon>
+  <span>Outputs save to each runner's My Workspace</span>
+</div>
+
+<ng-template #folderSelect>
+  <mat-form-field
+    [class]="domNames().fieldClass"
+    appearance="outline"
+    [title]="folderOption().path"
+    (mousedown)="$event.stopPropagation()"
   >
-    <mat-option
-      *ngIf="showRootOption()"
-      [class]="domNames().rootOptionClass"
-      [value]="null"
-      >{{ rootLabel }}</mat-option
+    <mat-select
+      [formControl]="control()"
+      [id]="selectId()"
+      [aria-label]="label()"
+      [placeholder]="folderOption().label"
+      (openedChange)="onOpenedChange($event)"
+      (selectionChange)="onSelectionChange($event)"
     >
-    <mat-option
-      *ngFor="let option of folderOptions(); trackBy: trackFolderOption"
-      [class]="domNames().currentOptionClass"
-      [value]="option.value"
-      [disabled]="option.isPlaceholder"
-      [title]="option.path"
-      >{{ option.label }}</mat-option
+      <mat-option
+        *ngIf="showRootOption()"
+        [class]="domNames().rootOptionClass"
+        [value]="null"
+        >{{ rootLabel }}</mat-option
+      >
+      <mat-option
+        *ngFor="let option of folderOptions(); trackBy: trackFolderOption"
+        [class]="domNames().currentOptionClass"
+        [value]="option.value"
+        [disabled]="option.isPlaceholder"
+        [title]="option.path"
+        >{{ option.label }}</mat-option
+      >
+      <mat-option [class]="domNames().chooseOptionClass" [value]="chooseValue"
+        >Choose folder…</mat-option
+      >
+    </mat-select>
+    <mat-icon
+      matSuffix
+      *ngIf="folderOption().isMissing"
+      [class]="domNames().missingIconClass"
+      color="warn"
+      [matTooltip]="missingTooltip"
+      >warning</mat-icon
     >
-    <mat-option [class]="domNames().chooseOptionClass" [value]="chooseValue"
-      >Choose folder…</mat-option
-    >
-  </mat-select>
-  <mat-icon
-    matSuffix
-    *ngIf="folderOption().isMissing"
-    [class]="domNames().missingIconClass"
-    color="warn"
-    [matTooltip]="missingTooltip"
-    >warning</mat-icon
-  >
-  <mat-error *ngIf="required()">{{ requiredMessage }}</mat-error>
-</mat-form-field>
+    <mat-error *ngIf="required()">{{ requiredMessage }}</mat-error>
+  </mat-form-field>
+</ng-template>

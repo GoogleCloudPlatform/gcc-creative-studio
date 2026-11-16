@@ -95,6 +95,29 @@ def fixture_sample_create_tts_dto():
 
 class TestAudioServiceMethods:
 
+    @pytest.fixture(autouse=True)
+    def _mock_generation_workspace(self):
+        personal_ws = MagicMock(id=1, scope="personal")
+        with (
+            patch(
+                "src.workspaces.generation_workspace.WorkspaceRepository"
+            ) as repo_cls,
+            patch(
+                "src.workspaces.generation_workspace.WorkspaceAuth"
+            ) as auth_cls,
+            patch(
+                "src.workspaces.generation_workspace.resolve_output_folder_id",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            repo_cls.return_value.ensure_personal_workspace = AsyncMock(
+                return_value=personal_ws
+            )
+            auth_cls.return_value.authorize = AsyncMock(
+                return_value=personal_ws
+            )
+            yield repo_cls, auth_cls
+
     @pytest.mark.anyio
     async def test_start_audio_generation_job_success(
         self,
@@ -153,7 +176,7 @@ class TestAudioServiceMethods:
         mock_executor = MagicMock()
 
         with patch(
-            "src.audios.audio_service.resolve_output_folder_id",
+            "src.workspaces.generation_workspace.resolve_output_folder_id",
             AsyncMock(return_value=77),
         ) as resolver:
             response = await audio_service.start_audio_generation_job(
@@ -184,7 +207,7 @@ class TestAudioServiceMethods:
 
         with (
             patch(
-                "src.audios.audio_service.resolve_output_folder_id",
+                "src.workspaces.generation_workspace.resolve_output_folder_id",
                 AsyncMock(
                     side_effect=HTTPException(
                         status_code=422, detail="Folder not found"
@@ -236,6 +259,43 @@ class TestAudioServiceMethods:
         saved_tts_model = mock_media_repo.create.call_args[0][0]
         assert saved_tts_model.voice_name == VoiceEnum.PUCK
         assert saved_tts_model.language_code == LanguageEnum.EN_US
+
+    @pytest.mark.anyio
+    async def test_start_audio_generation_job_routes_shared_ws_to_personal(
+        self,
+        _mock_generation_workspace,
+        audio_service,
+        mock_media_repo,
+        sample_create_lyria_dto,
+        sample_user,
+    ):
+        repo_cls, auth_cls = _mock_generation_workspace
+        shared_ws = MagicMock(id=30, scope="private")
+        personal_ws = MagicMock(id=10, scope="personal")
+        auth_cls.return_value.authorize.return_value = shared_ws
+        repo_cls.return_value.ensure_personal_workspace.return_value = (
+            personal_ws
+        )
+
+        async def _create(item):
+            item.id = 901
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        response = await audio_service.start_audio_generation_job(
+            request_dto=sample_create_lyria_dto.model_copy(
+                update={"workspace_id": 30}
+            ),
+            user=sample_user,
+            executor=mock_executor,
+        )
+
+        assert mock_media_repo.create.call_args.args[0].workspace_id == 10
+        assert response.workspace_id == 10
+        submitted_dto = mock_executor.submit.call_args.args[2]
+        assert submitted_dto.workspace_id == 10
 
 
 class TestBackgroundWorkers:

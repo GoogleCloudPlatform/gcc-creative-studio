@@ -268,14 +268,24 @@ async def test_render_timeline_by_id_success(service):
 
     mock_executor = MagicMock()
 
-    res = await service.render_timeline_by_id(1, mock_user, mock_executor)
+    from src.workspaces.generation_workspace import GenerationContext
+
+    with patch(
+        "src.workbench.workbench_service.resolve_generation_context",
+        new=AsyncMock(
+            return_value=GenerationContext(
+                output_workspace_id=10,
+                brand_workspace_id=1,
+                resolved_folder_id=None,
+            )
+        ),
+    ):
+        res = await service.render_timeline_by_id(1, mock_user, mock_executor)
 
     assert res is not None
     assert res.id == 55
     assert res.status == JobStatusEnum.PROCESSING
-    created = service.mock_media_repo.create.call_args.args[0]
-    assert created.workspace_id == 1
-    assert created.folder_id is None
+    assert service.mock_media_repo.create.call_args.args[0].workspace_id == 10
     mock_executor.submit.assert_called_once()
 
 

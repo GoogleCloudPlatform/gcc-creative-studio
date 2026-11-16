@@ -89,6 +89,9 @@ def fixture_deps():
             3,
         )
     )
+    gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={}
+    )
     workspace_auth = MagicMock()
     workspace_auth.authorize = AsyncMock(return_value=None)
     return SimpleNamespace(
@@ -594,6 +597,50 @@ async def test_linked_mode_inaccessible_gallery_pick_is_422(
         exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
     )
     guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_allows_cross_workspace_items_when_authorized(
+    service, deps
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND - _found(("source_asset", 7))
+    )
+    deps.gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={("source_asset", 7): 22}
+    )
+
+    outputs = await _resolve(service, deps, _linked_request(GALLERY_PICKS))
+
+    assert outputs["items"] == GALLERY_PICK_VALUES
+    deps.workspace_auth.authorize.assert_any_await(
+        workspace_id=22, user=deps.user
+    )
+
+
+@pytest.mark.anyio
+async def test_linked_mode_denies_unauthorized_cross_workspace_item(
+    service, deps
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND - _found(("source_asset", 7))
+    )
+    deps.gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={("source_asset", 7): 22}
+    )
+
+    async def _auth(*, workspace_id, user):
+        if workspace_id == 22:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    deps.workspace_auth.authorize.side_effect = _auth
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request(GALLERY_PICKS))
+
+    _assert_invalid_input(
+        exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
+    )
 
 
 @pytest.mark.anyio

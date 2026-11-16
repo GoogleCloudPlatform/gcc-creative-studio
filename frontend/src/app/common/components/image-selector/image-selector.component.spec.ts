@@ -33,7 +33,10 @@ import {
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../services/source-asset.service';
+import {WorkspaceRole} from '../../models/workspace-member.model';
+import {WorkspaceScope} from '../../models/workspace.model';
 import {UserService} from '../../services/user.service';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {ImageCropperDialogComponent} from '../image-cropper-dialog/image-cropper-dialog.component';
 import {StudioButtonComponent} from '../studio-button/studio-button.component';
 import {
@@ -183,9 +186,12 @@ describe('ImageSelectorComponent', () => {
     it('closes with the uploaded asset when uploading an image', () => {
       const file = new File(['x'], 'photo.png', {type: 'image/png'});
       component.handleFileSelect(file);
-      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledWith(file, {
-        assetType: AssetTypeEnum.GENERIC_IMAGE,
-      });
+      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledWith(
+        file,
+        {assetType: AssetTypeEnum.GENERIC_IMAGE},
+        null,
+        null,
+      );
       expect(dialogRefSpy.close).toHaveBeenCalledWith(UPLOADED_ASSET);
       expect(component.isUploading).toBeFalse();
     });
@@ -206,7 +212,12 @@ describe('ImageSelectorComponent', () => {
     it('uploads videos directly', () => {
       const file = new File(['x'], 'clip.mp4', {type: 'video/mp4'});
       component.handleFileSelect(file);
-      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledWith(file);
+      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledWith(
+        file,
+        {},
+        null,
+        null,
+      );
       expect(dialogRefSpy.close).toHaveBeenCalledWith(UPLOADED_ASSET);
     });
 
@@ -465,6 +476,195 @@ describe('ImageSelectorComponent', () => {
       expect(sourceAssetServiceSpy.uploadAsset).not.toHaveBeenCalled();
       expect(handleSpy).not.toHaveBeenCalled();
       expect(component.isDragging).toBeFalse();
+    });
+  });
+
+  describe('workspace browse and upload destination toggles', () => {
+    beforeEach(async () => {
+      await setup({
+        mimeType: 'image/*',
+        assetType: AssetTypeEnum.GENERIC_IMAGE,
+      });
+    });
+
+    it('defaults source to active and upload target to personal in a shared workspace and switches both cleanly', () => {
+      const workspaceState = TestBed.inject(WorkspaceStateService);
+      workspaceState.setWorkspaces([
+        {
+          id: 10,
+          name: 'My Private Space',
+          ownerId: 'user-1',
+          scope: WorkspaceScope.PERSONAL,
+          members: [],
+          memberIds: [],
+        },
+        {
+          id: 30,
+          name: 'Campaign Shared',
+          ownerId: 'user-2',
+          scope: WorkspaceScope.PRIVATE,
+          currentUserRole: WorkspaceRole.EDITOR,
+          members: [],
+          memberIds: [],
+        },
+      ]);
+      workspaceState.setActiveWorkspaceId(30);
+      fixture.detectChanges();
+
+      expect(component.canSwitchSource()).toBeTrue();
+      expect(component.canChooseUploadDestination()).toBeTrue();
+      expect(component.selectedSourceWorkspaceId()).toBe(30);
+      expect(component.uploadTargetWorkspaceId()).toBe(10);
+
+      const personalSrcBtn = query('#selector-source-personal-btn');
+      const activeSrcBtn = query('#selector-source-active-btn');
+      expect(personalSrcBtn?.getAttribute('aria-pressed')).toBe('false');
+      expect(activeSrcBtn?.getAttribute('aria-pressed')).toBe('true');
+
+      component.setSourceMode('personal');
+      fixture.detectChanges();
+      expect(component.selectedSourceWorkspaceId()).toBe(10);
+      expect(personalSrcBtn?.getAttribute('aria-pressed')).toBe('true');
+
+      component.setUploadTargetMode('active');
+      fixture.detectChanges();
+      expect(component.uploadTargetWorkspaceId()).toBe(30);
+      expect(
+        query('#selector-upload-active-btn')?.getAttribute('aria-pressed'),
+      ).toBe('true');
+
+      const file = new File(['img'], 'team.png', {type: 'image/png'});
+      component.onFileSelected({
+        currentTarget: {files: [file], value: 'team.png'},
+      } as unknown as Event);
+      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledWith(
+        file,
+        {assetType: AssetTypeEnum.GENERIC_IMAGE},
+        30,
+        null,
+      );
+    });
+
+    it('hides team upload destination toggle when user is a VIEWER in a private workspace', () => {
+      const workspaceState = TestBed.inject(WorkspaceStateService);
+      workspaceState.setWorkspaces([
+        {
+          id: 10,
+          name: 'Personal',
+          ownerId: 'user-1',
+          scope: WorkspaceScope.PERSONAL,
+          members: [],
+          memberIds: [],
+        },
+        {
+          id: 31,
+          name: 'Read Only Team',
+          ownerId: 'user-2',
+          scope: WorkspaceScope.PRIVATE,
+          currentUserRole: WorkspaceRole.VIEWER,
+          members: [],
+          memberIds: [],
+        },
+      ]);
+      workspaceState.setActiveWorkspaceId(31);
+      fixture.detectChanges();
+
+      expect(component.canSwitchSource()).toBeTrue();
+      expect(component.canChooseUploadDestination()).toBeFalse();
+      expect(component.uploadTargetWorkspaceId()).toBe(10);
+      expect(query('#selector-upload-active-btn')).toBeNull();
+    });
+
+    it('keeps selectedKeysSet synchronized across source switches and clears on selectionCleared', () => {
+      const sel1 = buildSelection({id: 11, itemType: 'media_item'});
+      const sel2 = buildSelection({id: 22, itemType: 'source_asset'});
+
+      component.onMediaSelected(sel1);
+      component.setSourceMode('personal');
+      component.onMediaSelected(sel2);
+      component.setSourceMode('active');
+
+      expect(Array.from(component.selectedKeysSet)).toEqual([
+        'media_item:11',
+        'source_asset:22',
+      ]);
+
+      component.onSelectionCleared();
+      expect(component.selectedMediaItems.size).toBe(0);
+      expect(component.selectedKeysSet.size).toBe(0);
+    });
+
+    it('locks browse and upload toggles to personal workspace when lockToPersonalWorkspace is true and forwards targetWorkspaceId when cropping', async () => {
+      const workspaceState = TestBed.inject(WorkspaceStateService);
+      workspaceState.setWorkspaces([
+        {
+          id: 10,
+          name: 'My Workspace',
+          ownerId: 'user-1',
+          scope: WorkspaceScope.PERSONAL,
+          members: [],
+          memberIds: [],
+        },
+        {
+          id: 30,
+          name: 'Campaign Shared',
+          ownerId: 'user-2',
+          scope: WorkspaceScope.PRIVATE,
+          currentUserRole: WorkspaceRole.EDITOR,
+          members: [],
+          memberIds: [],
+        },
+      ]);
+      workspaceState.setActiveWorkspaceId(30);
+
+      component.setUploadTargetMode('active');
+      component.shouldCrop = true;
+      const matDialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
+      matDialog.open.and.returnValue({afterClosed: () => of(undefined)} as any);
+      const cropFile = new File(['img'], 'crop.png', {type: 'image/png'});
+      component.handleFileSelect(cropFile);
+      expect(matDialog.open).toHaveBeenCalledWith(
+        jasmine.anything(),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({targetWorkspaceId: 30}),
+        }),
+      );
+
+      TestBed.resetTestingModule();
+      await setup({
+        mimeType: 'image/*',
+        assetType: AssetTypeEnum.GENERIC_IMAGE,
+        lockToPersonalWorkspace: true,
+      });
+      const lockedState = TestBed.inject(WorkspaceStateService);
+      lockedState.setWorkspaces([
+        {
+          id: 10,
+          name: 'My Workspace',
+          ownerId: 'user-1',
+          scope: WorkspaceScope.PERSONAL,
+          members: [],
+          memberIds: [],
+        },
+        {
+          id: 30,
+          name: 'Campaign Shared',
+          ownerId: 'user-2',
+          scope: WorkspaceScope.PRIVATE,
+          currentUserRole: WorkspaceRole.EDITOR,
+          members: [],
+          memberIds: [],
+        },
+      ]);
+      lockedState.setActiveWorkspaceId(30);
+      fixture.detectChanges();
+
+      expect(component.canSwitchSource()).toBeFalse();
+      expect(component.canChooseUploadDestination()).toBeFalse();
+      expect(component.selectedSourceWorkspaceId()).toBe(10);
+      expect(component.uploadTargetWorkspaceId()).toBe(10);
+      expect(query('#selector-source-active-btn')).toBeNull();
+      expect(query('#selector-upload-active-btn')).toBeNull();
     });
   });
 });

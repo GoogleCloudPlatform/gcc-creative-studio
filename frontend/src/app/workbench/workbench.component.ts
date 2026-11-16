@@ -252,6 +252,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private pendingSaveProjectId: number | null = null;
   /** Monotonic id of the latest timeline fetch (see the timeline effect). */
   private timelineLoadSeq = 0;
+  private loadedTimelineWorkspaceId?: number | string;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -319,6 +320,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         }
         this.editorResetPending = false;
         if (timelineId) {
+          this.loadedTimelineWorkspaceId = undefined;
           // Publish the in-flight state so the chat can lock session switching
           // until the timeline for this storyboard has actually landed. The
           // sequence guards against a superseded fetch clearing the flag that
@@ -366,6 +368,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             },
           });
         } else {
+          this.loadedTimelineWorkspaceId = undefined;
           this.clearEditor();
         }
       },
@@ -882,6 +885,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   processGeneratedData(data: TimelineDTO) {
+    this.loadedTimelineWorkspaceId = data.workspace_id;
     const newClips: TimelineClip[] = [];
     const videoStartTimes: number[] = [];
     const assetsToExtract: MediaAsset[] = [];
@@ -1956,13 +1960,27 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
       });
 
-    // The workspace of the project being saved, not the switcher's: a
-    // workspace switch flushes this save after the switcher has moved on,
-    // and the backend rejects a project of another workspace (400).
-    const workspaceId =
-      this.projectState.activeProjectWorkspaceId() ??
-      this.workspaceStateService.getActiveWorkspaceId();
+    // Prefer the loaded timeline's workspace, then the active project's
+    // workspace (so project_id and workspace_id never disagree with a 400),
+    // then storyboard / personal / active workspace, failing closed if none.
     const activeProjectId = this.projectState.activeProjectId();
+    const workspaceId =
+      timelineId && this.loadedTimelineWorkspaceId
+        ? this.loadedTimelineWorkspaceId
+        : (this.projectState.activeProjectWorkspaceId() ??
+          sb?.workspace_id ??
+          this.workspaceStateService.personalWorkspaceId() ??
+          this.workspaceStateService.getActiveWorkspaceId());
+
+    if (!workspaceId) {
+      this.lastSavedText.set('Workspace required');
+      handleErrorSnackbar(
+        this.snackBar,
+        {message: 'Please select a workspace before saving your timeline.'},
+        'Save timeline',
+      );
+      return of(null);
+    }
 
     const timelineData: TimelineDTO = {
       timeline_id: timelineId || undefined,
@@ -1971,7 +1989,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         sb?.session_id ||
         this.agentChatService.selectedSessionId() ||
         undefined,
-      workspace_id: workspaceId || 1,
+      workspace_id: workspaceId,
       ...(activeProjectId ? {project_id: activeProjectId} : {}),
       title: 'Timeline',
       video_clips: videoClips,
@@ -1998,6 +2016,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           res.timeline_id &&
           this.projectState.activeProjectId() === projectAtSave
         ) {
+          this.loadedTimelineWorkspaceId = res.workspace_id ?? workspaceId;
           this.timelineState.loadedTimelineId.set(res.timeline_id);
           if (!res.storyboard_id && !res.session_id) {
             void this.router.navigate([], {

@@ -748,3 +748,28 @@ async def test_postgres_per_branch_truncation_equivalence(
             assert [(i.item_type, i.id) for i in res.data] == ref_keys
 
     await _run_with_repo(seeded_gallery_db, _verify)
+
+
+@pytest.mark.anyio
+async def test_postgres_lookup_linked_loop_item_workspaces(
+    seeded_gallery_db: dict[str, Any],
+) -> None:
+    """lookup_linked_loop_item_workspaces returns workspace_id only for eligible rows."""
+    main_ws = seeded_gallery_db["main_ws"]
+    other_ws = seeded_gallery_db["other_ws"]
+
+    async def _verify(
+        repo: UnifiedGalleryRepository, _session: AsyncSession
+    ) -> None:
+        ws_map = await repo.lookup_linked_loop_item_workspaces(
+            media_item_ids=[500, 501, 502, 503, 504],
+            source_asset_ids=[500, 502, 503],
+            mime_type_prefix="image",
+        )
+        assert ws_map == {
+            ("media_item", 500): main_ws,
+            ("media_item", 504): other_ws,
+            ("source_asset", 500): main_ws,
+        }
+
+    await _run_with_repo(seeded_gallery_db, _verify)

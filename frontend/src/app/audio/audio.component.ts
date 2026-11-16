@@ -774,8 +774,8 @@ export class AudioComponent implements OnInit {
     this.showErrorOverlay = true;
     this.isLoading = true;
 
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (!activeWorkspaceId) {
+    const {workspaceId} = this.workspaceStateService.getTargetWorkspaceParam();
+    if (!workspaceId) {
       this.isLoading = false;
       handleErrorSnackbar(
         this.snackBar,
@@ -806,7 +806,7 @@ export class AudioComponent implements OnInit {
     const request: CreateAudioDto = {
       model: backendModel,
       prompt: this.prompt,
-      workspaceId: activeWorkspaceId,
+      workspaceId,
       negativePrompt: isLyria ? this.negativePrompt : undefined,
       seed:
         isLyria && this.lyriaSupportsSeed
@@ -931,8 +931,9 @@ export class AudioComponent implements OnInit {
 
   deleteGeneratedMedia() {
     this.activeAudioJob$.pipe(first()).subscribe(job => {
-      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      if (!job?.id || workspaceId === null) return;
+      const workspaceId =
+        job?.workspaceId ?? this.workspaceStateService.getActiveWorkspaceId();
+      if (!job?.id || workspaceId === null || workspaceId === undefined) return;
 
       this.dialog
         .open(ConfirmationDialogComponent, {

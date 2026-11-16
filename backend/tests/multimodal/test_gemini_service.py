@@ -14,6 +14,7 @@
 """Tests for Gemini Service."""
 
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -322,6 +323,55 @@ async def test_enhance_prompt_from_dto_with_brand_guidelines(gemini_service):
         gemini_service.brand_guideline_repo.query.assert_called_once()
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("target_kind", ["image", "video"])
+async def test_enhance_prompt_from_dto_uses_context_workspace_for_guidelines(
+    target_kind,
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+    from src.videos.dto.create_veo_dto import CreateVeoDto
+
+    if target_kind == "image":
+        dto = CreateImagenDto(
+            prompt="test prompt",
+            generation_model="gemini-3.1-flash-image",
+            workspace_id=10,
+            context_workspace_id=30,
+            use_brand_guidelines=True,
+        )
+        target_type = PromptTargetEnum.IMAGE
+    else:
+        dto = CreateVeoDto(
+            prompt="test video prompt",
+            generation_model="veo-3.1-generate-001",
+            workspace_id=10,
+            context_workspace_id=30,
+            use_brand_guidelines=True,
+        )
+        target_type = PromptTargetEnum.VIDEO
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_guideline = MagicMock(
+        visual_style_summary="Shared style",
+        tone_of_voice_summary="Shared tone",
+    )
+    gemini_service.brand_guideline_repo.query.return_value = MagicMock(
+        data=[mock_guideline]
+    )
+
+    with patch.object(
+        gemini_service, "generate_structured_prompt", return_value="ok"
+    ):
+        res = await gemini_service.enhance_prompt_from_dto(dto, target_type)
+
+    assert res == "ok"
+    search_arg = gemini_service.brand_guideline_repo.query.call_args.args[0]
+    kwargs = gemini_service.brand_guideline_repo.query.call_args.kwargs
+    assert search_arg.workspace_id == 30
+    assert kwargs["workspace_id"] == 30
+
+
 def test_generate_text_failure(gemini_service):
     gemini_service.client.models.generate_content.side_effect = Exception(
         "API Error"
@@ -364,7 +414,14 @@ async def test_generate_multimodal_success(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -373,7 +430,26 @@ async def test_generate_multimodal_success(gemini_service):
         model="gemini-3.5-flash",
     )
 
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(1,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=1,
+        name="My Workspace",
+        owner_id=1,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(99, AssetScopeEnum.SYSTEM)]
+
     gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc, asset_rows]
+    )
     mock_media = MagicMock()
     mock_media.workspace_id = 1
     mock_media.gcs_uris = ["gs://bucket/media.png"]
@@ -383,7 +459,7 @@ async def test_generate_multimodal_success(gemini_service):
 
     gemini_service.source_asset_repo = AsyncMock()
     mock_asset = MagicMock()
-    mock_asset.workspace_id = 1
+    mock_asset.workspace_id = 99
     mock_asset.gcs_uri = "gs://bucket/asset.png"
     mock_asset.mime_type = "image/png"
     gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
@@ -395,7 +471,9 @@ async def test_generate_multimodal_success(gemini_service):
         mock_response
     )
 
-    res = await gemini_service.generate_multimodal(request)
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
 
     assert res == "This is a great image."
     gemini_service.media_item_repo.get_by_id.assert_called_once_with(1)
@@ -408,7 +486,9 @@ async def test_generate_multimodal_failure(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -423,67 +503,194 @@ async def test_generate_multimodal_failure(gemini_service):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Failed to generate multimodal content."
 
 
 @pytest.mark.anyio
-async def test_generate_multimodal_workspace_mismatch_media_item(
+async def test_generate_multimodal_allows_cross_workspace_shared_and_system_inputs(
     gemini_service,
 ):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
-        prompt="Describe the image.",
+        prompt="Combine team media and system asset.",
+        media_item_ids=[10],
+        source_asset_ids=[20],
+        model="gemini-3.5-flash",
+    )
+
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(2,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PUBLIC.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=2,
+        name="Public Team",
+        owner_id=50,
+        scope=WorkspaceScopeEnum.PUBLIC.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(99, AssetScopeEnum.SYSTEM)]
+
+    gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc, asset_rows]
+    )
+    mock_media = MagicMock()
+    mock_media.workspace_id = 2
+    mock_media.gcs_uris = ["gs://bucket/team_media.png"]
+    mock_media.mime_type = "image/png"
+    gemini_service.media_item_repo.get_by_id.return_value = mock_media
+
+    gemini_service.source_asset_repo = AsyncMock()
+    mock_asset = MagicMock()
+    mock_asset.workspace_id = 99
+    mock_asset.gcs_uri = "gs://bucket/system_asset.png"
+    mock_asset.mime_type = "image/png"
+    gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
+
+    gemini_service.client.aio.models.generate_content = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Cross-workspace success."
+    gemini_service.client.aio.models.generate_content.return_value = (
+        mock_response
+    )
+
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
+    assert res == "Cross-workspace success."
+    gemini_service.client.aio.models.generate_content.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_generate_multimodal_blocks_global_admin_foreign_personal_media_item(
+    gemini_service,
+):
+    from fastapi import HTTPException
+
+    from src.multimodal.dto.multimodal_generation_request_dto import (
+        MultimodalGenerationRequestDto,
+    )
+    from src.users.user_model import UserModel, UserRoleEnum
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
+
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
+    request = MultimodalGenerationRequestDto(
+        workspace_id=1,
+        prompt="Describe private image.",
         media_item_ids=[1],
         model="gemini-3.5-flash",
     )
 
-    gemini_service.media_item_repo = AsyncMock()
-    mock_media = MagicMock()
-    mock_media.workspace_id = 2  # Different workspace
-    gemini_service.media_item_repo.get_by_id.return_value = mock_media
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(777,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=777,
+        name="Colleague Personal",
+        owner_id=99,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
 
-    from fastapi import HTTPException
+    gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc]
+    )
+    gemini_service.client.aio.models.generate_content = AsyncMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=global_admin
+        )
     assert exc_info.value.status_code == 403
-    assert (
-        "Media item 1 does not belong to workspace 1" in exc_info.value.detail
-    )
+    gemini_service.client.aio.models.generate_content.assert_not_called()
 
 
 @pytest.mark.anyio
-async def test_generate_multimodal_workspace_mismatch_source_asset(
+async def test_generate_multimodal_blocks_foreign_personal_source_asset(
     gemini_service,
 ):
+    from fastapi import HTTPException
+
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel, UserRoleEnum
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
-        prompt="Describe the image.",
+        prompt="Describe private asset.",
         source_asset_ids=[2],
         model="gemini-3.5-flash",
     )
 
-    gemini_service.source_asset_repo = AsyncMock()
-    mock_asset = MagicMock()
-    mock_asset.workspace_id = 2  # Different workspace
-    gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(777, AssetScopeEnum.PRIVATE)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=777,
+        name="Colleague Personal",
+        owner_id=99,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
 
-    from fastapi import HTTPException
+    gemini_service.source_asset_repo = AsyncMock()
+    gemini_service.source_asset_repo.db.execute = AsyncMock(
+        side_effect=[asset_rows, ws_scope, ws_doc]
+    )
+    gemini_service.client.aio.models.generate_content = AsyncMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=global_admin
+        )
     assert exc_info.value.status_code == 403
-    assert "Asset 2 does not belong to workspace 1" in exc_info.value.detail
+    gemini_service.client.aio.models.generate_content.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -491,7 +698,9 @@ async def test_generate_multimodal_with_config(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -510,7 +719,9 @@ async def test_generate_multimodal_with_config(gemini_service):
         mock_response
     )
 
-    res = await gemini_service.generate_multimodal(request)
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
 
     assert res == "Configured response"
     gemini_service.client.aio.models.generate_content.assert_called_once()
@@ -812,7 +1023,9 @@ async def test_generate_multimodal_http_exception_propagation(gemini_service):
         MultimodalGenerationRequestDto,
     )
     from fastapi import HTTPException
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -825,7 +1038,9 @@ async def test_generate_multimodal_http_exception_propagation(gemini_service):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Propagated bad request"
 
