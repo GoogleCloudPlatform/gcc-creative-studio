@@ -87,7 +87,6 @@ async def _run_post_auth_hooks(user: UserModel, token: str, exp: Any) -> None:
 _TOKEN_VERIFICATION_ERRORS = (
     ValueError,
     google_auth_exceptions.GoogleAuthError,
-    FirebaseError,
 )
 
 

@@ -690,7 +690,7 @@ class TestGetCurrentUser:
 
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == expected_detail
-        assert "leaked_token_body" not in caplog.text
+        assert "fake_access_token_secret" not in caplog.text
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("status_code", [429, 503])
