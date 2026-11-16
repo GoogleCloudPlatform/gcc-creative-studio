@@ -221,8 +221,8 @@ async def test_chat_secure_auth_fallback():
                 request=request,
             )
 
-        # Verify that authorize was called with the resolved workspace ID (10)
-        mock_workspace_auth.authorize.assert_called_once_with(
+        # Verify that authorize_write was called with the resolved workspace ID (10)
+        mock_workspace_auth.authorize_write.assert_called_once_with(
             workspace_id=10,
             user=user,
         )
@@ -910,6 +910,7 @@ def _character_service():
         project_service=MagicMock(),
     )
     service.workspace_auth.authorize = AsyncMock()
+    service.workspace_auth.authorize_write = AsyncMock()
     service._get_validated_agent_name = MagicMock(return_value="agent")
     service._append_state_delta = AsyncMock()
     return service
@@ -991,7 +992,8 @@ async def test_update_session_character_writes_delta_and_returns_it():
             "agent", "ads_x", "1", "s1", delta
         )
         # Authorised against the payload workspace AND the session's own.
-        assert service.workspace_auth.authorize.await_count == 2
+        assert service.workspace_auth.authorize_write.await_count == 1
+        assert service.workspace_auth.authorize.await_count == 1
 
 
 @pytest.mark.anyio

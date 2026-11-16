@@ -53,7 +53,7 @@ class TimelineAuth:
         self.project_auth = project_auth
 
     async def authorize(
-        self, timeline_id: int, user: UserModel
+        self, timeline_id: int, user: UserModel, *, write: bool = False
     ) -> TimelineAccess:
         info = await self.timeline_repo.get_access_info(timeline_id)
         if info is None:
@@ -71,7 +71,11 @@ class TimelineAuth:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this timeline",
             )
-        project = await self.project_auth.authorize(project_id, user)
+        project = (
+            await self.project_auth.authorize(project_id, user, write=True)
+            if write
+            else await self.project_auth.authorize(project_id, user)
+        )
         return TimelineAccess(
             timeline_id,
             project_id,

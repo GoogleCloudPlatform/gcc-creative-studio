@@ -41,7 +41,7 @@ class ProjectAuth:
         self.workspace_auth = workspace_auth
 
     async def authorize(
-        self, project_id: int, user: UserModel
+        self, project_id: int, user: UserModel, *, write: bool = False
     ) -> ProjectResponse:
         """Returns the project if ``user`` owns it; raises 404/403 otherwise."""
         project = await self.project_repo.get_by_id(project_id)
@@ -55,7 +55,10 @@ class ProjectAuth:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to access this project.",
             )
-        await self.workspace_auth.authorize(
-            workspace_id=project.workspace_id, user=user
+        auth_fn = (
+            self.workspace_auth.authorize_write
+            if write
+            else self.workspace_auth.authorize
         )
+        await auth_fn(workspace_id=project.workspace_id, user=user)
         return project

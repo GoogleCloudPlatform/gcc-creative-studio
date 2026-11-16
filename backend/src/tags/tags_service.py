@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select, func
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.tags.dto.tags_dto import BulkAssignTagsDto, TagCreateDto, TagUpdateDto
 from src.tags.repository.tags_repository import TagsRepository
@@ -56,33 +55,21 @@ class TagsService:
         search: str | None = None,
         limit: int = 10,
         offset: int = 0,
-        user_id: int | None = None,
+        creator_user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> PaginationResponseDto[TagModel]:
         """Lists tags, optionally filtered by workspace and search query."""
         if workspace_id:
             return await self.repo.get_by_workspace(
-                workspace_id, search, limit, offset, user_id
+                workspace_id, search, limit, offset, creator_user_id
             )
 
-        # For find_all case (admin listing all tags)
-        tags = await self.repo.find_all(limit=limit, offset=offset)
-
-        # Get total count for find_all
-        result = await self.repo.db.execute(
-            select(func.count(self.repo.model.id))
-        )
-        total_count = result.scalar_one()
-
-        page = (offset // limit) + 1
-        page_size = limit
-        total_pages = (total_count + page_size - 1) // page_size
-
-        return PaginationResponseDto[TagModel](
-            count=total_count,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
-            data=tags,
+        return await self.repo.list_global_tags(
+            requesting_user_id=requesting_user_id,
+            search=search,
+            limit=limit,
+            offset=offset,
+            user_id=creator_user_id,
         )
 
     async def create_tag(self, dto: TagCreateDto, user_id: int) -> TagModel:
@@ -142,12 +129,31 @@ class TagsService:
 
     async def bulk_assign(self, dto: BulkAssignTagsDto, user_id: int):
         """Bulk assigns tags to multiple items, replacing existing ones."""
-        # Resolve tag names to IDs
+        if dto.item_type not in ("media_item", "source_asset"):
+            raise HTTPException(
+                400, detail=f"Invalid item_type: {dto.item_type}"
+            )
+
+        if dto.item_ids:
+            item_ws = await self.repo.get_item_workspaces(
+                dto.item_ids, dto.item_type
+            )
+            for item_id in dto.item_ids:
+                owner_ws_id = item_ws.get(item_id)
+                if owner_ws_id is None:
+                    raise HTTPException(
+                        404, detail=f"{dto.item_type} {item_id} not found."
+                    )
+                if owner_ws_id != dto.workspace_id:
+                    raise HTTPException(
+                        403,
+                        detail="Cannot modify tags for items in another workspace.",
+                    )
+
         tag_ids = []
         for name in dto.tag_names:
             tag = await self.repo.find_by_name(name, dto.workspace_id)
             if not tag:
-                # Create it if it doesn't exist
                 count = await self.repo.count_by_workspace(dto.workspace_id)
                 color = PASTEL_COLORS[count % len(PASTEL_COLORS)]
                 tag = await self.repo.create(
@@ -158,23 +164,16 @@ class TagsService:
                         "user_id": user_id,
                     }
                 )
+            elif tag.workspace_id != dto.workspace_id:
+                raise HTTPException(
+                    403, detail="Tag belongs to a different workspace."
+                )
             tag_ids.append(tag.id)
 
-        if dto.item_type == "media_item":
-            await self.repo.clear_tags_for_items(dto.item_ids, "media_item")
-            await self.repo.assign_tags_to_items(
-                dto.item_ids, tag_ids, "media_item"
-            )
-        elif dto.item_type == "source_asset":
-            await self.repo.clear_tags_for_items(dto.item_ids, "source_asset")
-            await self.repo.assign_tags_to_items(
-                dto.item_ids, tag_ids, "source_asset"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid item_type: {dto.item_type}",
-            )
+        await self.repo.clear_tags_for_items(dto.item_ids, dto.item_type)
+        await self.repo.assign_tags_to_items(
+            dto.item_ids, tag_ids, dto.item_type
+        )
 
         await self.repo.db.commit()
         return True

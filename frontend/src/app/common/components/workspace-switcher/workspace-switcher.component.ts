@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import {Component, OnInit, Inject, PLATFORM_ID} from '@angular/core';
+import {Component, OnDestroy, OnInit, Inject, PLATFORM_ID} from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute} from '@angular/router';
-import {map, switchMap} from 'rxjs';
+import {Subject, map, switchMap, takeUntil} from 'rxjs';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {WorkspaceService} from '../../../services/workspace/workspace.service';
 import {
@@ -27,7 +27,7 @@ import {
   handleSuccessSnackbar,
 } from '../../../utils/handleMessageSnackbar';
 import {JobStatus} from '../../models/media-item.model';
-import {UserModel, UserRolesEnum} from '../../models/user.model';
+import {UserModel} from '../../models/user.model';
 import {Workspace, WorkspaceScope} from '../../models/workspace.model';
 import {BrandGuidelineService} from '../../services/brand-guideline/brand-guideline.service';
 import {UserService} from '../../services/user.service';
@@ -47,7 +47,8 @@ import {
   templateUrl: './workspace-switcher.component.html',
   styleUrls: ['./workspace-switcher.component.scss'],
 })
-export class WorkspaceSwitcherComponent implements OnInit {
+export class WorkspaceSwitcherComponent implements OnInit, OnDestroy {
+  private readonly destroy$ = new Subject<void>();
   workspaces: Workspace[] = [];
   activeWorkspaceId: number | null = null;
   activeWorkspace: Workspace | null = null;
@@ -69,55 +70,80 @@ export class WorkspaceSwitcherComponent implements OnInit {
   ) {
     this.currentUser = this.userService.getUserDetails();
     this.isBrowser = isPlatformBrowser(platformId);
+    this.workspaceStateService.syncUser(this.currentUser);
+  }
+
+  private sortWorkspaces(list: Workspace[]): Workspace[] {
+    return [...list].sort((a, b) => {
+      const aPersonal = a.scope === WorkspaceScope.PERSONAL ? 0 : 1;
+      const bPersonal = b.scope === WorkspaceScope.PERSONAL ? 0 : 1;
+      return aPersonal - bPersonal;
+    });
   }
 
   ngOnInit(): void {
+    this.currentUser = this.userService.getUserDetails();
+    this.workspaceStateService.syncUser(this.currentUser);
     this.loadWorkspaces();
-    this.workspaceStateService.activeWorkspaceId$.subscribe(id => {
-      // Ensure we handle both string (from legacy/url) and number types safely if needed,
-      // but ideally workspaceStateService should also be consistent.
-      // Assuming workspaceStateService might still emit strings if not updated, let's cast or parse if needed.
-      // For now, let's assume strict number typing is propagated.
-      // Actually, workspaceStateService might need checking too.
-      // Let's assume id is number here based on the goal.
-      this.activeWorkspaceId = typeof id === 'string' ? parseInt(id, 10) : id;
-      this.activeWorkspace =
-        this.workspaces.find(w => w.id === this.activeWorkspaceId) || null;
-      if (this.isBrowser && this.activeWorkspaceId) {
-        localStorage.setItem(
-          'activeWorkspaceId',
-          this.activeWorkspaceId.toString(),
-        );
-      }
-    });
-
-    this.brandGuidelineService.activeBrandGuidelineJob$.subscribe(job => {
-      if (job) {
-        if (job.status === JobStatus.COMPLETED) {
-          handleSuccessSnackbar(
-            this.snackBar,
-            'Brand Guidelines processed successfully!',
-          );
-          // Reset the job so the spinner disappears and the button is re-enabled.
-          this.brandGuidelineService.clearActiveJob();
-        } else if (job.status === JobStatus.FAILED) {
-          handleErrorSnackbar(
-            this.snackBar,
-            {
-              message: job.errorMessage || 'Brand Guideline processing failed.',
-            },
-            'Processing Error',
-          );
-          this.brandGuidelineService.clearActiveJob();
+    this.workspaceStateService.workspaces$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(list => {
+        if (!list.length && !this.workspaces.length) {
+          return;
         }
-      }
-    });
+        this.workspaces = this.sortWorkspaces(list);
+        this.activeWorkspace =
+          this.workspaces.find(w => w.id === this.activeWorkspaceId) || null;
+      });
+
+    this.workspaceStateService.activeWorkspaceId$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(id => {
+        this.activeWorkspaceId = typeof id === 'string' ? parseInt(id, 10) : id;
+        this.activeWorkspace =
+          this.workspaces.find(w => w.id === this.activeWorkspaceId) || null;
+      });
+
+    this.brandGuidelineService.activeBrandGuidelineJob$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(job => {
+        if (job) {
+          if (job.status === JobStatus.COMPLETED) {
+            handleSuccessSnackbar(
+              this.snackBar,
+              'Brand Guidelines processed successfully!',
+            );
+            // Reset the job so the spinner disappears and the button is re-enabled.
+            this.brandGuidelineService.clearActiveJob();
+          } else if (job.status === JobStatus.FAILED) {
+            handleErrorSnackbar(
+              this.snackBar,
+              {
+                message:
+                  job.errorMessage || 'Brand Guideline processing failed.',
+              },
+              'Processing Error',
+            );
+            this.brandGuidelineService.clearActiveJob();
+          }
+        }
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 
   loadWorkspaces(): void {
+    this.currentUser = this.userService.getUserDetails();
+    this.workspaceStateService.syncUser(this.currentUser);
     this.workspaceService.getWorkspaces().subscribe({
       next: workspaces => {
-        this.workspaces = workspaces;
+        this.currentUser = this.userService.getUserDetails();
+        this.workspaceStateService.syncUser(this.currentUser);
+        this.workspaces = this.sortWorkspaces(workspaces);
+        this.workspaceStateService.setWorkspaces(this.workspaces);
         // Now that we have the workspaces, we can determine the initial active one.
         this.initializeActiveWorkspace();
       },
@@ -130,19 +156,24 @@ export class WorkspaceSwitcherComponent implements OnInit {
   initializeActiveWorkspace(): void {
     if (!this.isBrowser) return;
 
-    const storedWorkspaceId = localStorage.getItem('activeWorkspaceId');
+    this.currentUser = this.userService.getUserDetails();
+    this.workspaceStateService.syncUser(this.currentUser);
     const queryParamId = this.route.snapshot.queryParamMap.get('workspaceId');
     const currentActiveId = this.workspaceStateService.getActiveWorkspaceId();
+    const storedWorkspaceId =
+      this.workspaceStateService.readStoredWorkspaceId();
 
-    // Order of precedence: URL query param > current active > localStorage > default public.
+    // Order of precedence: URL query param > current active > sessionStorage > personal > public > first.
     let preferredWorkspaceId: number | null = null;
+    let fromQueryParam = false;
 
     if (queryParamId) {
       preferredWorkspaceId = parseInt(queryParamId, 10);
+      fromQueryParam = true;
     } else if (currentActiveId) {
       preferredWorkspaceId = currentActiveId;
     } else if (storedWorkspaceId) {
-      preferredWorkspaceId = parseInt(storedWorkspaceId, 10);
+      preferredWorkspaceId = storedWorkspaceId;
     }
 
     if (
@@ -154,7 +185,11 @@ export class WorkspaceSwitcherComponent implements OnInit {
       return;
     }
 
-    if (preferredWorkspaceId && !isNaN(preferredWorkspaceId)) {
+    if (
+      fromQueryParam &&
+      preferredWorkspaceId &&
+      !isNaN(preferredWorkspaceId)
+    ) {
       handleErrorSnackbar(
         this.snackBar,
         {
@@ -165,10 +200,15 @@ export class WorkspaceSwitcherComponent implements OnInit {
       );
     }
 
+    const personalWorkspace = this.workspaces.find(
+      w => w.scope === WorkspaceScope.PERSONAL,
+    );
     const googleWorkspace = this.workspaces.find(
       w => w.scope === WorkspaceScope.PUBLIC,
     );
-    if (googleWorkspace) {
+    if (personalWorkspace) {
+      this.setActiveWorkspace(personalWorkspace.id);
+    } else if (googleWorkspace) {
       // Fallback to public workspace
       this.setActiveWorkspace(googleWorkspace.id);
     } else if (this.workspaces.length > 0) {
@@ -178,19 +218,22 @@ export class WorkspaceSwitcherComponent implements OnInit {
   }
 
   setActiveWorkspace(workspaceId: number | null): void {
-    // We might need to cast to any if workspaceStateService expects string,
-    // but we should check that service too. For now, let's assume we pass number.
+    this.currentUser = this.userService.getUserDetails();
+    this.workspaceStateService.syncUser(this.currentUser);
     this.workspaceStateService.setActiveWorkspaceId(workspaceId);
     this.activeWorkspace =
       this.workspaces.find(w => w.id === workspaceId) || null;
     this.brandGuidelineService.clearCache();
+  }
 
-    if (this.isBrowser) {
-      if (workspaceId) {
-        localStorage.setItem('activeWorkspaceId', workspaceId.toString());
-      } else {
-        localStorage.removeItem('activeWorkspaceId');
-      }
+  getWorkspaceIcon(scope: WorkspaceScope): string {
+    switch (scope) {
+      case WorkspaceScope.PERSONAL:
+        return 'person';
+      case WorkspaceScope.PUBLIC:
+        return 'public';
+      default:
+        return 'lock';
     }
   }
 
@@ -210,7 +253,11 @@ export class WorkspaceSwitcherComponent implements OnInit {
     this.workspaceService.createWorkspace(name).subscribe({
       next: newWorkspace => {
         handleSuccessSnackbar(this.snackBar, `Workspace "${name}" created!`);
-        this.workspaces.push(newWorkspace);
+        this.workspaces = this.sortWorkspaces([
+          ...this.workspaces,
+          newWorkspace,
+        ]);
+        this.workspaceStateService.setWorkspaces(this.workspaces);
         this.setActiveWorkspace(newWorkspace.id);
       },
       error: error => {
@@ -223,39 +270,38 @@ export class WorkspaceSwitcherComponent implements OnInit {
     if (
       !this.currentUser ||
       !this.activeWorkspace ||
-      this.activeWorkspace?.scope === WorkspaceScope.PUBLIC
+      this.activeWorkspace.scope !== WorkspaceScope.PRIVATE
     ) {
       return false;
     }
-    const isOwner = this.currentUser.id === this.activeWorkspace.ownerId;
-    const isAdmin = !!this.currentUser.roles?.includes(UserRolesEnum.ADMIN);
-    return isOwner || isAdmin;
+    return this.workspaceStateService.canManageWorkspace(
+      this.activeWorkspace,
+      this.currentUser,
+    );
   }
 
   get canAccessBrandGuidelines(): boolean {
     if (!this.currentUser || !this.activeWorkspace) return false;
-
-    // Anyone can access guidelines on a public workspace.
-    if (this.activeWorkspace.scope === WorkspaceScope.PUBLIC) return true;
-
-    // For private workspaces, only admins or owners can access.
-    const isAdmin = !!this.currentUser.roles?.includes(UserRolesEnum.ADMIN);
-    const isOwnerOfPrivateWorkspace =
-      this.activeWorkspace.scope === WorkspaceScope.PRIVATE &&
-      this.currentUser.id === this.activeWorkspace.ownerId;
-    return isAdmin || isOwnerOfPrivateWorkspace;
+    return this.activeWorkspace.scope !== WorkspaceScope.PERSONAL;
   }
 
   get canPerformEditActionsOnBrandGuidelines(): boolean {
-    if (!this.currentUser || !this.activeWorkspace) return false;
-    const isAdmin = !!this.currentUser.roles?.includes(UserRolesEnum.ADMIN);
-    const isOwner = this.currentUser.id === this.activeWorkspace.ownerId;
-    return isAdmin || isOwner;
+    if (
+      !this.currentUser ||
+      !this.activeWorkspace ||
+      this.activeWorkspace.scope === WorkspaceScope.PERSONAL
+    ) {
+      return false;
+    }
+    return this.workspaceStateService.canManageWorkspace(
+      this.activeWorkspace,
+      this.currentUser,
+    );
   }
 
   openInviteDialog(event: MouseEvent): void {
     event.stopPropagation();
-    if (!this.activeWorkspace) return;
+    if (!this.canInvite || !this.activeWorkspace) return;
 
     const dialogRef = this.dialog.open<
       InviteUserModalComponent,
@@ -319,6 +365,9 @@ export class WorkspaceSwitcherComponent implements OnInit {
 
         // Handle Deletion
         if (result.delete && guideline?.id) {
+          if (!this.canPerformEditActionsOnBrandGuidelines) {
+            return;
+          }
           const confirmationDialogRef = this.dialog.open(
             ConfirmationDialogComponent,
             {
@@ -351,6 +400,9 @@ export class WorkspaceSwitcherComponent implements OnInit {
             }
           });
         } else if (result.name && result.file && workspaceId) {
+          if (!this.canPerformEditActionsOnBrandGuidelines) {
+            return;
+          }
           // 1. Immediately show spinner and show initial snackbar
           this.brandGuidelineService.setProcessingState();
           handleSuccessSnackbar(

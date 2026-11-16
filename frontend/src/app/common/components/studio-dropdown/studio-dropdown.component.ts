@@ -36,6 +36,7 @@ export interface DropdownOption {
   disabled?: boolean;
   /** Short status pill shown after the label (e.g. "Expired"). */
   badge?: string;
+  deletable?: boolean;
 }
 
 @Component({

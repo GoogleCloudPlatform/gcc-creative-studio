@@ -55,6 +55,7 @@ def fixture_mock_service():
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
     auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
     return auth
 
 
@@ -97,12 +98,11 @@ def test_generate_images_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 123
-    mock_workspace_auth.authorize.assert_called_once()
+    mock_workspace_auth.authorize_write.assert_called_once()
     mock_service.start_image_generation_job.assert_called_once()
 
 
 def test_generate_images_vto_success(client, mock_service, mock_workspace_auth):
-    _ = mock_workspace_auth
     mock_response = MediaItemResponse(
         id=222,
         workspace_id=1,
@@ -127,10 +127,10 @@ def test_generate_images_vto_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 222
+    mock_workspace_auth.authorize_write.assert_called_once()
 
 
 def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
-    _ = mock_workspace_auth
     mock_response = MediaItemResponse(
         id=333,
         workspace_id=1,
@@ -156,6 +156,7 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 333
+    mock_workspace_auth.authorize_write.assert_called_once()
     mock_service.start_upload_upscale_job.assert_called_once()
     kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
     assert kwargs["enhance_input_image"] is True
@@ -446,3 +447,36 @@ def test_upscale_image_api_general_exception(client, mock_service):
     payload = {"user_image": "gs://b/i.png", "upscale_factor": "x2"}
     response = client.post("/api/images/upscale-image", json=payload)
     assert response.status_code == 500
+
+
+def test_generation_routes_forbid_viewer_403(
+    client, mock_service, mock_workspace_auth
+):
+    from fastapi import HTTPException
+
+    mock_workspace_auth.authorize_write.side_effect = HTTPException(
+        status_code=403, detail="Viewers have read-only access"
+    )
+    assert (
+        client.post(
+            "/api/images/generate-images", json=GENERATE_IMAGES_PAYLOAD
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/images/generate-images-for-vto", json=VTO_PAYLOAD
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/images/upload-upscale",
+            files={"file": ("test.png", b"x", "image/png")},
+            data={"workspaceId": "1"},
+        ).status_code
+        == 403
+    )
+    mock_service.start_image_generation_job.assert_not_called()
+    mock_service.start_vto_generation_job.assert_not_called()
+    mock_service.start_upload_upscale_job.assert_not_called()

@@ -64,7 +64,9 @@ def fixture_override_folder_dependencies(
 class TestCreateFolder:
     """Tests for POST /api/folders."""
 
-    def test_create_folder_success(self, api_client, mock_folder_service):
+    def test_create_folder_success(
+        self, api_client, mock_folder_service, mock_workspace_auth
+    ):
         mock_folder_service.create_folder.return_value = FolderResponseDto(
             id=1,
             workspace_id=1,
@@ -91,6 +93,7 @@ class TestCreateFolder:
         data = response.json()
         assert data["id"] == 1
         assert data["name"] == "New Folder"
+        mock_workspace_auth.authorize_write.assert_awaited_once()
 
 
 class TestListFolders:
@@ -266,7 +269,7 @@ class TestUpdateFolder:
         data = response.json()
         assert data["name"] == "Renamed Folder"
         mock_folder_service.get_raw_folder.assert_called_once_with(folder_id=1)
-        mock_workspace_auth.authorize.assert_called_once()
+        mock_workspace_auth.authorize_write.assert_called_once()
         mock_folder_service.update_folder.assert_called_once()
         assert (
             mock_folder_service.update_folder.call_args.kwargs["folder"]
@@ -296,7 +299,7 @@ class TestDeleteFolder:
         data = response.json()
         assert data["success"] is True
         mock_folder_service.get_raw_folder.assert_called_once_with(folder_id=1)
-        mock_workspace_auth.authorize.assert_called_once()
+        mock_workspace_auth.authorize_write.assert_called_once()
         mock_folder_service.delete_folder.assert_called_once()
         assert (
             mock_folder_service.delete_folder.call_args.kwargs["folder"]
@@ -328,3 +331,32 @@ class TestMoveItems:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["total_moved"] == 4
+
+
+class TestCopyItems:
+    """Tests for POST /api/folders/copy-items."""
+
+    def test_copy_items_success(
+        self, api_client, mock_folder_service, mock_workspace_auth
+    ):
+        mock_folder_service.copy_items.return_value = {
+            "media_items_copied": 1,
+            "source_assets_copied": 0,
+            "folders_copied": 0,
+            "total_copied": 1,
+        }
+
+        response = api_client.post(
+            "/api/folders/copy-items",
+            json={
+                "workspaceId": 1,
+                "mediaItemIds": [1],
+                "sourceAssetIds": [],
+                "folderIds": [],
+                "destinationFolderId": 3,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["total_copied"] == 1
+        mock_workspace_auth.authorize_write.assert_awaited_once()

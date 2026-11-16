@@ -38,6 +38,7 @@ from src.tags.schema.tags_model import (
     source_asset_tags,
 )
 from src.users.user_model import User
+from src.workspaces.schema.workspace_model import Workspace, WorkspaceScopeEnum
 
 # ``item_type`` values of the unified gallery view.
 LOOP_MEDIA_ITEM = "media_item"
@@ -62,6 +63,7 @@ class UnifiedGalleryRepository(
         table: type[MediaItem] | type[SourceAsset],
         search_dto: GallerySearchDto,
         user_id: int | None,
+        requesting_user_id: int | None = None,
     ) -> Any:
         """Applies shared gallery filters to a base-table key query."""
         if not search_dto.include_deleted:
@@ -69,6 +71,17 @@ class UnifiedGalleryRepository(
 
         if search_dto.workspace_id is not None:
             stmt = stmt.where(table.workspace_id == search_dto.workspace_id)
+        else:
+            stmt = stmt.join(Workspace, table.workspace_id == Workspace.id)
+            if requesting_user_id is not None:
+                stmt = stmt.where(
+                    (Workspace.scope != WorkspaceScopeEnum.PERSONAL.value)
+                    | (Workspace.owner_id == requesting_user_id)
+                )
+            else:
+                stmt = stmt.where(
+                    Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+                )
 
         if user_id is not None:
             stmt = stmt.where(table.user_id == user_id)
@@ -112,6 +125,7 @@ class UnifiedGalleryRepository(
         self,
         search_dto: GallerySearchDto,
         user_id: int | None = None,
+        requesting_user_id: int | None = None,
         *,
         top_n: int | None = None,
     ) -> Any | None:
@@ -152,7 +166,7 @@ class UnifiedGalleryRepository(
                 MediaItem.created_at.label("created_at"),
             )
             media_stmt = self._apply_common_filters(
-                media_stmt, MediaItem, search_dto, user_id
+                media_stmt, MediaItem, search_dto, user_id, requesting_user_id
             )
             if search_dto.status:
                 media_stmt = media_stmt.where(
@@ -197,7 +211,11 @@ class UnifiedGalleryRepository(
                 SourceAsset.created_at.label("created_at"),
             )
             source_stmt = self._apply_common_filters(
-                source_stmt, SourceAsset, search_dto, user_id
+                source_stmt,
+                SourceAsset,
+                search_dto,
+                user_id,
+                requesting_user_id,
             )
             if not search_dto.include_external:
                 source_stmt = source_stmt.where(
@@ -243,6 +261,7 @@ class UnifiedGalleryRepository(
         self,
         search_dto: GallerySearchDto,
         user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> PaginationResponseDto[UnifiedGalleryItemResponse]:
         """Runs a two-stage paginated query on gallery base tables and view.
 
@@ -255,7 +274,9 @@ class UnifiedGalleryRepository(
         page_size = search_dto.limit
 
         count_keys_subq = self._build_filtered_keys_subquery(
-            search_dto, user_id=user_id
+            search_dto,
+            user_id=user_id,
+            requesting_user_id=requesting_user_id,
         )
         if count_keys_subq is None:
             return PaginationResponseDto[UnifiedGalleryItemResponse](
@@ -288,6 +309,7 @@ class UnifiedGalleryRepository(
         page_keys_subq = self._build_filtered_keys_subquery(
             search_dto,
             user_id=user_id,
+            requesting_user_id=requesting_user_id,
             top_n=search_dto.offset + search_dto.limit,
         )
         page_keys = (

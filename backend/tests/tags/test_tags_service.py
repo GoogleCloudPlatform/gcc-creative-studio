@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.tags.tags_service import TagsService
 from src.tags.schema.tags_model import TagModel
 from src.tags.dto.tags_dto import TagCreateDto, BulkAssignTagsDto
@@ -55,19 +56,25 @@ class TestListTags:
     async def test_list_tags_without_workspace(
         self, tags_service, mock_tags_repo
     ):
-        mock_tags_repo.find_all.return_value = [
-            TagModel(id=1, name="tag1", workspace_id=1)
-        ]
+        mock_tags_repo.list_global_tags.return_value = PaginationResponseDto(
+            count=1,
+            page=1,
+            page_size=10,
+            total_pages=1,
+            data=[TagModel(id=1, name="tag1", workspace_id=1)],
+        )
 
-        mock_result = MagicMock()
-        mock_result.scalar_one.return_value = 1
-        tags_service.repo.db.execute = AsyncMock(return_value=mock_result)
-
-        result = await tags_service.list_tags()
+        result = await tags_service.list_tags(requesting_user_id=7)
 
         assert len(result.data) == 1
         assert result.data[0].name == "tag1"
-        mock_tags_repo.find_all.assert_called_once_with(limit=10, offset=0)
+        mock_tags_repo.list_global_tags.assert_awaited_once_with(
+            requesting_user_id=7,
+            search=None,
+            limit=10,
+            offset=0,
+            user_id=None,
+        )
 
 
 class TestCreateTag:
@@ -115,6 +122,39 @@ class TestDeleteTag:
         assert result is True
         mock_tags_repo.delete.assert_called_once_with(1)
 
+    @pytest.mark.anyio
+    async def test_update_and_delete_foreign_tag_manager_vs_editor(
+        self, tags_service, mock_tags_repo
+    ):
+        from src.tags.dto.tags_dto import TagUpdateDto
+
+        foreign_tag = TagModel(id=7, name="tag", workspace_id=10, user_id=999)
+        mock_tags_repo.get_by_id.return_value = foreign_tag
+        mock_tags_repo.update_tag.return_value = foreign_tag
+        mock_tags_repo.delete.return_value = True
+
+        # Non-creator manager (is_admin=True from is_workspace_manager) succeeds.
+        assert (
+            await tags_service.update_tag(
+                7, TagUpdateDto(name="renamed"), user_id=1, is_admin=True
+            )
+            == foreign_tag
+        )
+        assert (
+            await tags_service.delete_tag(7, user_id=1, is_admin=True) is True
+        )
+
+        # Non-creator non-manager (EDITOR) gets 403.
+        with pytest.raises(HTTPException) as exc_upd:
+            await tags_service.update_tag(
+                7, TagUpdateDto(name="renamed"), user_id=1, is_admin=False
+            )
+        assert exc_upd.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_del:
+            await tags_service.delete_tag(7, user_id=1, is_admin=False)
+        assert exc_del.value.status_code == 403
+
 
 class TestBulkAssign:
     """Tests for TagsService.bulk_assign."""
@@ -128,6 +168,7 @@ class TestBulkAssign:
             workspace_id=1,
         )
 
+        mock_tags_repo.get_item_workspaces.return_value = {1: 1, 2: 1}
         mock_tags_repo.find_by_name.side_effect = (
             lambda name, workspace_id: TagModel(
                 id=10 if name == "tag10" else 20,
@@ -139,6 +180,9 @@ class TestBulkAssign:
         result = await tags_service.bulk_assign(dto, user_id=1)
 
         assert result is True
+        mock_tags_repo.get_item_workspaces.assert_awaited_once_with(
+            [1, 2], "media_item"
+        )
         mock_tags_repo.clear_tags_for_items.assert_called_once_with(
             [1, 2], "media_item"
         )
@@ -155,6 +199,7 @@ class TestBulkAssign:
             workspace_id=1,
         )
 
+        mock_tags_repo.get_item_workspaces.return_value = {1: 1}
         mock_tags_repo.find_by_name.return_value = TagModel(
             id=10, name="tag10", workspace_id=1
         )
@@ -183,3 +228,33 @@ class TestBulkAssign:
 
         assert exc_info.value.status_code == 400
         assert "Invalid item_type" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_bulk_assign_rejects_missing_404_and_foreign_workspace_403(
+        self, tags_service, mock_tags_repo
+    ):
+        mock_tags_repo.get_item_workspaces.return_value = {}
+        with pytest.raises(HTTPException) as exc_404:
+            await tags_service.bulk_assign(
+                BulkAssignTagsDto(
+                    item_ids=[99],
+                    tag_names=["t"],
+                    item_type="media_item",
+                    workspace_id=1,
+                ),
+                user_id=1,
+            )
+        assert exc_404.value.status_code == 404
+
+        mock_tags_repo.get_item_workspaces.return_value = {99: 2}
+        with pytest.raises(HTTPException) as exc_403:
+            await tags_service.bulk_assign(
+                BulkAssignTagsDto(
+                    item_ids=[99],
+                    tag_names=["t"],
+                    item_type="media_item",
+                    workspace_id=1,
+                ),
+                user_id=1,
+            )
+        assert exc_403.value.status_code == 403

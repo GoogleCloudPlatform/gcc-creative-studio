@@ -76,7 +76,10 @@ def fixture_mock_project_service():
 
 
 from fastapi.security import HTTPAuthorizationCredentials
-from src.workbench.workbench_controller import security
+from src.workbench.workbench_controller import (
+    _require_workspace_id,
+    security,
+)
 
 
 @pytest.fixture(name="override_workbench_service", autouse=True)
@@ -103,7 +106,9 @@ def fixture_override_workbench_service(
 class TestWorkbenchController:
     """Tests for Workbench Controller endpoints."""
 
-    def test_render_timeline(self, api_client, mock_workbench_service):
+    def test_render_timeline(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
         mock_res = MediaItemResponse(
             id=10,
             workspace_id=1,
@@ -125,16 +130,39 @@ class TestWorkbenchController:
         response_legacy = api_client.post("/api/workbench/render", json=payload)
         assert response_legacy.status_code == status.HTTP_200_OK
         assert response_legacy.json()["id"] == 10
+        assert mock_timeline_auth.authorize.await_count == 2
+        for call in mock_timeline_auth.authorize.await_args_list:
+            assert call.kwargs == {"write": True}
 
-    def test_create_timeline(self, api_client, mock_workbench_service):
+    def test_render_timeline_viewer_forbidden_403(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
+        mock_timeline_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Viewers have read-only access"
+        )
+        assert (
+            api_client.post("/api/workbench/timelines/1/render").status_code
+            == status.HTTP_403_FORBIDDEN
+        )
+        assert (
+            api_client.post(
+                "/api/workbench/render", json={"timeline_id": 1}
+            ).status_code
+            == status.HTTP_403_FORBIDDEN
+        )
+        mock_workbench_service.render_timeline_by_id.assert_not_awaited()
+
+    def test_create_timeline(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
         mock_res = TimelineResponse(
-            timeline_id=1, storyboard_id=5, workspace_id="ws1", title="New"
+            timeline_id=1, storyboard_id=5, workspace_id="1", title="New"
         )
         mock_workbench_service.create_timeline.return_value = mock_res
 
         payload = {
             "storyboard_id": 5,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "New",
             "video_clips": [],
             "audio_clips": [],
@@ -148,6 +176,7 @@ class TestWorkbenchController:
             response.json().get("storyboard_id") == 5
             or response.json().get("storyboardId") == 5
         )
+        mock_project_service.resolve_project_for_write.assert_awaited_once()
         # A human request never replaces an existing cut in place.
         assert (
             mock_workbench_service.create_timeline.await_args.kwargs[
@@ -210,11 +239,11 @@ class TestWorkbenchController:
         from src.common.request_context import is_agent_request
 
         mock_workbench_service.create_timeline.return_value = TimelineResponse(
-            timeline_id=9, storyboard_id=5, workspace_id="ws1", title="Cut"
+            timeline_id=9, storyboard_id=5, workspace_id="1", title="Cut"
         )
         payload = {
             "storyboard_id": 5,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Cut",
             "video_clips": [],
             "audio_clips": [],
@@ -235,15 +264,18 @@ class TestWorkbenchController:
             is True
         )
 
-    def test_get_timeline_found(self, api_client, mock_workbench_service):
+    def test_get_timeline_found(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
         mock_res = TimelineResponse(
-            timeline_id=2, workspace_id="ws1", title="Found"
+            timeline_id=2, workspace_id="1", title="Found"
         )
         mock_workbench_service.get_timeline.return_value = mock_res
 
         response = api_client.get("/api/workbench/timelines/2")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["timeline_id"] == 2
+        mock_timeline_auth.authorize.assert_awaited_once()
 
     def test_get_timeline_not_found(self, api_client, mock_workbench_service):
         mock_workbench_service.get_timeline.return_value = None
@@ -252,9 +284,11 @@ class TestWorkbenchController:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "Timeline not found"
 
-    def test_list_timelines(self, api_client, mock_workbench_service):
+    def test_list_timelines(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
         mock_res = [
-            TimelineResponse(timeline_id=3, workspace_id="ws1", title="T3")
+            TimelineResponse(timeline_id=3, workspace_id="1", title="T3")
         ]
         mock_workbench_service.list_timelines.return_value = mock_res
 
@@ -264,16 +298,19 @@ class TestWorkbenchController:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()) == 1
         assert response.json()[0]["timeline_id"] == 3
+        mock_project_service.authorize_storyboard.assert_awaited_once()
 
-    def test_update_timeline_found(self, api_client, mock_workbench_service):
+    def test_update_timeline_found(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
         mock_res = TimelineResponse(
-            timeline_id=4, storyboard_id=10, workspace_id="ws1", title="Updated"
+            timeline_id=4, storyboard_id=10, workspace_id="1", title="Updated"
         )
         mock_workbench_service.update_timeline.return_value = mock_res
 
         payload = {
             "storyboard_id": 10,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -286,6 +323,7 @@ class TestWorkbenchController:
             response.json().get("storyboard_id") == 10
             or response.json().get("storyboardId") == 10
         )
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
 
     def test_update_timeline_not_found(
         self, api_client, mock_workbench_service
@@ -293,7 +331,7 @@ class TestWorkbenchController:
         mock_workbench_service.update_timeline.return_value = None
 
         payload = {
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -302,15 +340,19 @@ class TestWorkbenchController:
         response = api_client.put("/api/workbench/timelines/999", json=payload)
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_delete_timeline_found(self, api_client, mock_workbench_service):
+    def test_delete_timeline_found(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
         mock_workbench_service.delete_timeline.return_value = True
 
         response = api_client.delete("/api/workbench/timelines/5")
         assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
 
     def test_delete_timeline_not_found(
         self, api_client, mock_workbench_service
     ):
+        mock_workbench_service.get_timeline.return_value = None
         mock_workbench_service.delete_timeline.return_value = False
 
         response = api_client.delete("/api/workbench/timelines/999")
@@ -452,3 +494,44 @@ class TestTimelineAuthorization:
         # No owning project to follow: the payload's value is kept.
         assert updated.workspace_id == "3"
         mock_project_service.authorize_storyboard.assert_not_called()
+
+    def test_require_workspace_id_validation(self):
+        assert _require_workspace_id(7, status_code=403) == 7
+        assert _require_workspace_id(" 12 ", status_code=403) == 12
+        for bad in (True, 0, -1, "", "abc", None):
+            with pytest.raises(HTTPException) as exc:
+                _require_workspace_id(bad, status_code=422)
+            assert exc.value.status_code == 422
+
+    def test_write_routes_pass_write_flag_to_timeline_auth(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
+        mock_workbench_service.update_timeline.return_value = TimelineResponse(
+            timeline_id=4, workspace_id="1", title="T"
+        )
+        mock_workbench_service.delete_timeline.return_value = True
+        mock_workbench_service.render_timeline_by_id.return_value = (
+            MediaItemResponse(
+                id=10,
+                workspace_id=1,
+                user_id=1,
+                user_email="test@example.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                status=JobStatusEnum.PROCESSING,
+                prompt="Render",
+                gcs_uris=[],
+                aspect_ratio=AspectRatioEnum.RATIO_16_9,
+                model=GenerationModelEnum.WORKBENCH_RENDER,
+            )
+        )
+        api_client.put(
+            "/api/workbench/timelines/4",
+            json={"workspace_id": "1", "title": "T"},
+        )
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
+        api_client.delete("/api/workbench/timelines/4")
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
+        api_client.post("/api/workbench/timelines/4/render")
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
+        api_client.post("/api/workbench/render", json={"timeline_id": 4})
+        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}

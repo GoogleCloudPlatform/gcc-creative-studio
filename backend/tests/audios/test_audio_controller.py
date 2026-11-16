@@ -44,6 +44,7 @@ def fixture_mock_audio_service():
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
     auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
     return auth
 
 
@@ -92,7 +93,7 @@ def test_generate_audio_success(
 
     assert response.status_code == 200
     assert response.json()["id"] == 123
-    mock_workspace_auth.authorize.assert_called_once()
+    mock_workspace_auth.authorize_write.assert_called_once()
     mock_audio_service.start_audio_generation_job.assert_called_once()
     request_dto = (
         mock_audio_service.start_audio_generation_job.call_args.kwargs[
@@ -169,4 +170,17 @@ def test_generate_audio_rejects_unallowed_metadata_model_and_invalid_workspace_i
     )
 
     assert response.status_code == 422
+    mock_audio_service.start_audio_generation_job.assert_not_called()
+
+
+def test_generate_audio_forbids_viewer_403(
+    client, mock_audio_service, mock_workspace_auth
+):
+    from fastapi import HTTPException
+
+    mock_workspace_auth.authorize_write.side_effect = HTTPException(
+        status_code=403, detail="Viewers have read-only access"
+    )
+    response = client.post("/api/audios/generate", json=AUDIO_PAYLOAD)
+    assert response.status_code == 403
     mock_audio_service.start_audio_generation_job.assert_not_called()

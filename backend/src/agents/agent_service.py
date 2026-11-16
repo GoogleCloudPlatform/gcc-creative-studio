@@ -847,7 +847,7 @@ class AgentService:
     ) -> SessionResponseDto:
         try:
             if workspace_id is not None:
-                await self.workspace_auth.authorize(
+                await self.workspace_auth.authorize_write(
                     workspace_id=workspace_id,
                     user=current_user,
                 )
@@ -1161,7 +1161,7 @@ class AgentService:
     ) -> dict:
         try:
             if workspace_id is not None:
-                await self.workspace_auth.authorize(
+                await self.workspace_auth.authorize_write(
                     workspace_id=workspace_id,
                     user=current_user,
                 )
@@ -1200,7 +1200,7 @@ class AgentService:
                     )
                 # An expired chat has no session state to name its workspace:
                 # the registry row's workspace is checked instead.
-                await self.workspace_auth.authorize(
+                await self.workspace_auth.authorize_write(
                     workspace_id=registry_row.workspace_id,
                     user=current_user,
                 )
@@ -1219,7 +1219,7 @@ class AgentService:
                 if s_workspace_id is None and registry_row is not None:
                     s_workspace_id = registry_row.workspace_id
                 if s_workspace_id is not None:
-                    await self.workspace_auth.authorize(
+                    await self.workspace_auth.authorize_write(
                         workspace_id=int(s_workspace_id),
                         user=current_user,
                     )
@@ -1494,7 +1494,7 @@ class AgentService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=CHAT_IN_OTHER_WORKSPACE_DETAIL,
             )
-        await self.workspace_auth.authorize(
+        await self.workspace_auth.authorize_write(
             workspace_id=row.workspace_id, user=current_user
         )
 
@@ -1576,7 +1576,7 @@ class AgentService:
             )
         # Like the other chat paths: owning the chat is not enough once
         # access to its workspace is gone.
-        await self.workspace_auth.authorize(
+        await self.workspace_auth.authorize_write(
             workspace_id=row.workspace_id, user=current_user
         )
         clean_title = title.strip() if title else None
@@ -1742,7 +1742,7 @@ class AgentService:
         """
         try:
             app_name = payload.appName or APP_NAME
-            await self.workspace_auth.authorize(
+            await self.workspace_auth.authorize_write(
                 workspace_id=payload.workspaceId, user=current_user
             )
             self._ensure_session_idle(session_id)
@@ -1796,7 +1796,7 @@ class AgentService:
     ) -> CharacterStateResponseDto:
         """Drops the character: the campaign becomes a product-only ad."""
         try:
-            await self.workspace_auth.authorize(
+            await self.workspace_auth.authorize_write(
                 workspace_id=workspace_id, user=current_user
             )
             self._ensure_session_idle(session_id)
@@ -1955,7 +1955,7 @@ class AgentService:
 
         if workspace_id is not None:
             injections.append(f"Active Workspace ID: {workspace_id}")
-            await self.workspace_auth.authorize(
+            await self.workspace_auth.authorize_write(
                 workspace_id=workspace_id,
                 user=current_user,
             )
@@ -1977,7 +1977,7 @@ class AgentService:
 
                     if s_workspace_id is not None:
                         workspace_id = int(s_workspace_id)
-                        await self.workspace_auth.authorize(
+                        await self.workspace_auth.authorize_write(
                             workspace_id=workspace_id,
                             user=current_user,
                         )

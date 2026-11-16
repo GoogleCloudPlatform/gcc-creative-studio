@@ -297,7 +297,7 @@ async def test_delete_session_local(local_mode):
         request=MagicMock(spec=Request),
     )
     assert res == {"status": "success"}
-    workspace_auth.authorize.assert_awaited_once_with(
+    workspace_auth.authorize_write.assert_awaited_once_with(
         workspace_id=10, user=user
     )
     local_client.delete_session.assert_awaited_once_with("ads_x", "999", "s1")
@@ -361,7 +361,7 @@ async def test_chat_local_streams_and_propagates_token(local_mode):
 
     assert res == {"status": "processing"}
     # Workspace resolved from the local session state.
-    workspace_auth.authorize.assert_awaited_once_with(
+    workspace_auth.authorize_write.assert_awaited_once_with(
         workspace_id=10, user=user
     )
     # Token propagated through PATCH state delta on the local container.

@@ -76,7 +76,7 @@ class ProjectService:
         self, user: UserModel, workspace_id: int
     ) -> ProjectResponse:
         """The caller's default project in a workspace, created on demand."""
-        await self.workspace_auth.authorize(
+        await self.workspace_auth.authorize_write(
             workspace_id=workspace_id, user=user
         )
         project = await self.project_repo.ensure_default(workspace_id, user.id)
@@ -85,7 +85,7 @@ class ProjectService:
     async def create_project(
         self, user: UserModel, project_create: ProjectCreate
     ) -> ProjectResponse:
-        await self.workspace_auth.authorize(
+        await self.workspace_auth.authorize_write(
             workspace_id=project_create.workspace_id, user=user
         )
         return await self.project_repo.create_project(
@@ -107,7 +107,7 @@ class ProjectService:
     async def rename_project(
         self, user: UserModel, project_id: int, name: str
     ) -> ProjectResponse:
-        await self.project_auth.authorize(project_id, user)
+        await self.project_auth.authorize(project_id, user, write=True)
         await self.project_repo.update(project_id, {"name": name})
         return await self.get_project(user, project_id)
 
@@ -143,7 +143,9 @@ class ProjectService:
         ``ensure_default`` re-creates an empty one on the next agent save,
         chat listing or Workbench visit.
         """
-        project = await self.project_auth.authorize(project_id, user)
+        project = await self.project_auth.authorize(
+            project_id, user, write=True
+        )
         if project.is_default:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -217,7 +219,7 @@ class ProjectService:
         return await self.get_project(user, project_id)
 
     async def authorize_storyboard(
-        self, user: UserModel, storyboard_id: int
+        self, user: UserModel, storyboard_id: int, *, write: bool = False
     ) -> ProjectResponse:
         """The project of a storyboard ``user`` owns (404/403 otherwise)."""
         owner = await self.storyboard_repo.get_owner_and_project(storyboard_id)
@@ -230,6 +232,10 @@ class ProjectService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to use this storyboard",
+            )
+        if write:
+            return await self.project_auth.authorize(
+                owner[1], user, write=True
             )
         return await self.project_auth.authorize(owner[1], user)
 
@@ -256,10 +262,14 @@ class ProjectService:
         user-scoped ``list_sessions`` adopts it into the same default project.
         """
         if storyboard_id is not None:
-            return await self.authorize_storyboard(user, storyboard_id)
+            return await self.authorize_storyboard(
+                user, storyboard_id, write=True
+            )
 
         if project_id is not None:
-            project = await self.project_auth.authorize(project_id, user)
+            project = await self.project_auth.authorize(
+                project_id, user, write=True
+            )
             if (
                 workspace_id is not None
                 and project.workspace_id != workspace_id
@@ -286,7 +296,7 @@ class ProjectService:
                     )
                 if row.workspace_id == workspace_id:
                     return await self.project_auth.authorize(
-                        row.project_id, user
+                        row.project_id, user, write=True
                     )
                 logger.warning(
                     "[Projects] session_id=%s is registered in workspace %s "
@@ -297,7 +307,7 @@ class ProjectService:
                     workspace_id,
                 )
 
-        await self.workspace_auth.authorize(
+        await self.workspace_auth.authorize_write(
             workspace_id=workspace_id, user=user
         )
         return await self.project_repo.ensure_default(workspace_id, user.id)
@@ -349,7 +359,7 @@ class ProjectService:
                 storyboard_create.workspace_id, session_id, user.id
             )
             if existing:
-                await self.authorize_storyboard(user, existing.id)
+                await self.authorize_storyboard(user, existing.id, write=True)
                 scalar_updates = {
                     key: data[key]
                     for key in (

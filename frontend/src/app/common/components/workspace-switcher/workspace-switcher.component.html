@@ -24,9 +24,7 @@
         ' workspace. Click to switch workspaces!'
       "
     >
-      <mat-icon>{{
-        activeWorkspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'lock'
-      }}</mat-icon>
+      <mat-icon>{{ getWorkspaceIcon(activeWorkspace.scope) }}</mat-icon>
       <span class="workspace-name">{{
         activeWorkspace.name || 'Undefined'
       }}</span>
@@ -45,9 +43,7 @@
           "
           >check</mat-icon
         >
-        <mat-icon>{{
-          workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'lock'
-        }}</mat-icon>
+        <mat-icon>{{ getWorkspaceIcon(workspace.scope) }}</mat-icon>
         <span>{{ workspace.name }}</span>
       </button>
       <mat-divider></mat-divider>
@@ -57,8 +53,8 @@
       </button>
       <button
         mat-menu-item
+        *ngIf="canInvite"
         (click)="openInviteDialog($event)"
-        [disabled]="!canInvite"
         matTooltipPosition="right"
         matTooltip="You can invite users in your Private Workspaces!"
       >
@@ -67,6 +63,7 @@
       </button>
       <button
         mat-menu-item
+        *ngIf="activeWorkspace.scope !== WorkspaceScope.PERSONAL"
         [disabled]="
           !canAccessBrandGuidelines ||
           (brandGuidelineService.activeBrandGuidelineJob$ | async)?.status ===

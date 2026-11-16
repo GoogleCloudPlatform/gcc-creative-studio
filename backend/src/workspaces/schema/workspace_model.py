@@ -17,7 +17,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.common.base_repository import BaseDocument
@@ -34,11 +34,24 @@ class WorkspaceRoleEnum(str, Enum):
     OWNER = "owner"
 
 
+def coerce_workspace_role(role_val: object) -> WorkspaceRoleEnum | None:
+    """Normalizes enum or string workspace roles into ``WorkspaceRoleEnum``."""
+    if isinstance(role_val, WorkspaceRoleEnum):
+        return role_val
+    if isinstance(role_val, str):
+        try:
+            return WorkspaceRoleEnum(role_val.lower())
+        except ValueError:
+            return None
+    return None
+
+
 class WorkspaceScopeEnum(str, Enum):
     """Defines the overall visibility of the workspace in the application."""
 
     PUBLIC = "public"  # Visible to everyone (e.g., the "Default Google Workspace" gallery)
     PRIVATE = "private"  # Visible only to users listed in the 'members' list.
+    PERSONAL = "personal"  # Strictly visible/editable only by owner_id.
 
 
 class WorkspaceMember(BaseModel):
@@ -92,6 +105,15 @@ class Workspace(Base):
         server_default=func.now(),
     )
 
+    __table_args__ = (
+        Index(
+            "uq_workspaces_personal_owner",
+            "owner_id",
+            unique=True,
+            postgresql_where=text("scope = 'personal'"),
+        ),
+    )
+
 
 class WorkspaceMemberAssociation(Base):
     """Association table for the many-to-many relationship between Users and Workspaces,
@@ -138,4 +160,8 @@ class WorkspaceModel(BaseDocument):
     scope: WorkspaceScopeEnum = Field(
         default=WorkspaceScopeEnum.PRIVATE,
         description="Public workspaces are visible to all users. Private ones are visible only to members.",
+    )
+    current_user_role: WorkspaceRoleEnum | None = Field(
+        default=None,
+        description="Effective role of the authenticated caller in this workspace.",
     )

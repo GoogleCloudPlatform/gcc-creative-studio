@@ -105,3 +105,22 @@ class TestProjectAuth:
             await guard.authorize(5, _user(1))
 
         assert exc.value.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_write_mode_uses_authorize_write_and_blocks_viewer_403(
+        self, guard, repo, workspace_auth
+    ):
+        repo.get_by_id.return_value = _project(owner_id=1, workspace_id=10)
+        user = _user(1)
+        workspace_auth.authorize_write.side_effect = HTTPException(
+            status_code=403, detail="Viewers have read-only access"
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await guard.authorize(5, user, write=True)
+
+        assert exc.value.status_code == 403
+        workspace_auth.authorize_write.assert_awaited_once_with(
+            workspace_id=10, user=user
+        )
+        workspace_auth.authorize.assert_not_awaited()

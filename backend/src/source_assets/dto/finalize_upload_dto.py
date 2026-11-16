@@ -40,3 +40,8 @@ class FinalizeSourceAssetUploadDto(BaseDto):
     scope: AssetScopeEnum | None = Field(
         default=None, description="Scope of the asset."
     )
+    folder_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional folder ID to assign to the finalized asset.",
+    )

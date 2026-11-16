@@ -563,7 +563,7 @@ class TestDeleteSession:
         result = await service.delete_session(USER, "s1", "7", _request())
 
         assert result == {"status": "success"}
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_delete.assert_awaited_once_with(
@@ -582,7 +582,7 @@ class TestDeleteSession:
         result = await service.delete_session(USER, "s1", "7", _request())
 
         assert result == {"status": "success"}
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_delete.assert_not_called()
@@ -596,7 +596,7 @@ class TestDeleteSession:
         registry.get.return_value = _row("s1")
         service._sessions_get = AsyncMock(return_value=None)
         service._sessions_delete = AsyncMock()
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -604,7 +604,7 @@ class TestDeleteSession:
             await service.delete_session(USER, "s1", "7", _request())
 
         assert exc.value.status_code == 403
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_delete.assert_not_called()
@@ -663,7 +663,7 @@ class TestDeleteSession:
     async def test_a_refused_workspace_stops_the_delete(self, service):
         service._sessions_get = AsyncMock(return_value=_session())
         service._sessions_delete = AsyncMock()
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -688,7 +688,7 @@ class TestDeleteSession:
         result = await service.delete_session(USER, "s1", "7", _request())
 
         assert result == {"status": "success"}
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_delete.assert_awaited_once_with(
@@ -705,7 +705,7 @@ class TestDeleteSession:
             return_value=_session(workspace_id=None)
         )
         service._sessions_delete = AsyncMock()
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -713,7 +713,7 @@ class TestDeleteSession:
             await service.delete_session(USER, "s1", "7", _request())
 
         assert exc.value.status_code == 403
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_delete.assert_not_called()
@@ -1277,7 +1277,7 @@ class TestUpdateSessionMetadata:
 
         assert exc.value.status_code == 403
         registry.update_metadata.assert_not_called()
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     async def test_a_chat_in_a_refused_workspace_is_403(
@@ -1285,7 +1285,7 @@ class TestUpdateSessionMetadata:
     ):
         # Owning the chat is not enough once its workspace is out of reach.
         registry.get.return_value = _row("s1")
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -1293,7 +1293,7 @@ class TestUpdateSessionMetadata:
             await service.update_session_metadata(USER, "s1", title="x")
 
         assert exc.value.status_code == 403
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         registry.update_metadata.assert_not_called()
@@ -1419,7 +1419,7 @@ class TestRestoreSession:
 
         assert (dto.id, dto.projectId, dto.title) == ("s-new", 5, "Spring")
         assert (dto.restored, dto.expired) == (True, False)
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         agent, app, user, state = service._sessions_create.await_args.args
@@ -1461,14 +1461,14 @@ class TestRestoreSession:
             400,
             module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
         )
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     async def test_a_refused_workspace_stops_the_restore(
         self, service, registry
     ):
         self._expired_chat(service, registry)
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -1878,7 +1878,7 @@ class TestChatWorkspace:
             400,
             module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
         )
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
         service._sessions_get.assert_not_called()
         registry.touch.assert_not_called()
 
@@ -1888,14 +1888,14 @@ class TestChatWorkspace:
     ):
         # Its owner was removed from the chat's private workspace.
         registry.get.return_value = _row("s1")
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
         error = await self._chat(service)
 
         assert error.status_code == 403
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         registry.touch.assert_not_called()
@@ -1916,7 +1916,7 @@ class TestChatWorkspace:
             409,
             module.AGENT_BUSY_DETAIL,
         )
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         service._sessions_get.assert_not_called()
@@ -1930,7 +1930,7 @@ class TestChatWorkspace:
         error = await self._chat(service, workspace_id=11)
 
         assert error.status_code == 403
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     async def test_a_restored_chat_answers_for_its_workspace_first(
@@ -1938,7 +1938,7 @@ class TestChatWorkspace:
     ):
         # Like restore_session: the workspace checks come before the 409s.
         registry.get.return_value = _row("s1", restored_at=_at(1_780_000_000))
-        service.workspace_auth.authorize.side_effect = HTTPException(
+        service.workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403, detail="Not a member"
         )
 
@@ -1973,7 +1973,7 @@ class TestChatWorkspace:
             400,
             module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
         )
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
         service._append_state_delta.assert_not_called()
 
     @pytest.mark.anyio
@@ -1993,7 +1993,7 @@ class TestChatWorkspace:
             409,
             module.AGENT_BUSY_DETAIL,
         )
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
 
@@ -2008,7 +2008,7 @@ class TestChatWorkspace:
         error = await self._chat(service)
 
         assert error.status_code == 400
-        service.workspace_auth.authorize.assert_not_called()
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     async def test_an_unregistered_chat_without_a_workspace_takes_the_payloads(
@@ -2026,6 +2026,6 @@ class TestChatWorkspace:
             409,
             module.AGENT_BUSY_DETAIL,
         )
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=11, user=USER
         )

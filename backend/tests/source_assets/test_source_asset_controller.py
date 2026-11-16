@@ -31,6 +31,7 @@ from src.source_assets.schema.source_asset_model import (
 )
 from src.source_assets.source_asset_controller import router
 from src.source_assets.source_asset_service import SourceAssetService
+from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -60,11 +61,21 @@ def fixture_mock_service():
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
     auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
     return auth
 
 
+@pytest.fixture(name="mock_user_repo")
+def fixture_mock_user_repo():
+    repo = AsyncMock()
+    repo.get_by_email = AsyncMock()
+    return repo
+
+
 @pytest.fixture(name="client")
-def fixture_client(mock_user, mock_service, mock_workspace_auth):
+def fixture_client(
+    mock_user, mock_service, mock_workspace_auth, mock_user_repo
+):
     app = FastAPI()
     app.include_router(router)
 
@@ -72,6 +83,7 @@ def fixture_client(mock_user, mock_service, mock_workspace_auth):
     app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[SourceAssetService] = lambda: mock_service
     app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
+    app.dependency_overrides[UserRepository] = lambda: mock_user_repo
 
     return TestClient(app)
 
@@ -113,7 +125,7 @@ def test_upload_source_asset_success(
     assert response.status_code == 200
     assert response.json()["id"] == 10
     assert response.json()["presignedUrl"] == "https://signed.url"
-    mock_workspace_auth.authorize.assert_called_once()
+    mock_workspace_auth.authorize_write.assert_called_once()
     mock_service.upload_asset.assert_called_once()
     kwargs = mock_service.upload_asset.call_args.kwargs
     assert kwargs["enhance_input_image"] is True
@@ -175,7 +187,7 @@ def test_delete_source_asset_admin_role_needed(client, mock_service, mock_user):
     response = client.delete("/api/source_assets/1")
 
     assert response.status_code == 204
-    mock_service.delete_asset.assert_called_once_with(1)
+    mock_service.delete_asset.assert_called_once_with(1, current_user=mock_user)
 
 
 def test_delete_source_asset_not_found(client, mock_service, mock_user):
@@ -185,7 +197,9 @@ def test_delete_source_asset_not_found(client, mock_service, mock_user):
     response = client.delete("/api/source_assets/999")
 
     assert response.status_code == 404
-    mock_service.delete_asset.assert_called_once_with(999)
+    mock_service.delete_asset.assert_called_once_with(
+        999, current_user=mock_user
+    )
 
 
 @pytest.mark.anyio
@@ -213,7 +227,7 @@ async def test_list_source_assets_admin_search_self(
 
 @pytest.mark.anyio
 async def test_list_source_assets_admin_search_other(
-    client, mock_service, mock_user
+    client, mock_service, mock_user, mock_user_repo
 ):
     from src.common.dto.pagination_response_dto import PaginationResponseDto
 
@@ -228,21 +242,15 @@ async def test_list_source_assets_admin_search_other(
 
     mock_target_user = MagicMock()
     mock_target_user.id = 99
+    mock_user_repo.get_by_email.return_value = mock_target_user
 
-    # We also need to mock user_repo which is used inside the async task
-    # In controller: user_repo: UserRepository = Depends()
-    # But Depends() without override will execute. Usually we mock what it does.
-    with patch(
-        "src.source_assets.source_asset_controller.asyncio.to_thread",
-    ) as mock_to_thread:
-        mock_to_thread.return_value = mock_target_user
+    payload = {"user_email": "other@example.com"}
+    response = client.post("/api/source_assets/search", json=payload)
 
-        payload = {"user_email": "other@example.com"}
-        response = client.post("/api/source_assets/search", json=payload)
-
-        assert response.status_code == 200
-        call_args = mock_service.list_assets_for_user.call_args[1]
-        assert call_args["target_user_id"] == 99
+    assert response.status_code == 200
+    mock_user_repo.get_by_email.assert_awaited_once_with("other@example.com")
+    call_args = mock_service.list_assets_for_user.call_args[1]
+    assert call_args["target_user_id"] == 99
 
 
 @pytest.mark.anyio
@@ -250,16 +258,29 @@ async def test_list_source_assets_admin_search_other_not_found(
     client,
     mock_service,
     mock_user,
+    mock_user_repo,
 ):
     mock_user.roles = ["admin"]
-    with patch(
-        "src.source_assets.source_asset_controller.asyncio.to_thread",
-    ) as mock_to_thread:
-        mock_to_thread.return_value = None
+    mock_user_repo.get_by_email.return_value = None
 
-        payload = {"user_email": "missing@example.com"}
-        response = client.post("/api/source_assets/search", json=payload)
-        assert response.status_code == 404
+    payload = {"user_email": "missing@example.com"}
+    response = client.post("/api/source_assets/search", json=payload)
+    assert response.status_code == 404
+
+
+def test_list_source_assets_non_admin_search_unknown_email_returns_empty_page(
+    client, mock_service, mock_user, mock_workspace_auth, mock_user_repo
+):
+    mock_user_repo.get_by_email.return_value = None
+
+    payload = {"workspace_id": 1, "user_email": "unknown@example.com"}
+    response = client.post("/api/source_assets/search", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    assert response.json()["count"] == 0
+    mock_workspace_auth.authorize.assert_awaited_once()
+    mock_service.list_assets_for_user.assert_not_called()
 
 
 def test_get_vto_assets_exception(client, mock_service):
@@ -303,7 +324,7 @@ def test_generate_source_asset_upload_url_success(
     assert data["uploadUrl"] == "https://signed.gcs/upload"
     assert data["gcsUri"] == "gs://b/source_assets/1/uploads/uuid/test.png"
     assert data["fileUuid"] == "uuid-123"
-    mock_workspace_auth.authorize.assert_called_once()
+    mock_workspace_auth.authorize_write.assert_called_once()
 
 
 def test_generate_source_asset_upload_url_too_large(client):

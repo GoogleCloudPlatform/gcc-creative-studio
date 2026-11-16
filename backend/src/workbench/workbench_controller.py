@@ -55,6 +55,16 @@ def _as_int(value) -> int | None:
         return None
 
 
+def _require_workspace_id(raw: object, *, status_code: int) -> int:
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    if isinstance(raw, str) and (s := raw.strip()).isdigit() and int(s) > 0:
+        return int(s)
+    raise HTTPException(
+        status_code, detail="A valid positive integer workspace_id is required."
+    )
+
+
 @router.post(
     "/timelines/{timeline_id}/render",
     response_model=MediaItemResponse,
@@ -67,7 +77,7 @@ async def render_timeline_by_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     timeline_auth: TimelineAuth = Depends(),
 ):
-    await timeline_auth.authorize(timeline_id, current_user)
+    await timeline_auth.authorize(timeline_id, current_user, write=True)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         timeline_id, current_user, executor
@@ -88,7 +98,7 @@ async def render_timeline(
 ):
     if not req.timeline_id:
         raise HTTPException(status_code=400, detail="timeline_id is required")
-    await timeline_auth.authorize(req.timeline_id, current_user)
+    await timeline_auth.authorize(req.timeline_id, current_user, write=True)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         req.timeline_id, current_user, executor
@@ -126,7 +136,9 @@ async def create_timeline(
     # The agent re-creates the timeline on every stitch; replace the
     # storyboard's existing cut in place so the Workbench follows the live one.
     return await service.create_timeline(
-        timeline_create, reuse_for_storyboard=is_agent_request.get()
+        timeline_create,
+        reuse_for_storyboard=is_agent_request.get(),
+        current_user=current_user,
     )
 
 
@@ -166,7 +178,9 @@ async def update_timeline(
     timeline_auth: TimelineAuth = Depends(),
     project_service: ProjectService = Depends(),
 ):
-    access = await timeline_auth.authorize(timeline_id, current_user)
+    access = await timeline_auth.authorize(
+        timeline_id, current_user, write=True
+    )
     # A timeline may only be re-linked to a storyboard of its own project.
     target_project_id = None
     target_workspace_id = None
@@ -176,7 +190,7 @@ async def update_timeline(
         and new_storyboard_id != access.storyboard_id
     ):
         target = await project_service.authorize_storyboard(
-            current_user, new_storyboard_id
+            current_user, new_storyboard_id, write=True
         )
         if access.project_id is not None and target.id != access.project_id:
             raise HTTPException(
@@ -193,7 +207,14 @@ async def update_timeline(
     project_workspace_id = access.workspace_id or target_workspace_id
     if project_workspace_id is not None:
         timeline_update.workspace_id = str(project_workspace_id)
-    timeline = await service.update_timeline(timeline_id, timeline_update)
+    else:
+        _require_workspace_id(
+            timeline_update.workspace_id,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    timeline = await service.update_timeline(
+        timeline_id, timeline_update, current_user=current_user
+    )
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return timeline
@@ -208,7 +229,7 @@ async def delete_timeline(
     service: WorkbenchService = Depends(),
     timeline_auth: TimelineAuth = Depends(),
 ):
-    await timeline_auth.authorize(timeline_id, current_user)
+    await timeline_auth.authorize(timeline_id, current_user, write=True)
     success = await service.delete_timeline(timeline_id)
     if not success:
         raise HTTPException(status_code=404, detail="Timeline not found")
