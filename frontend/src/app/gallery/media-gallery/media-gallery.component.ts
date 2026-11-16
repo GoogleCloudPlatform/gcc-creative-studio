@@ -30,6 +30,7 @@ import {
   PLATFORM_ID,
   HostListener,
   SimpleChanges,
+  ViewChild,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {MatDialog} from '@angular/material/dialog';
@@ -38,7 +39,10 @@ import {MatIconRegistry} from '@angular/material/icon';
 import {DomSanitizer} from '@angular/platform-browser';
 import {ActivatedRoute, Router} from '@angular/router';
 import {Subscription, forkJoin} from 'rxjs';
-import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
+import type {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
+import {AssetTypeEnum} from '../../admin/source-assets-management/source-asset.model';
+import {SourceAssetResponseDto} from '../../common/services/source-asset.service';
+import {PromoteLauncherService} from '../../common/services/promote-launcher.service';
 import {
   CopyToFolderDialogComponent,
   CopyToFolderDialogResult,
@@ -46,7 +50,10 @@ import {
 import {DropdownOption} from '../../common/components/studio-dropdown/studio-dropdown.component';
 import {MODEL_CONFIGS} from '../../common/config/model-config';
 import {JobStatus, MediaItem} from '../../common/models/media-item.model';
-import {GalleryItem} from '../../common/models/gallery-item.model';
+import {
+  BulkCopyItem,
+  GalleryItem,
+} from '../../common/models/gallery-item.model';
 import {
   GalleryFiltersState,
   GallerySearchDto,
@@ -318,12 +325,15 @@ export class MediaGalleryComponent
     private folderService: FolderService,
     private route: ActivatedRoute,
     private router: Router,
+    private promoteLauncher: PromoteLauncherService,
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
     const user = this.userService.getUserDetails();
     this.userId = user?.id as number;
   }
+
+  @ViewChild('fileInput') fileInputRef?: ElementRef<HTMLInputElement>;
 
   private get effectiveWorkspaceId(): number | null {
     return (
@@ -337,6 +347,164 @@ export class MediaGalleryComponent
       ? new Set(this.selectedKeys)
       : new Set();
     this.lastSelectedIndex = null;
+  }
+
+  get personalWorkspaceId(): number | null {
+    return this.workspaceStateService.personalWorkspaceId();
+  }
+
+  get isPersonalEffectiveWorkspace(): boolean {
+    const workspaceId = this.effectiveWorkspaceId;
+    if (!workspaceId) {
+      return false;
+    }
+    const workspace = this.findWorkspace(workspaceId);
+    if (workspace) {
+      return workspace.scope === WorkspaceScope.PERSONAL;
+    }
+    return (
+      this.personalWorkspaceId !== null &&
+      workspaceId === this.personalWorkspaceId
+    );
+  }
+
+  get hasActiveSearchFilter(): boolean {
+    return !!(
+      this.queryFilter.trim() ||
+      this.startDateFilter ||
+      this.endDateFilter ||
+      this.mediaTypeFilter ||
+      this.generationModelFilter ||
+      this.assetTypeFilter ||
+      this.tagsFilter.length > 0 ||
+      this.onlyMyMedia ||
+      this.currentFolderId !== null
+    );
+  }
+
+  triggerUploadPicker(): void {
+    this.fileInputRef?.nativeElement?.click();
+  }
+
+  onCardPromoted(): void {
+    this.searchTerm();
+  }
+
+  openBulkPromoteDialog(): void {
+    const sourceWorkspaceId = this.effectiveWorkspaceId;
+    if (
+      this.isSelectorMode ||
+      !sourceWorkspaceId ||
+      this.selectedItems.size === 0
+    ) {
+      return;
+    }
+    const items: BulkCopyItem[] = [];
+    for (const key of Array.from(this.selectedItems)) {
+      const [type, rawId] = key.split(':');
+      const id = Number(rawId);
+      if (
+        !Number.isNaN(id) &&
+        (type === 'media_item' || type === 'source_asset')
+      ) {
+        items.push({id, type});
+      }
+    }
+    if (items.length === 0) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId,
+        items,
+        itemLabel: `${items.length} selected item${items.length === 1 ? '' : 's'}`,
+      })
+      .subscribe(() => {
+        this.deselectAll();
+        if (!this.isSelectorMode) {
+          this.isSelectionMode = false;
+        }
+        this.searchTerm();
+      });
+  }
+
+  openPromoteFolderDialog(folder: Folder): void {
+    const sourceWorkspaceId = folder.workspaceId || this.effectiveWorkspaceId;
+    if (!sourceWorkspaceId) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId,
+        items: [{id: folder.id, type: 'folder'}],
+        itemLabel: `Folder "${folder.name}"`,
+        successPrefix: 'Promoted folder',
+      })
+      .subscribe(() => this.reload());
+  }
+
+  promoteFromPersonalWorkspace(): void {
+    const sourceWorkspaceId = this.personalWorkspaceId;
+    const targetWorkspaceId = this.effectiveWorkspaceId;
+    if (!sourceWorkspaceId || !targetWorkspaceId) {
+      return;
+    }
+    void import(
+      '../../common/components/image-selector/image-selector.component'
+    ).then(({ImageSelectorComponent}) => {
+      const selectorRef = this.dialog.open(ImageSelectorComponent, {
+        width: '90vw',
+        height: '85vh',
+        data: {
+          mimeType: null,
+          assetType: AssetTypeEnum.GENERIC_IMAGE,
+          multiSelect: true,
+          showFooter: true,
+          defaultSourceMode: 'personal',
+          lockToPersonalWorkspace: true,
+          titleOverride: 'Select Items from My Workspace to Promote',
+        },
+      });
+      selectorRef
+        .afterClosed()
+        .subscribe(
+          (
+            picked:
+              | Array<MediaItemSelection | SourceAssetResponseDto>
+              | MediaItemSelection
+              | SourceAssetResponseDto
+              | undefined,
+          ) => {
+            if (!picked) {
+              return;
+            }
+            const pickedList = Array.isArray(picked) ? picked : [picked];
+            const items: BulkCopyItem[] = [];
+            for (const entry of pickedList) {
+              if ('gcsUri' in entry) {
+                items.push({id: entry.id, type: 'source_asset'});
+              } else if (entry.mediaItem?.id) {
+                const galleryItem = entry.mediaItem as unknown as GalleryItem;
+                items.push({
+                  id: entry.mediaItem.id,
+                  type: galleryItem.itemType || 'media_item',
+                });
+              }
+            }
+            if (items.length === 0) {
+              return;
+            }
+            this.promoteLauncher
+              .openPromoteDialog({
+                sourceWorkspaceId,
+                items,
+                defaultTargetWorkspaceId: targetWorkspaceId,
+                itemLabel: `${items.length} item${items.length === 1 ? '' : 's'} from My Workspace`,
+              })
+              .subscribe(() => this.reload());
+          },
+        );
+    });
   }
 
   ngOnChanges(changes: SimpleChanges): void {

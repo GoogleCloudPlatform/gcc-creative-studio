@@ -27,6 +27,7 @@
 .revision-title { font-weight: 600; color: #fff; }
 .sep { color: rgba(255, 255, 255, 0.4); }
 .revision-count { color: rgba(255, 255, 255, 0.72); }
+.promotion-summary { color: #8ab4f8; font-weight: 500; }
 .tabular-nums { font-variant-numeric: tabular-nums; }
 .takes-scroller { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .take-card {
@@ -46,5 +47,18 @@
 .take-media-icon { font-size: 20px; width: 20px; height: 20px; color: rgba(255, 255, 255, 0.7); }
 .take-meta { display: flex; align-items: center; gap: 4px; font-size: 11px; }
 .take-version { font-weight: 600; }
+.take-shared-label { color: #81c995; font-weight: 500; }
 .take-actions, .delete-confirm-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .action-btn { min-height: 40px; }
+.promote-primary-btn {
+  --mdc-filled-button-container-color: #5b4bff;
+  --mdc-filled-button-label-text-color: #ffffff;
+  --mdc-filled-button-container-shape: 9999px;
+  background-color: #5b4bff !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 9999px;
+  padding: 0 18px;
+  min-height: 40px;
+  font-weight: 500;
+}

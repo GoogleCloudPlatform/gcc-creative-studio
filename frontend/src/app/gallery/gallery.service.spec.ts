@@ -136,12 +136,14 @@ describe('GalleryService', () => {
     let firstTakeScope: string | undefined;
     let firstTakeIsLatest: boolean | undefined;
     let revisionCount = 0;
+    let promotionWorkspaceName = '';
 
     service.getItemRevisions(55).subscribe(res => {
       takesLen = res.takes.length;
       revisionCount = res.revisionCount;
       firstTakeScope = res.takes[0]?.workspaceScope;
       firstTakeIsLatest = res.takes[0]?.isLatestRevision;
+      promotionWorkspaceName = res.promotions?.[0]?.targetWorkspaceName ?? '';
     });
 
     const req = httpMock.expectOne(
@@ -169,11 +171,93 @@ describe('GalleryService', () => {
           isLatestRevision: true,
         },
       ],
+      promotions: [
+        {
+          target_workspace_id: 3,
+          target_workspace_name: 'Campaign Team',
+          target_item_id: 901,
+          promoted_revision_number: 1,
+        },
+      ],
     });
 
     expect(revisionCount).toBe(2);
     expect(takesLen).toBe(2);
     expect(firstTakeScope).toBe('personal');
     expect(firstTakeIsLatest).toBeFalse();
+    expect(promotionWorkspaceName).toBe('Campaign Team');
+
+    const mapped = service.mapUnifiedItem({
+      id: 99,
+      workspaceId: 2,
+      promoted_from_media_item_id: 50,
+      promoted_from_root_id: 50,
+      promotions: [
+        {
+          targetWorkspaceId: 3,
+          targetWorkspaceName: 'Campaign Team',
+          targetItemId: 901,
+          promotedRevisionNumber: 1,
+        },
+      ],
+    });
+    expect(mapped.promotedFromMediaItemId).toBe(50);
+    expect(mapped.promotedFromRootId).toBe(50);
+    expect(mapped.promotions?.[0]?.targetWorkspaceName).toBe('Campaign Team');
+  });
+
+  it('calls promote-targets and promote endpoints', () => {
+    service = TestBed.inject(GalleryService);
+    let targetName = '';
+    service
+      .getPromoteTargets(10, [{id: 55, type: 'media_item'}])
+      .subscribe(targets => {
+        targetName = targets[0]?.workspaceName ?? '';
+      });
+    const reqTargets = httpMock.expectOne(
+      `${environment.backendURL}/gallery/promote-targets`,
+    );
+    expect(reqTargets.request.method).toBe('POST');
+    expect(reqTargets.request.body).toEqual({
+      sourceWorkspaceId: 10,
+      items: [{id: 55, type: 'media_item'}],
+    });
+    reqTargets.flush([
+      {
+        workspaceId: 3,
+        workspaceName: 'Campaign Team',
+        scope: 'private',
+        existingCount: 0,
+        newCount: 1,
+      },
+    ]);
+    expect(targetName).toBe('Campaign Team');
+
+    let promotedCount = 0;
+    service
+      .promoteItems({
+        sourceWorkspaceId: 10,
+        targetWorkspaceId: 3,
+        targetFolderId: 8,
+        items: [{id: 55, type: 'media_item'}],
+        mode: 'update_or_create',
+      })
+      .subscribe(res => {
+        promotedCount = res.promotedCount;
+      });
+    const reqPromote = httpMock.expectOne(
+      `${environment.backendURL}/gallery/promote`,
+    );
+    expect(reqPromote.request.method).toBe('POST');
+    expect(reqPromote.request.body.targetFolderId).toBe(8);
+    reqPromote.flush({
+      promotedCount: 1,
+      updatedCount: 0,
+      createdCount: 1,
+      targetWorkspaceId: 3,
+      targetFolderId: 8,
+      promotedItems: [],
+    });
+    expect(promotedCount).toBe(1);
   });
 });

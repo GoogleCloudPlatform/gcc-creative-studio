@@ -1,0 +1,209 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="promote-dialog-container">
+  <div class="dialog-header">
+    <div>
+      <h2 class="dialog-title">Promote to Shared Workspace</h2>
+      <p class="dialog-subtitle" *ngIf="data.itemLabel">
+        {{ data.itemLabel }}
+      </p>
+    </div>
+    <button
+      type="button"
+      class="icon-close-btn"
+      aria-label="Close promote dialog"
+      (click)="close()"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <div class="dialog-body">
+    @if (isLoading()) {
+      <div class="state-block">
+        <mat-progress-spinner
+          mode="indeterminate"
+          diameter="32"
+        ></mat-progress-spinner>
+        <p class="state-text">Loading shared workspaces...</p>
+      </div>
+    } @else if (loadError()) {
+      <div class="state-block">
+        <p class="error-text">{{ loadError() }}</p>
+        <button
+          id="promote-retry-btn"
+          mat-stroked-button
+          type="button"
+          (click)="loadTargets()"
+        >
+          Retry
+        </button>
+      </div>
+    } @else if (targets().length === 0) {
+      <div class="state-block">
+        <p class="state-text">
+          Create a shared workspace first to promote your work.
+        </p>
+        <div class="empty-actions">
+          <button
+            id="promote-create-workspace-btn"
+            mat-flat-button
+            color="primary"
+            type="button"
+            (click)="openCreateWorkspace()"
+          >
+            Create Shared Workspace
+          </button>
+        </div>
+      </div>
+    } @else {
+      <section class="control-group">
+        <div class="section-label">1. Target Workspace</div>
+        <div class="option-list">
+          @for (target of targets(); track target.workspaceId) {
+            <button
+              type="button"
+              class="option-row"
+              [class.selected]="selectedTargetId() === target.workspaceId"
+              [attr.aria-pressed]="selectedTargetId() === target.workspaceId"
+              (click)="selectTarget(target)"
+            >
+              <span class="option-main">
+                <mat-icon class="option-icon">
+                  {{ target.scope === 'public' ? 'public' : 'lock' }}
+                </mat-icon>
+                <span class="option-name">{{ target.workspaceName }}</span>
+              </span>
+              @if (getTargetStatusLabel(target); as statusLabel) {
+                <span class="option-meta tabular-nums">{{ statusLabel }}</span>
+              }
+            </button>
+          }
+        </div>
+      </section>
+
+      <section class="control-group">
+        <div class="section-label">2. Destination Folder</div>
+        @if (!selectedTarget()) {
+          <p class="folder-loading">Select a target workspace above.</p>
+        } @else {
+          @if (isLoadingFolders()) {
+            <p class="folder-loading">Loading folders...</p>
+          }
+          @if (folderLoadError()) {
+            <div class="folder-error-banner">
+              <p class="error-text">{{ folderLoadError() }}</p>
+              <button
+                id="promote-folder-retry-btn"
+                mat-stroked-button
+                type="button"
+                (click)="retryLoadFolders()"
+              >
+                Retry
+              </button>
+            </div>
+          }
+          <div class="option-list folder-list">
+            @for (folder of folderOptions(); track folder.id) {
+              <button
+                type="button"
+                class="option-row"
+                [class.selected]="selectedFolderId() === folder.id"
+                [attr.aria-pressed]="selectedFolderId() === folder.id"
+                [style.padding-left.px]="12 + folder.depth * 16"
+                (click)="selectFolder(folder.id)"
+              >
+                <span class="option-main">
+                  <mat-icon class="option-icon">
+                    {{ folder.id === null ? 'home' : 'folder' }}
+                  </mat-icon>
+                  <span class="option-name">{{ folder.name }}</span>
+                </span>
+                @if (selectedFolderId() === folder.id) {
+                  <mat-icon class="check-icon">check</mat-icon>
+                }
+              </button>
+            }
+          </div>
+        }
+      </section>
+
+      @if (selectedTarget(); as target) {
+        @if (target.existingCount > 0 && !isFolderOnly()) {
+          <section class="control-group">
+            <div class="section-label">3. Publish Mode</div>
+            <mat-radio-group
+              class="mode-group"
+              [value]="mode()"
+              (change)="setMode($event.value)"
+            >
+              <mat-radio-button value="update_or_create" class="mode-option">
+                @if (isBatch()) {
+                  <span>
+                    Update previously shared items in place and publish new
+                    items
+                    @if (target.existingCount > 0 && target.newCount > 0) {
+                      <span class="option-meta tabular-nums">
+                        · {{ target.existingCount }} existing updated ·
+                        {{ target.newCount }} new published
+                      </span>
+                    }
+                  </span>
+                } @else {
+                  <span>Update existing shared item</span>
+                }
+              </mat-radio-button>
+              <mat-radio-button value="create_new" class="mode-option">
+                @if (isBatch()) {
+                  <span>Publish all as new separate items</span>
+                } @else {
+                  <span>Publish as a new separate item</span>
+                }
+              </mat-radio-button>
+            </mat-radio-group>
+          </section>
+        }
+      }
+
+      @if (submitError()) {
+        <p id="promote-submit-error" class="error-text">{{ submitError() }}</p>
+      }
+    }
+  </div>
+
+  <div class="dialog-footer">
+    <button mat-button type="button" (click)="close()">Cancel</button>
+    @if (targets().length > 0 && !loadError()) {
+      <button
+        id="promote-submit-btn"
+        mat-flat-button
+        color="primary"
+        type="button"
+        [disabled]="
+          isLoading() ||
+          !selectedTarget() ||
+          isLoadingFolders() ||
+          !!folderLoadError() ||
+          isSubmitting()
+        "
+        (click)="submit()"
+      >
+        {{ isSubmitting() ? 'Promoting...' : 'Promote' }}
+      </button>
+    }
+  </div>
+</div>

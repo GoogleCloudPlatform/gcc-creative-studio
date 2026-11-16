@@ -188,6 +188,17 @@
   
   </a>
 
+  <button
+    *ngIf="isInPersonalWorkspace && !isSelectorMode && !isSelectionMode && !anyItemSelected"
+    type="button"
+    class="quick-promote-btn"
+    matTooltip="Promote to shared workspace"
+    aria-label="Promote to shared workspace"
+    (click)="openQuickPromote($event)"
+  >
+    <mat-icon>publish</mat-icon>
+  </button>
+
   <!-- Carousel Controls: Only show if there's more than one image and the
        consumer can address more than the first index -->
   <ng-container *ngIf="!firstIndexOnly && displayUrls && displayUrls.length > 1">

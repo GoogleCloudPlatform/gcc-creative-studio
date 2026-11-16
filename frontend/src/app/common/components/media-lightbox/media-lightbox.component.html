@@ -102,9 +102,12 @@
     </ng-container>
   </div>
 
-  <!-- Bottom Controls: Thumbnails and Actions -->
+  <!-- Bottom Controls: Thumbnails, Workspace Origin/Promote, and Actions -->
   <div
-    *ngIf="mediaItem.presignedUrls && mediaItem.presignedUrls.length >= 1"
+    *ngIf="
+      (mediaItem.presignedUrls && mediaItem.presignedUrls.length >= 1) ||
+      (isInPersonalWorkspace && showWorkspacePromoteBar)
+    "
     class="bottom-controls"
   >
     <!-- Thumbnails on the left -->
@@ -129,6 +132,25 @@
             <span class="track-num">{{ i + 1 }}</span>
         </div>
       </div>
+    </div>
+
+    <!-- Personal workspace origin & promote CTA -->
+    <div
+      *ngIf="isInPersonalWorkspace && showWorkspacePromoteBar"
+      class="lightbox-workspace-bar"
+    >
+      <span class="workspace-origin-label">In My Workspace</span>
+      <button
+        id="lightbox-promote-btn"
+        mat-flat-button
+        color="primary"
+        type="button"
+        class="lightbox-promote-btn"
+        (click)="openPromoteDialog()"
+      >
+        <mat-icon>publish</mat-icon>
+        <span>{{ promoteButtonLabel }}</span>
+      </button>
     </div>
 
     <!-- Actions Toolbar on the right -->

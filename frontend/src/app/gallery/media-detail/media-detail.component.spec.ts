@@ -124,6 +124,19 @@ describe('MediaDetailComponent', () => {
       personalWorkspaceId: jasmine
         .createSpy('personalWorkspaceId')
         .and.returnValue(1),
+      activeWorkspace: jasmine
+        .createSpy('activeWorkspace')
+        .and.returnValue(null),
+      canEditActiveWorkspace: jasmine
+        .createSpy('canEditActiveWorkspace')
+        .and.returnValue(false),
+      isPersonalItem: jasmine
+        .createSpy('isPersonalItem')
+        .and.callFake(
+          (item: {workspaceId?: number; workspaceScope?: string} | null) =>
+            !!item &&
+            (item.workspaceScope === 'personal' || item.workspaceId === 1),
+        ),
     };
 
     mockDialog = {
@@ -588,6 +601,52 @@ describe('MediaDetailComponent', () => {
           'app-revision-history-strip',
         ),
       ).toBeNull();
+
+      component.revisionHistory = {
+        rootId: 200,
+        revisionCount: 1,
+        takes: [singleItem],
+        promotions: [
+          {
+            targetWorkspaceId: 2,
+            targetWorkspaceName: 'Team Brand',
+            targetItemId: 902,
+          },
+        ],
+      };
+      fixture.detectChanges();
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          'app-revision-history-strip',
+        ),
+      ).not.toBeNull();
+    });
+
+    it('exposes canPromoteItem and refreshes details after openPromoteDialog', () => {
+      mockDialog.open.and.returnValue({
+        afterClosed: () =>
+          of({
+            response: {
+              promotedCount: 1,
+              createdCount: 1,
+              updatedCount: 0,
+              promotedItems: [],
+            },
+            targetWorkspaceName: 'Team Brand',
+          }),
+      });
+      const personalItem = {
+        ...makeTake(201, 2),
+        workspaceId: 1,
+        workspaceScope: 'personal',
+      } as unknown as GalleryItem;
+      component.mediaItem = personalItem;
+      expect(component.canPromoteItem).toBeTrue();
+
+      mockGalleryService.getMedia.and.returnValue(of(personalItem));
+      component.openPromoteDialog();
+      expect(mockDialog.open).toHaveBeenCalled();
+      expect(mockGalleryService.getMedia).toHaveBeenCalledWith(201);
     });
   });
 });

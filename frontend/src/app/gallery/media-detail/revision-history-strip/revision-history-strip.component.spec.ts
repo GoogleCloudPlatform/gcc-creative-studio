@@ -16,7 +16,10 @@
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {GalleryItem} from '../../../common/models/gallery-item.model';
+import {
+  GalleryItem,
+  PromotionSummary,
+} from '../../../common/models/gallery-item.model';
 import {RevisionHistoryStripComponent} from './revision-history-strip.component';
 
 describe('RevisionHistoryStripComponent', () => {
@@ -41,6 +44,16 @@ describe('RevisionHistoryStripComponent', () => {
     makeTake(103, 3),
   ];
 
+  const promotions: PromotionSummary[] = [
+    {
+      targetWorkspaceId: 20,
+      targetWorkspaceName: 'Summer Campaign',
+      targetItemId: 500,
+      promotedFromMediaItemId: 102,
+      promotedRevisionNumber: 2,
+    },
+  ];
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [RevisionHistoryStripComponent, NoopAnimationsModule],
@@ -49,10 +62,18 @@ describe('RevisionHistoryStripComponent', () => {
     fixture = TestBed.createComponent(RevisionHistoryStripComponent);
     component = fixture.componentInstance;
     component.takes = takes;
+    component.promotions = promotions;
     component.selectedTakeId = 103;
+    component.canPromote = true;
     component.ngOnChanges({
       takes: {
         currentValue: takes,
+        previousValue: [],
+        firstChange: true,
+        isFirstChange: () => true,
+      },
+      promotions: {
+        currentValue: promotions,
         previousValue: [],
         firstChange: true,
         isFirstChange: () => true,
@@ -67,10 +88,13 @@ describe('RevisionHistoryStripComponent', () => {
     fixture.detectChanges();
   });
 
-  it('renders revision count and aria-current on active take', () => {
+  it('renders revision count, promotion summary, and promoted badge', () => {
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Revision History');
     expect(text).toContain('3 versions');
+    expect(text).toContain('v2 shared in Summer Campaign');
+    expect(component.isPromotedTake(takes[1], 1)).toBeTrue();
+    expect(component.isPromotedTake(takes[2], 2)).toBeFalse();
 
     const cards: NodeListOf<HTMLButtonElement> =
       fixture.nativeElement.querySelectorAll('.take-card');
@@ -78,13 +102,27 @@ describe('RevisionHistoryStripComponent', () => {
     expect(cards[2].getAttribute('aria-current')).toBe('true');
   });
 
-  it('emits takeSelected and editFromRequested', () => {
+  it('emits takeSelected, promoteRequested, and editFromRequested', () => {
     const selectedSpy = spyOn(component.takeSelected, 'emit');
+    const promoteSpy = spyOn(component.promoteRequested, 'emit');
     const editSpy = spyOn(component.editFromRequested, 'emit');
 
     const takeCards = fixture.nativeElement.querySelectorAll('.take-card');
     takeCards[0].click();
     expect(selectedSpy).toHaveBeenCalledWith(takes[0]);
+
+    fixture.nativeElement.querySelector('#revision-promote-btn').click();
+    expect(promoteSpy).toHaveBeenCalledWith(takes[2]);
+    expect(
+      fixture.nativeElement
+        .querySelector('#revision-promote-btn')
+        .classList.contains('promote-primary-btn'),
+    ).toBeTrue();
+    expect(
+      fixture.nativeElement
+        .querySelector('#revision-edit-btn')
+        .classList.contains('promote-primary-btn'),
+    ).toBeFalse();
 
     fixture.nativeElement.querySelector('#revision-edit-btn').click();
     expect(editSpy).toHaveBeenCalledWith(takes[2]);
@@ -126,5 +164,27 @@ describe('RevisionHistoryStripComponent', () => {
     expect(
       fixture.nativeElement.querySelector('#revision-edit-btn'),
     ).toBeNull();
+  });
+
+  it('deduplicates repeated workspace summary labels in promotionSummaryText', () => {
+    component.promotions = [
+      ...promotions,
+      {
+        targetWorkspaceId: 20,
+        targetWorkspaceName: 'Summer Campaign',
+        targetItemId: 501,
+        promotedFromMediaItemId: 102,
+        promotedRevisionNumber: 2,
+      },
+    ];
+    component.ngOnChanges({
+      promotions: {
+        currentValue: component.promotions,
+        previousValue: promotions,
+        firstChange: false,
+        isFirstChange: () => false,
+      },
+    });
+    expect(component.promotionSummaryText).toBe('v2 shared in Summer Campaign');
   });
 });

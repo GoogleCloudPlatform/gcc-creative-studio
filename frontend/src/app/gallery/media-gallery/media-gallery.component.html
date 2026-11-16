@@ -231,6 +231,19 @@
         class="flex justify-end items-center gap-4 px-4 py-2 mt-2 w-full animate-fade-in"
       >
         <span class="text-white/60 text-sm mr-auto">{{ selectedItems.size }} items selected</span>
+
+        <studio-button
+          *ngIf="isPersonalEffectiveWorkspace && !isSelectorMode"
+          id="gallery-bulk-promote-btn"
+          variant="primary"
+          size="small"
+          (click)="openBulkPromoteDialog()"
+          title="Promote selected"
+          [disabled]="selectedItems.size === 0 || isCopying || isMoving || isDownloading || isDeleting"
+        >
+          <mat-icon class="mr-1">publish</mat-icon>
+          <span>Promote selected</span>
+        </studio-button>
         
         <studio-button
           variant="primary"
@@ -370,11 +383,13 @@
               [folder]="folder"
               [isSelectorMode]="isSelectorMode"
               [canManage]="canManageFolder(folder)"
+              [canPromote]="isPersonalEffectiveWorkspace && !isSelectorMode"
               (folderClicked)="navigateToFolder($event)"
               (editRequested)="openEditFolderDialog($event)"
               (deleteRequested)="openDeleteFolderDialog($event)"
               (moveRequested)="openMoveFolderDialog($event)"
               (copyRequested)="openCopyFolderDialog($event)"
+              (promoteRequested)="openPromoteFolderDialog($event)"
               (itemDropped)="onItemDroppedOnFolder($event.folder, $event.payload)"
             ></app-folder-card>
           }
@@ -402,6 +417,7 @@
               (mediaItemSelected)="mediaItemSelected.emit($event)"
               (mediaSelected)="mediaSelected.emit({mediaItem: $any($event), selectedIndex: 0})"
               (selectionToggled)="toggleSelection($event.item, $event.event, $event.selectedIndex)"
+              (promoted)="onCardPromoted()"
             ></app-gallery-card>
           </div>
         </div>
@@ -437,9 +453,57 @@
           <p>You've reached the end of the gallery</p>
         </div>
 
-        <!-- No media items found message -->
+        <!-- Shared workspace empty state -->
         <div
-          *ngIf="!isLoading && allImagesLoaded && images.length === 0"
+          *ngIf="
+            !isLoading &&
+            allImagesLoaded &&
+            images.length === 0 &&
+            folders.length === 0 &&
+            !isSelectorMode &&
+            !isPersonalEffectiveWorkspace &&
+            !hasActiveSearchFilter
+          "
+          id="shared-workspace-empty-state"
+          class="flex flex-col items-center justify-center text-center text-white py-12 px-4 gap-4"
+        >
+          <mat-icon class="!w-10 !h-10 !text-[40px] text-neutral-400">workspaces</mat-icon>
+          <h3 class="text-xl font-semibold !m-0">This shared workspace is empty</h3>
+          <p class="text-sm text-neutral-400 max-w-md !m-0">
+            Upload team assets directly or promote finished work from My Workspace.
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3 mt-2">
+            <studio-button
+              *ngIf="canEditActiveWorkspace"
+              id="empty-upload-team-btn"
+              variant="primary"
+              size="medium"
+              (click)="triggerUploadPicker()"
+            >
+              <mat-icon class="mr-1">upload_file</mat-icon>
+              <span>Upload Team Assets</span>
+            </studio-button>
+            <studio-button
+              *ngIf="canEditActiveWorkspace && personalWorkspaceId !== null"
+              id="empty-promote-personal-btn"
+              variant="primary"
+              size="medium"
+              (click)="promoteFromPersonalWorkspace()"
+            >
+              <mat-icon class="mr-1">publish</mat-icon>
+              <span>Promote from My Workspace</span>
+            </studio-button>
+          </div>
+        </div>
+
+        <!-- Default empty state -->
+        <div
+          *ngIf="
+            !isLoading &&
+            allImagesLoaded &&
+            images.length === 0 &&
+            (isSelectorMode || isPersonalEffectiveWorkspace || hasActiveSearchFilter || folders.length > 0)
+          "
           class="text-center text-white py-10"
         >
           <p *ngIf="!filterByType">No media items found</p>
