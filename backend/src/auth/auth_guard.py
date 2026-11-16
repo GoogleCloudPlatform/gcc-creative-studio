@@ -18,6 +18,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 import inspect
 import logging
+import re
 from typing import Any, NoReturn
 
 from fastapi import Depends, HTTPException, Request, status
@@ -90,20 +91,49 @@ _TOKEN_VERIFICATION_ERRORS = (
 )
 
 
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
+_B64_RUN_RE = re.compile(
+    r"(?<![A-Za-z0-9_=-])"
+    r"(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z0-9_-])"
+    r"[A-Za-z0-9_-]{24,}={0,2}(?![A-Za-z0-9_=-])"
+)
+_CANT_PARSE_SEG_RE = re.compile(
+    r"(Can't parse segment:\s*)b(['\"])(?:\\.|.)*?\2"
+)
+_AUTH_UNAVAILABLE_DETAIL = "Failed to contact Google authentication server."
+
+
+def _raise_auth_service_unavailable(cause: Exception | None = None) -> NoReturn:
+    """Raises HTTP 503 for upstream Google auth cert or transport outages."""
+    exc = HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=_AUTH_UNAVAILABLE_DETAIL,
+    )
+    if cause is not None:
+        raise exc from cause
+    raise exc
+
+
 def _sanitize_auth_error(err: Exception, token: str) -> str:
-    """Redacts bearer secrets and structural hints from auth logs."""
-    # google-auth echoes raw token bytes or single decoded segments in
-    # MalformedError messages where token-string replacement cannot match.
-    if isinstance(err, google_auth_exceptions.MalformedError) or isinstance(
-        getattr(err, "cause", None), google_auth_exceptions.MalformedError
-    ):
-        return "Malformed JWT structure"
+    """Redacts JWT/base64 token segments while keeping diagnostic reasons."""
     msg = str(err)
-    if "Can't parse segment" in msg or "Wrong number of segments" in msg:
-        return "Malformed JWT structure"
+    cause = err.cause if isinstance(err, FirebaseError) else err.__cause__
+    if cause is not None:
+        cause_str = str(cause)
+        if cause_str and cause_str not in msg:
+            msg = f"{msg}: {cause_str}" if msg else cause_str
     if token:
         msg = msg.replace(token, "[REDACTED]")
-    return msg
+        if "." in token:
+            for seg in token.split("."):
+                if len(seg) >= 3:
+                    msg = msg.replace(f"b'{seg}'", "[REDACTED]")
+                    msg = msg.replace(f'b"{seg}"', "[REDACTED]")
+                if len(seg) >= 6:
+                    msg = msg.replace(seg, "[REDACTED]")
+    msg = _CANT_PARSE_SEG_RE.sub(r"\1[REDACTED]", msg)
+    msg = _JWT_RE.sub("[REDACTED]", msg)
+    return _B64_RUN_RE.sub("[REDACTED]", msg)
 
 
 def _raise_token_verification_error(err: Exception, token: str) -> NoReturn:
@@ -117,10 +147,7 @@ def _raise_token_verification_error(err: Exception, token: str) -> NoReturn:
             "Identity token verification transport error: %s",
             sanitized,
         )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Failed to contact Google authentication server.",
-        ) from err
+        _raise_auth_service_unavailable(err)
 
     # google-auth raises InvalidValue (subclass of both ValueError and
     # GoogleAuthError) with "Token expired, ..." rather than a dedicated
@@ -231,10 +258,7 @@ async def get_current_user(
                             "Google tokeninfo endpoint unavailable (status=%s)",
                             response.status_code,
                         )
-                        raise HTTPException(
-                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="Failed to contact Google authentication server.",
-                        )
+                        _raise_auth_service_unavailable()
                     logger.warning(
                         "Invalid Google access token (status=%s)",
                         response.status_code,
@@ -249,10 +273,7 @@ async def get_current_user(
                     "Failed to verify Google access token: %s",
                     _sanitize_auth_error(req_err, token),
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Failed to contact Google authentication server.",
-                ) from req_err
+                _raise_auth_service_unavailable(req_err)
 
             if not decoded_token or "email" not in decoded_token:
                 raise HTTPException(
@@ -298,6 +319,11 @@ async def get_current_user(
         if (
             config_service.ALLOWED_EMAILS or config_service.ALLOWED_ORGS
         ) and not is_allowed:
+            logger.warning(
+                "Unauthorized access attempt rejected for email=%s hd=%s",
+                email,
+                token_info_hd,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User is not authorized to access this application.",

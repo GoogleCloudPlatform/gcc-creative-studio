@@ -200,7 +200,7 @@ class TestGetCurrentUser:
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_get_current_user_allowed_emails_fail(
-        self, mock_verify, mock_user_service, mock_request
+        self, mock_verify, mock_user_service, mock_request, caplog
     ):
         config_service.ENVIRONMENT = "local"
         config_service.ALLOWED_EMAILS_STR = "allowed@example.com"
@@ -210,7 +210,10 @@ class TestGetCurrentUser:
             "hd": "example.com",
         }
 
-        with pytest.raises(HTTPException) as exc_info:
+        with (
+            caplog.at_level(logging.WARNING, logger="src.auth.auth_guard"),
+            pytest.raises(HTTPException) as exc_info,
+        ):
             await get_current_user(
                 request=mock_request,
                 token="valid_token",
@@ -222,6 +225,12 @@ class TestGetCurrentUser:
             exc_info.value.detail
             == "User is not authorized to access this application."
         )
+        assert "denied@example.com" in caplog.text
+        assert [
+            r.levelno
+            for r in caplog.records
+            if r.name == "src.auth.auth_guard" and r.levelno == logging.WARNING
+        ] == [logging.WARNING]
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_oauth2_token")
@@ -463,9 +472,17 @@ class TestGetCurrentUser:
 
             # Single-segment / bad-header tokens trigger google-auth's segment
             # messages without echoing the full token; logs must redact them.
-            for bad_token, leaked_fragment in (
-                ("opaque-secret-token", "opaque-secret-token"),
-                ("bm90LWpzb24.e30.c2ln", "bm90LWpzb24"),
+            for bad_token, leaked_fragment, expected_reason in (
+                (
+                    "opaque-secret-token",
+                    "opaque-secret-token",
+                    "Wrong number of segments",
+                ),
+                (
+                    "bm90LWpzb24.e30.c2ln",
+                    "bm90LWpzb24",
+                    "Can't parse segment",
+                ),
             ):
                 caplog.clear()
                 with caplog.at_level(
@@ -480,7 +497,8 @@ class TestGetCurrentUser:
                 assert bad_exc.value.status_code == 401
                 assert bad_exc.value.detail == "Invalid authentication token."
                 assert leaked_fragment not in caplog.text
-                assert "Malformed JWT structure" in caplog.text
+                assert "[REDACTED]" in caplog.text
+                assert expected_reason in caplog.text
                 assert [
                     r.levelno
                     for r in caplog.records
@@ -706,9 +724,15 @@ class TestGetCurrentUser:
         assert access_token not in caplog.text
 
     @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_oauth2_token")
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_wrapped_malformed_error_redacts_base64_payload_in_logs(
-        self, mock_verify, mock_user_service, mock_request, caplog
+        self,
+        mock_verify,
+        mock_verify_oidc,
+        mock_user_service,
+        mock_request,
+        caplog,
     ):
         config_service.ENVIRONMENT = "local"
         wrapped = auth.InvalidIdTokenError(
@@ -718,6 +742,9 @@ class TestGetCurrentUser:
             ),
         )
         mock_verify.side_effect = wrapped
+        mock_verify_oidc.side_effect = google_auth_exceptions.MalformedError(
+            "Wrong number of segments in token eyJbad.eyJzdWIiOiJzZWNyZXQifQ.sig"
+        )
 
         with (
             caplog.at_level(logging.INFO, logger="src.auth.auth_guard"),
@@ -732,7 +759,57 @@ class TestGetCurrentUser:
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid authentication token."
         assert "eyJzdWIiOiJzZWNyZXQifQ" not in caplog.text
-        assert "Malformed JWT structure" in caplog.text
+        assert "[REDACTED]" in caplog.text
+        assert "Extra payload segment" in caplog.text
+        assert "Wrong number of segments" in caplog.text
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("err_msg", "expected_reason"),
+        [
+            (
+                "Token has wrong signature: eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+                "Token has wrong signature",
+            ),
+            (
+                "Certificate for key id 0123456789abcdef0123456789abcdef01234567 not found",
+                "Certificate for key id 0123456789abcdef0123456789abcdef01234567 not found",
+            ),
+            (
+                "Wrong number of segments in AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+                "Wrong number of segments",
+            ),
+        ],
+    )
+    @patch("src.auth.auth_guard.id_token.verify_oauth2_token")
+    async def test_sanitize_auth_error_keeps_diagnostic_reason_and_redacts_secrets(
+        self,
+        mock_verify_oidc,
+        mock_user_service,
+        mock_request,
+        caplog,
+        err_msg,
+        expected_reason,
+    ):
+        config_service.ENVIRONMENT = "prod"
+        mock_verify_oidc.side_effect = google_auth_exceptions.MalformedError(
+            err_msg
+        )
+
+        with (
+            caplog.at_level(logging.WARNING, logger="src.auth.auth_guard"),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await get_current_user(
+                request=mock_request,
+                token="bad-token",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert expected_reason in caplog.text
+        assert "eyJhbGciOiJSUzI1NiJ9" not in caplog.text
+        assert "AbCdEfGhIjKlMnOpQrStUvWxYz123456" not in caplog.text
 
     @pytest.mark.anyio
     async def test_ya29_transport_and_json_errors_return_503_and_redact(
