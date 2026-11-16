@@ -266,3 +266,69 @@ def test_get_item_revisions_route(mock_user):
     mock_revision_service.get_revisions.assert_awaited_once_with(
         item_id=42, current_user=mock_user
     )
+
+
+def test_list_promote_targets_and_promote_routes(mock_user):
+    from src.galleries.dto.promote_dto import (
+        PromoteResponseDto,
+        PromoteResultItemDto,
+        PromoteTargetWorkspaceDto,
+    )
+    from src.galleries.promotion_service import PromotionService
+
+    mock_promo_svc = AsyncMock()
+    mock_promo_svc.get_promote_targets.return_value = [
+        PromoteTargetWorkspaceDto(
+            workspace_id=88,
+            workspace_name="Team Shared",
+            scope="private",
+            current_user_role="editor",
+            existing_count=0,
+            new_count=1,
+        )
+    ]
+    mock_promo_svc.promote_items.return_value = PromoteResponseDto(
+        promoted_count=1,
+        updated_count=0,
+        created_count=1,
+        target_workspace_id=88,
+        target_folder_id=5,
+        promoted_items=[
+            PromoteResultItemDto(
+                source_id=42,
+                source_type="media_item",
+                target_id=99,
+                target_workspace_id=88,
+                target_folder_id=5,
+                action="created",
+            )
+        ],
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[PromotionService] = lambda: mock_promo_svc
+
+    test_client = TestClient(app)
+    res_targets = test_client.post(
+        "/api/gallery/promote-targets",
+        json={
+            "source_workspace_id": 10,
+            "items": [{"id": 42, "type": "media_item"}],
+        },
+    )
+    assert res_targets.status_code == 200
+    assert res_targets.json()[0]["workspaceName"] == "Team Shared"
+
+    res_promote = test_client.post(
+        "/api/gallery/promote",
+        json={
+            "source_workspace_id": 10,
+            "target_workspace_id": 88,
+            "target_folder_id": 5,
+            "items": [{"id": 42, "type": "media_item"}],
+        },
+    )
+    assert res_promote.status_code == 200
+    assert res_promote.json()["createdCount"] == 1
+    assert res_promote.json()["promotedItems"][0]["targetId"] == 99

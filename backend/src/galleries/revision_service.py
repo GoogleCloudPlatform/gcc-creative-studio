@@ -20,14 +20,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.schema.media_item_model import MediaItem, MediaItemModel
 from src.database import get_db
 from src.galleries.dto.unified_gallery_response import (
+    PromotionSummaryDto,
     RevisionHistoryResponseDto,
 )
 from src.galleries.gallery_service import GalleryService
 from src.galleries.revision_lineage import stack_root_expr
 from src.images.repository.media_item_repository import MediaRepository
 from src.users.user_model import UserModel
-from src.workspaces.schema.workspace_model import WorkspaceScopeEnum
-from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceScopeEnum,
+)
+from src.workspaces.workspace_auth_guard import (
+    WorkspaceAuth,
+    accessible_shared_workspace_clause,
+)
 
 
 class RevisionService:
@@ -44,6 +51,72 @@ class RevisionService:
         self.media_repo = media_repo
         self.workspace_auth = workspace_auth
         self.gallery_service = gallery_service
+
+    async def _load_accessible_promotions(
+        self,
+        root_id: int,
+        workspace_id: int,
+        current_user: UserModel,
+        take_models: list[MediaItemModel],
+    ) -> list[PromotionSummaryDto]:
+        stmt = (
+            select(
+                MediaItem.id,
+                MediaItem.workspace_id,
+                Workspace.name.label("workspace_name"),
+                MediaItem.folder_id,
+                MediaItem.promoted_from_media_item_id,
+            )
+            .join(Workspace, Workspace.id == MediaItem.workspace_id)
+            .where(
+                MediaItem.deleted_at.is_(None),
+                MediaItem.workspace_id != workspace_id,
+                MediaItem.promoted_from_root_id == root_id,
+                accessible_shared_workspace_clause(current_user),
+            )
+        )
+        rows = (await self.db.execute(stmt.order_by(MediaItem.id.desc()))).all()
+        if not rows:
+            return []
+
+        rev_by_id: dict[int, int] = {
+            t.id: t.revision_number
+            for t in take_models
+            if t.id is not None and t.revision_number is not None
+        }
+        missing_src_ids = sorted(
+            {
+                r.promoted_from_media_item_id
+                for r in rows
+                if r.promoted_from_media_item_id is not None
+                and r.promoted_from_media_item_id not in rev_by_id
+            }
+        )
+        if missing_src_ids:
+            rev_res = await self.db.execute(
+                select(MediaItem.id, MediaItem.revision_number)
+                .where(MediaItem.id.in_(missing_src_ids))
+                .execution_options(include_deleted=True)
+            )
+            for mid, rev_num in rev_res.all():
+                if rev_num is not None:
+                    rev_by_id[mid] = rev_num
+
+        return [
+            PromotionSummaryDto(
+                target_workspace_id=row.workspace_id,
+                target_workspace_name=row.workspace_name,
+                target_item_id=row.id,
+                target_folder_id=row.folder_id,
+                promoted_revision_number=(
+                    rev_by_id.get(row.promoted_from_media_item_id)
+                    if row.promoted_from_media_item_id is not None
+                    else None
+                ),
+                promoted_from_media_item_id=row.promoted_from_media_item_id,
+            )
+            for row in rows
+        ]
 
     async def get_revisions(
         self, item_id: int, current_user: UserModel
@@ -67,6 +140,7 @@ class RevisionService:
                 root_id=item.id or item_id,
                 revision_count=1,
                 takes=hydrated,
+                promotions=[],
             )
 
         root_id = item.revision_root_id or item.id or item_id
@@ -88,8 +162,15 @@ class RevisionService:
         hydrated_takes = await self.gallery_service.hydrate_media_items(
             take_models, current_user
         )
+        promotions = await self._load_accessible_promotions(
+            root_id=root_id,
+            workspace_id=item.workspace_id,
+            current_user=current_user,
+            take_models=take_models,
+        )
         return RevisionHistoryResponseDto(
             root_id=root_id,
             revision_count=len(hydrated_takes),
             takes=hydrated_takes,
+            promotions=promotions,
         )

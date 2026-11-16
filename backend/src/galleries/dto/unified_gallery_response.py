@@ -28,12 +28,24 @@ from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.tags.schema.tags_model import TagModel
 
 
+class PromotionSummaryDto(BaseDto):
+    """Summary of an active promoted copy in a shared workspace."""
+
+    target_workspace_id: int
+    target_workspace_name: str
+    target_item_id: int
+    target_folder_id: int | None = None
+    promoted_revision_number: int | None = None
+    promoted_from_media_item_id: int | None = None
+
+
 class RevisionHistoryResponseDto(BaseDto):
     """Full revision history for a gallery item."""
 
     root_id: int
     revision_count: int
     takes: list[MediaItemResponse]
+    promotions: list[PromotionSummaryDto] = Field(default_factory=list)
 
 
 class UnifiedGalleryItemResponse(BaseModel):
