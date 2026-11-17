@@ -18,6 +18,7 @@ import {Component, Inject, OnInit} from '@angular/core';
 import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
 import {FolderTreeNode} from '../../models/folder.model';
 import {FolderService} from '../../services/folder.service';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {WorkspaceService} from '../../../services/workspace/workspace.service';
 import {forkJoin} from 'rxjs';
 import {WorkspaceScope} from '../../models/workspace.model';
@@ -44,7 +45,7 @@ export interface FlattenedFolderOption {
 export interface FlattenedWorkspaceOption {
   id: number;
   name: string;
-  scope: 'public' | 'private';
+  scope: 'public' | 'private' | 'personal';
   disabled: boolean;
 }
 
@@ -72,6 +73,7 @@ export class CopyToFolderDialogComponent implements OnInit {
     @Inject(MAT_DIALOG_DATA) public data: CopyToFolderDialogData,
     private folderService: FolderService,
     private workspaceService: WorkspaceService,
+    private workspaceStateService: WorkspaceStateService,
   ) {}
 
   ngOnInit(): void {
@@ -85,13 +87,30 @@ export class CopyToFolderDialogComponent implements OnInit {
       this.workspaceService.getWorkspaces(),
     ]).subscribe({
       next: ([tree, workspaceList]) => {
-        this.workspaceOptions = workspaceList.map(workspace => ({
-          id: workspace.id,
-          name: workspace.name,
-          scope:
-            workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'private',
-          disabled: workspace.id === this.data.workspaceId,
-        }));
+        const sourceWorkspace = workspaceList.find(
+          w => w.id === this.data.workspaceId,
+        );
+        const canEditSourceFolder =
+          !sourceWorkspace ||
+          this.workspaceStateService.canEditWorkspace(sourceWorkspace);
+        if (!canEditSourceFolder) {
+          this.selectedTabIndex = 1;
+        }
+
+        // Exclude PERSONAL and read-only VIEWER target workspaces.
+        this.workspaceOptions = workspaceList
+          .filter(
+            workspace =>
+              workspace.scope !== WorkspaceScope.PERSONAL &&
+              this.workspaceStateService.canEditWorkspace(workspace),
+          )
+          .map(workspace => ({
+            id: workspace.id,
+            name: workspace.name,
+            scope:
+              workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'private',
+            disabled: workspace.id === this.data.workspaceId,
+          }));
 
         const getSubtreeHeight = (node: FolderTreeNode): number => {
           if (!node.children || node.children.length === 0) {
@@ -138,7 +157,8 @@ export class CopyToFolderDialogComponent implements OnInit {
           name: 'Gallery Root (Top Level)',
           depth: 0,
           color: '#8AB4F8',
-          disabled: false,
+          disabled: !canEditSourceFolder,
+          disabledReason: !canEditSourceFolder ? 'Read-only access' : undefined,
         });
 
         const traverse = (nodes: FolderTreeNode[], depth: number) => {
@@ -148,7 +168,9 @@ export class CopyToFolderDialogComponent implements OnInit {
               depth + maxCopyingSubtreeHeight > this.folderService.maxDepth;
 
             let disabledReason: string | undefined;
-            if (wouldExceedDepth) {
+            if (!canEditSourceFolder) {
+              disabledReason = 'Read-only access';
+            } else if (wouldExceedDepth) {
               disabledReason = `Max depth (${this.folderService.maxDepth}) reached`;
             }
 
@@ -157,7 +179,7 @@ export class CopyToFolderDialogComponent implements OnInit {
               name: node.name,
               depth,
               color: node.color,
-              disabled: wouldExceedDepth,
+              disabled: !canEditSourceFolder || wouldExceedDepth,
               disabledReason,
             });
 

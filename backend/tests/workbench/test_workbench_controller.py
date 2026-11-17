@@ -45,27 +45,45 @@ def fixture_mock_workbench_service():
 
 
 from fastapi.security import HTTPAuthorizationCredentials
-from src.workbench.workbench_controller import security
+from src.workbench.workbench_controller import (
+    _require_workspace_id,
+    security,
+)
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
+
+
+@pytest.fixture(name="mock_workspace_auth")
+def fixture_mock_workspace_auth():
+    auth = AsyncMock()
+    auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
+    return auth
 
 
 @pytest.fixture(name="override_workbench_service", autouse=True)
-def fixture_override_workbench_service(mock_workbench_service):
-    """Overrides the WorkbenchService and security dependency in the app."""
+def fixture_override_workbench_service(
+    mock_workbench_service, mock_workspace_auth
+):
+    """Overrides WorkbenchService, WorkspaceAuth, and security dependencies."""
     app.dependency_overrides[WorkbenchService] = lambda: mock_workbench_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="mock"
     )
     yield
-    if WorkbenchService in app.dependency_overrides:
-        del app.dependency_overrides[WorkbenchService]
-    if security in app.dependency_overrides:
-        del app.dependency_overrides[security]
+    for dep in (WorkbenchService, WorkspaceAuth, security):
+        app.dependency_overrides.pop(dep, None)
 
 
 class TestWorkbenchController:
     """Tests for Workbench Controller endpoints."""
 
-    def test_render_timeline(self, api_client, mock_workbench_service):
+    def test_render_timeline(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
+        mock_workbench_service.get_timeline.return_value = TimelineResponse(
+            timeline_id=1, workspace_id="1", title="T1"
+        )
         mock_res = MediaItemResponse(
             id=10,
             workspace_id=1,
@@ -87,16 +105,43 @@ class TestWorkbenchController:
         response_legacy = api_client.post("/api/workbench/render", json=payload)
         assert response_legacy.status_code == status.HTTP_200_OK
         assert response_legacy.json()["id"] == 10
+        assert mock_workspace_auth.authorize_write.await_count == 2
+        mock_workspace_auth.authorize.assert_not_awaited()
 
-    def test_create_timeline(self, api_client, mock_workbench_service):
+    def test_render_timeline_viewer_forbidden_403(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
+        from fastapi import HTTPException
+
+        mock_workbench_service.get_timeline.return_value = TimelineResponse(
+            timeline_id=1, workspace_id="1", title="T1"
+        )
+        mock_workspace_auth.authorize_write.side_effect = HTTPException(
+            status_code=403, detail="Viewers have read-only access"
+        )
+        assert (
+            api_client.post("/api/workbench/timelines/1/render").status_code
+            == status.HTTP_403_FORBIDDEN
+        )
+        assert (
+            api_client.post(
+                "/api/workbench/render", json={"timeline_id": 1}
+            ).status_code
+            == status.HTTP_403_FORBIDDEN
+        )
+        mock_workbench_service.render_timeline_by_id.assert_not_awaited()
+
+    def test_create_timeline(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
         mock_res = TimelineResponse(
-            timeline_id=1, storyboard_id=5, workspace_id="ws1", title="New"
+            timeline_id=1, storyboard_id=5, workspace_id="1", title="New"
         )
         mock_workbench_service.create_timeline.return_value = mock_res
 
         payload = {
             "storyboard_id": 5,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "New",
             "video_clips": [],
             "audio_clips": [],
@@ -110,6 +155,7 @@ class TestWorkbenchController:
             response.json().get("storyboard_id") == 5
             or response.json().get("storyboardId") == 5
         )
+        mock_workspace_auth.authorize_write.assert_awaited_once()
         # A human request never replaces an existing cut in place.
         assert (
             mock_workbench_service.create_timeline.await_args.kwargs[
@@ -124,11 +170,11 @@ class TestWorkbenchController:
         from src.common.request_context import is_agent_request
 
         mock_workbench_service.create_timeline.return_value = TimelineResponse(
-            timeline_id=9, storyboard_id=5, workspace_id="ws1", title="Cut"
+            timeline_id=9, storyboard_id=5, workspace_id="1", title="Cut"
         )
         payload = {
             "storyboard_id": 5,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Cut",
             "video_clips": [],
             "audio_clips": [],
@@ -149,15 +195,21 @@ class TestWorkbenchController:
             is True
         )
 
-    def test_get_timeline_found(self, api_client, mock_workbench_service):
+    def test_get_timeline_found(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
         mock_res = TimelineResponse(
-            timeline_id=2, workspace_id="ws1", title="Found"
+            timeline_id=2, workspace_id="1", title="Found"
         )
         mock_workbench_service.get_timeline.return_value = mock_res
 
         response = api_client.get("/api/workbench/timelines/2")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["timeline_id"] == 2
+        mock_workspace_auth.authorize.assert_awaited_once()
+        mock_workbench_service.enrich_timeline.assert_awaited_once_with(
+            mock_res
+        )
 
     def test_get_timeline_not_found(self, api_client, mock_workbench_service):
         mock_workbench_service.get_timeline.return_value = None
@@ -166,9 +218,11 @@ class TestWorkbenchController:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "Timeline not found"
 
-    def test_list_timelines(self, api_client, mock_workbench_service):
+    def test_list_timelines(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
         mock_res = [
-            TimelineResponse(timeline_id=3, workspace_id="ws1", title="T3")
+            TimelineResponse(timeline_id=3, workspace_id="1", title="T3")
         ]
         mock_workbench_service.list_timelines.return_value = mock_res
 
@@ -178,16 +232,23 @@ class TestWorkbenchController:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()) == 1
         assert response.json()[0]["timeline_id"] == 3
+        mock_workspace_auth.authorize.assert_awaited_once()
 
-    def test_update_timeline_found(self, api_client, mock_workbench_service):
-        mock_res = TimelineResponse(
-            timeline_id=4, storyboard_id=10, workspace_id="ws1", title="Updated"
+    def test_update_timeline_found(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
+        existing = TimelineResponse(
+            timeline_id=4, storyboard_id=10, workspace_id="1", title="Old"
         )
+        mock_res = TimelineResponse(
+            timeline_id=4, storyboard_id=10, workspace_id="1", title="Updated"
+        )
+        mock_workbench_service.get_timeline.return_value = existing
         mock_workbench_service.update_timeline.return_value = mock_res
 
         payload = {
             "storyboard_id": 10,
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -200,14 +261,16 @@ class TestWorkbenchController:
             response.json().get("storyboard_id") == 10
             or response.json().get("storyboardId") == 10
         )
+        mock_workspace_auth.authorize_write.assert_awaited_once()
 
     def test_update_timeline_not_found(
         self, api_client, mock_workbench_service
     ):
+        mock_workbench_service.get_timeline.return_value = None
         mock_workbench_service.update_timeline.return_value = None
 
         payload = {
-            "workspace_id": "ws1",
+            "workspace_id": "1",
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -216,16 +279,45 @@ class TestWorkbenchController:
         response = api_client.put("/api/workbench/timelines/999", json=payload)
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_delete_timeline_found(self, api_client, mock_workbench_service):
+    def test_delete_timeline_found(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
+        mock_workbench_service.get_timeline.return_value = TimelineResponse(
+            timeline_id=5, workspace_id="1", title="Del"
+        )
         mock_workbench_service.delete_timeline.return_value = True
 
         response = api_client.delete("/api/workbench/timelines/5")
         assert response.status_code == status.HTTP_204_NO_CONTENT
+        mock_workspace_auth.authorize_write.assert_awaited_once()
 
     def test_delete_timeline_not_found(
         self, api_client, mock_workbench_service
     ):
+        mock_workbench_service.get_timeline.return_value = None
         mock_workbench_service.delete_timeline.return_value = False
 
         response = api_client.delete("/api/workbench/timelines/999")
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_timeline_missing_workspace_id_fails_closed_403(
+        self, api_client, mock_workbench_service, mock_workspace_auth
+    ):
+        mock_workbench_service.get_timeline.return_value = TimelineResponse(
+            timeline_id=9, storyboard_id=5, workspace_id="", title="Legacy"
+        )
+
+        response = api_client.get("/api/workbench/timelines/9")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_workspace_auth.authorize.assert_not_awaited()
+        mock_workbench_service.enrich_timeline.assert_not_awaited()
+
+    def test_require_workspace_id_validation(self):
+        from fastapi import HTTPException
+
+        assert _require_workspace_id(7, status_code=403) == 7
+        assert _require_workspace_id(" 12 ", status_code=403) == 12
+        for bad in (True, 0, -1, "", "abc", None):
+            with pytest.raises(HTTPException) as exc:
+                _require_workspace_id(bad, status_code=422)
+            assert exc.value.status_code == 422

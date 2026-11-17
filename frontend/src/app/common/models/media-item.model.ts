@@ -49,6 +49,7 @@ export enum JobStatus {
  */
 export interface MediaItem {
   id: number;
+  workspaceId?: number;
   userEmail?: string;
   folderId?: number | null;
   createdAt?: string; // ISO 8601 date string

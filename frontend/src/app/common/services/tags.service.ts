@@ -23,6 +23,7 @@ export interface TagModel {
   id: number;
   name: string;
   workspaceId: number;
+  userId?: number | null;
   color?: string;
 }
 

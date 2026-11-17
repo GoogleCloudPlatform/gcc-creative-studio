@@ -32,6 +32,7 @@ import {
 import {FolderService} from '../../services/folder.service';
 import {WorkspaceService} from '../../../services/workspace/workspace.service';
 import {FolderTreeNode} from '../../models/folder.model';
+import {WorkspaceRole} from '../../models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../models/workspace.model';
 import {Component, Input} from '@angular/core';
 
@@ -100,6 +101,7 @@ describe('CopyToFolderDialogComponent', () => {
       scope: WorkspaceScope.PRIVATE,
       members: [],
       memberIds: ['user-2'],
+      currentUserRole: WorkspaceRole.EDITOR,
     },
   ];
 
@@ -249,5 +251,54 @@ describe('CopyToFolderDialogComponent', () => {
   it('should close dialog on close()', () => {
     component.close();
     expect(mockDialogRef.close).toHaveBeenCalledWith();
+  });
+
+  it('excludes PERSONAL and VIEWER targets and disables Folder tab when source is VIEWER', () => {
+    mockWorkspaceService.getWorkspaces.and.returnValue(
+      of([
+        {
+          id: 1,
+          name: 'Source Viewer WS',
+          ownerId: '99',
+          scope: WorkspaceScope.PRIVATE,
+          members: [],
+          memberIds: [],
+          currentUserRole: WorkspaceRole.VIEWER,
+        },
+        {
+          id: 9,
+          name: 'Personal WS',
+          ownerId: '10',
+          scope: WorkspaceScope.PERSONAL,
+          members: [],
+          memberIds: [],
+          currentUserRole: WorkspaceRole.OWNER,
+        },
+        {
+          id: 3,
+          name: 'Target Viewer WS',
+          ownerId: '99',
+          scope: WorkspaceScope.PRIVATE,
+          members: [],
+          memberIds: [],
+          currentUserRole: WorkspaceRole.VIEWER,
+        },
+        {
+          id: 4,
+          name: 'Target Editor WS',
+          ownerId: '99',
+          scope: WorkspaceScope.PRIVATE,
+          members: [],
+          memberIds: [],
+          currentUserRole: WorkspaceRole.EDITOR,
+        },
+      ]),
+    );
+
+    component.loadFolders();
+
+    expect(component.workspaceOptions.map(w => w.id)).toEqual([4]);
+    expect(component.selectedTabIndex).toBe(1);
+    expect(component.folderOptions.every(opt => opt.disabled)).toBeTrue();
   });
 });

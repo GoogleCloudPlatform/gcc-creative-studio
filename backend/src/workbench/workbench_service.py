@@ -23,10 +23,11 @@ import tempfile
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from google.cloud import storage
 from google.cloud.logging import Client as LoggerClient
 from google.cloud.logging.handlers import CloudLoggingHandler
+from sqlalchemy import select
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -47,13 +48,14 @@ from src.common.schema.media_item_model import (
     SourceMediaItemLink,
 )
 from src.common.storage_service import GcsService
-from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
+from src.projects.schema.project_model import Storyboard
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import ensure_can_reference_inputs
 from src.workbench.dto.workbench_dto import (
     TimelineCreate,
     TimelineRequest,
@@ -208,6 +210,52 @@ def _process_timeline_in_background(
         )
 
 
+def _collect_clip_refs(
+    timeline: TimelineCreate | TimelineUpdate | TimelineResponse,
+) -> tuple[
+    list[SourceAssetLink], list[SourceMediaItemLink], list[int], list[int]
+]:
+    """Collects link records and referenced IDs from timeline clips."""
+    source_assets: list[SourceAssetLink] = []
+    source_media_items: list[SourceMediaItemLink] = []
+    media_ids: list[int] = []
+    asset_ids: list[int] = []
+
+    def _record(ref, *, link: bool) -> None:
+        if not ref:
+            return
+        ref_id = int(ref.id) if str(ref.id).isdigit() else 0
+        if ref.type == "source_asset":
+            if link:
+                source_assets.append(
+                    SourceAssetLink(
+                        asset_id=ref_id, role=AssetRoleEnum.CONCATENATION_SOURCE
+                    )
+                )
+            if ref_id:
+                asset_ids.append(ref_id)
+        elif ref.type == "media_item":
+            if link:
+                source_media_items.append(
+                    SourceMediaItemLink(
+                        media_item_id=ref_id,
+                        media_index=0,
+                        role=AssetRoleEnum.CONCATENATION_SOURCE,
+                    )
+                )
+            if ref_id:
+                media_ids.append(ref_id)
+
+    for clip in timeline.video_clips:
+        _record(clip.asset_ref, link=True)
+        _record(clip.first_frame_asset_ref, link=False)
+        _record(clip.last_frame_asset_ref, link=False)
+    for clip in timeline.audio_clips:
+        _record(clip.asset_ref, link=True)
+
+    return source_assets, source_media_items, media_ids, asset_ids
+
+
 class WorkbenchService:
     def __init__(
         self,
@@ -308,10 +356,41 @@ class WorkbenchService:
                     )
                     clip.presigned_url = presigned_url
 
+    async def enrich_timeline(self, timeline: TimelineResponse) -> None:
+        """Public wrapper to inject presigned clip URLs after authorization."""
+        await self._enrich_timeline(timeline)
+
+    async def _ensure_storyboard_in_workspace(
+        self, sb_id_raw: int | str | None, ws_id_raw: int | str | None
+    ) -> None:
+        if sb_id_raw is None:
+            return
+        try:
+            sb_id = int(sb_id_raw)
+            ws_id = int(ws_id_raw or 0)
+            if sb_id <= 0 or ws_id <= 0:
+                raise ValueError
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                422, detail="Invalid storyboard_id or workspace_id."
+            ) from exc
+        res = await self.timeline_repo.db.execute(
+            select(Storyboard.workspace_id).where(Storyboard.id == sb_id)
+        )
+        sb_ws_id = res.scalar_one_or_none()
+        if sb_ws_id is None:
+            raise HTTPException(404, detail=f"Storyboard {sb_id} not found.")
+        if int(sb_ws_id) != ws_id:
+            raise HTTPException(
+                403, detail="Storyboard belongs to a different workspace."
+            )
+
     async def create_timeline(
         self,
         timeline_create: TimelineCreate,
         reuse_for_storyboard: bool = False,
+        *,
+        current_user: UserModel,
     ) -> TimelineResponse:
         """Creates a timeline.
 
@@ -321,7 +400,18 @@ class WorkbenchService:
         the Workbench follows ``storyboard.timeline_id``, which would otherwise
         keep pointing at the first, stale cut.
         """
-        storyboard_id = getattr(timeline_create, "storyboard_id", None)
+        _, _, media_ids, asset_ids = _collect_clip_refs(timeline_create)
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            current_user,
+            media_item_ids=media_ids,
+            source_asset_ids=asset_ids,
+        )
+
+        storyboard_id = timeline_create.storyboard_id
+        await self._ensure_storyboard_in_workspace(
+            storyboard_id, timeline_create.workspace_id
+        )
         if reuse_for_storyboard and storyboard_id is not None:
             try:
                 existing = await self.timeline_repo.find_by_storyboard(
@@ -329,6 +419,11 @@ class WorkbenchService:
                 )
             except (ValueError, TypeError):
                 existing = []
+            existing = [
+                t
+                for t in existing
+                if str(t.workspace_id) == str(timeline_create.workspace_id)
+            ]
             if existing:
                 # The repo returns ``VideoTimeline`` DTOs: the id is
                 # ``timeline_id`` (a str or int), not ``id``.
@@ -356,23 +451,41 @@ class WorkbenchService:
         await self._enrich_timeline(timeline)
         return timeline
 
-    async def get_timeline(self, timeline_id: int) -> TimelineResponse | None:
+    async def get_timeline(
+        self, timeline_id: int, *, enrich: bool = True
+    ) -> TimelineResponse | None:
         timeline = await self.timeline_repo.get_by_id_with_details(timeline_id)
-        if timeline:
+        if timeline and enrich:
             await self._enrich_timeline(timeline)
         return timeline
 
     async def list_timelines(
-        self, storyboard_id: int
+        self, storyboard_id: int, *, enrich: bool = True
     ) -> list[TimelineResponse]:
         timelines = await self.timeline_repo.find_by_storyboard(storyboard_id)
-        for t in timelines:
-            await self._enrich_timeline(t)
+        if enrich:
+            for t in timelines:
+                await self._enrich_timeline(t)
         return timelines
 
     async def update_timeline(
-        self, timeline_id: int, timeline_update: TimelineUpdate
+        self,
+        timeline_id: int,
+        timeline_update: TimelineUpdate,
+        *,
+        current_user: UserModel,
     ) -> TimelineResponse | None:
+        _, _, media_ids, asset_ids = _collect_clip_refs(timeline_update)
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            current_user,
+            media_item_ids=media_ids,
+            source_asset_ids=asset_ids,
+        )
+        await self._ensure_storyboard_in_workspace(
+            timeline_update.storyboard_id,
+            timeline_update.workspace_id,
+        )
         timeline = await self.timeline_repo.update_timeline(
             timeline_id, timeline_update
         )
@@ -384,60 +497,28 @@ class WorkbenchService:
         return await self.timeline_repo.delete_timeline(timeline_id)
 
     async def render_timeline_by_id(
-        self, timeline_id: int, user: UserModel, executor: ThreadPoolExecutor
+        self,
+        timeline_id: int,
+        user: UserModel,
+        executor: ThreadPoolExecutor,
+        *,
+        timeline: TimelineResponse | None = None,
     ) -> MediaItemResponse | None:
-        timeline = await self.get_timeline(timeline_id)
+        timeline = timeline or await self.get_timeline(
+            timeline_id, enrich=False
+        )
         if not timeline:
             return None
 
-        source_assets = []
-        source_media_items = []
-
-        for clip in timeline.video_clips:
-            if clip.asset_ref:
-                ref = clip.asset_ref
-                if ref.type == "source_asset":
-                    source_assets.append(
-                        SourceAssetLink(
-                            asset_id=(
-                                int(ref.id) if str(ref.id).isdigit() else 0
-                            ),
-                            role=AssetRoleEnum.CONCATENATION_SOURCE,
-                        )
-                    )
-                elif ref.type == "media_item":
-                    source_media_items.append(
-                        SourceMediaItemLink(
-                            media_item_id=(
-                                int(ref.id) if str(ref.id).isdigit() else 0
-                            ),
-                            media_index=0,
-                            role=AssetRoleEnum.CONCATENATION_SOURCE,
-                        )
-                    )
-
-        for clip in timeline.audio_clips:
-            if clip.asset_ref:
-                ref = clip.asset_ref
-                if ref.type == "source_asset":
-                    source_assets.append(
-                        SourceAssetLink(
-                            asset_id=(
-                                int(ref.id) if str(ref.id).isdigit() else 0
-                            ),
-                            role=AssetRoleEnum.CONCATENATION_SOURCE,
-                        )
-                    )
-                elif ref.type == "media_item":
-                    source_media_items.append(
-                        SourceMediaItemLink(
-                            media_item_id=(
-                                int(ref.id) if str(ref.id).isdigit() else 0
-                            ),
-                            media_index=0,
-                            role=AssetRoleEnum.CONCATENATION_SOURCE,
-                        )
-                    )
+        source_assets, source_media_items, auth_media_ids, auth_asset_ids = (
+            _collect_clip_refs(timeline)
+        )
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            user,
+            media_item_ids=auth_media_ids,
+            source_asset_ids=auth_asset_ids,
+        )
 
         # TODO: change this to a proper way of figuring the ratio
         timeline_aspect_ratio = AspectRatioEnum.RATIO_16_9
@@ -459,15 +540,14 @@ class WorkbenchService:
                     if source_asset and source_asset.aspect_ratio:
                         timeline_aspect_ratio = source_asset.aspect_ratio
 
-        ws_id = (
-            int(timeline.workspace_id)
-            if str(timeline.workspace_id).isdigit()
-            else 1
-        )
+        raw_ws_id = str(timeline.workspace_id or "").strip()
+        if not raw_ws_id.isdigit() or int(raw_ws_id) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="A valid positive integer workspace_id is required.",
+            )
+        ws_id = int(raw_ws_id)
 
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, ws_id, user
-        )
         new_media_item = MediaItemModel(
             prompt=f"Render of timeline {timeline_id}",
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -475,7 +555,7 @@ class WorkbenchService:
             user_id=user.id,
             user_email=user.email,
             workspace_id=ws_id,
-            folder_id=folder_id,
+            folder_id=None,
             model=GenerationModelEnum.WORKBENCH_RENDER,
             aspect_ratio=timeline_aspect_ratio,
             gcs_uris=[],

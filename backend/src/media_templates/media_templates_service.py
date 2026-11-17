@@ -57,7 +57,9 @@ from src.source_assets.schema.source_asset_model import (
 )
 from src.source_assets.source_asset_service import SourceAssetService
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import ensure_can_reference_inputs
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 
 class MediaTemplateService:
@@ -73,6 +75,7 @@ class MediaTemplateService:
         gcs_service: GcsService = Depends(),
         source_asset_service: SourceAssetService = Depends(),
         workspace_repo: WorkspaceRepository = Depends(),
+        workspace_auth: WorkspaceAuth = Depends(),
     ):
         # Dependency Injection for repositories and other services
         self.template_repo = template_repo
@@ -83,6 +86,7 @@ class MediaTemplateService:
         self.gcs_service = gcs_service
         self.source_asset_service = source_asset_service
         self.workspace_repo = workspace_repo
+        self.workspace_auth = workspace_auth
 
     async def _enrich_source_asset_link(
         self,
@@ -256,8 +260,29 @@ class MediaTemplateService:
         and using Gemini to generate a creative name and description. (Admin only)
         """
         media_item = await self.media_item_repo.get_by_id(media_item_id)
-        if not media_item:
+        if not media_item or media_item.deleted_at is not None:
             return None  # MediaItem not found
+
+        if media_item.workspace_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot determine source MediaItem workspace.",
+            )
+        await self.workspace_auth.authorize(
+            workspace_id=media_item.workspace_id,
+            user=user,
+        )
+        await ensure_can_reference_inputs(
+            self.media_item_repo.db,
+            user,
+            media_item_ids=[
+                link.media_item_id
+                for link in (media_item.source_media_items or [])
+            ],
+            source_asset_ids=[
+                link.asset_id for link in (media_item.source_assets or [])
+            ],
+        )
 
         # --- Use Gemini to generate a name and description ---
         prompt_for_gemini = f"""

@@ -128,6 +128,19 @@ class TestIsWorkspaceManager:
             user, _workspace(WorkspaceScopeEnum.PUBLIC)
         )
 
+    def test_private_workspace_admin_member_is_manager(self):
+        from src.workspaces.schema.workspace_model import WorkspaceRoleEnum
+
+        ws = _workspace(WorkspaceScopeEnum.PRIVATE)
+        ws.current_user_role = WorkspaceRoleEnum.ADMIN
+        assert FolderService.is_workspace_manager(_user(MEMBER_ID), ws)
+
+    def test_global_admin_is_not_personal_workspace_manager(self):
+        assert not FolderService.is_workspace_manager(
+            _user(ADMIN_ID, UserRoleEnum.ADMIN),
+            _workspace(WorkspaceScopeEnum.PERSONAL, owner_id=OWNER_ID),
+        )
+
 
 # ---------------------------------------------------------------------------
 # ensure_can_manage_folder
@@ -455,7 +468,7 @@ class TestControllerEnforcement:
         kwargs = mock_folder_service.ensure_can_manage_folder.call_args.kwargs
         assert kwargs == {"check_subtree": True}
         args = mock_folder_service.ensure_can_manage_folder.call_args.args
-        assert args[2] is mock_workspace_auth.authorize.return_value
+        assert args[2] is mock_workspace_auth.authorize_write.return_value
 
     def test_rename_does_not_check_subtree(
         self, api_client, mock_folder_service

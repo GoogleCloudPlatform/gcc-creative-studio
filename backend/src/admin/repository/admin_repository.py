@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, update
 from src.database import get_db
 from src.users.user_model import User
-from src.workspaces.schema.workspace_model import Workspace
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceScopeEnum,
+)
 from src.source_assets.schema.source_asset_model import SourceAsset
 from src.common.schema.media_item_model import MediaItem, JobStatusEnum
 from src.admin.dto.admin_response_dto import (
@@ -52,7 +55,9 @@ class AdminRepository:
         self, start_date: str | None = None, end_date: str | None = None
     ) -> AdminOverviewStats:
         users_query = select(func.count(User.id))
-        workspaces_query = select(func.count(Workspace.id))
+        workspaces_query = select(func.count(Workspace.id)).where(
+            Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+        )
         uploaded_query = select(func.count(SourceAsset.id))
 
         if end_date:
@@ -211,6 +216,7 @@ class AdminRepository:
                 )
             ).label("audios"),
         ).join(Workspace, Workspace.id == MediaItem.workspace_id)
+        stmt = stmt.where(Workspace.scope != WorkspaceScopeEnum.PERSONAL.value)
 
         stmt = self._apply_date_filters(stmt, MediaItem, start_date, end_date)
 

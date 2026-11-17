@@ -302,3 +302,16 @@ class TestTimelineRepository:
 
         res = await timeline_repo.delete_timeline(999)
         assert res is False
+
+    def test_model_to_dto_missing_workspace_id_fails_closed(self):
+        orphan = Timeline(
+            id=11,
+            storyboard_id=99,
+            workspace_id=None,
+            title="Orphan",
+        )
+        orphan.video_clips = []
+        orphan.audio_clips = []
+
+        dto = TimelineRepository._model_to_dto(orphan)
+        assert dto.workspace_id == ""
