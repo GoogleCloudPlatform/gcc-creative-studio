@@ -39,6 +39,7 @@ from src.brand_guidelines.repository.brand_guideline_repository import (
 from src.brand_guidelines.schema.brand_guideline_model import (
     BrandGuidelineModel,
 )
+from src.common.base_dto import normalize_retired_text_model
 from src.common.retry import is_transient_or_quota
 from src.config.config_service import config_service
 from src.images.dto.create_imagen_dto import CreateImagenDto
@@ -396,7 +397,11 @@ class GeminiService:
 
         """
         # Use provided model_id or fall back to service's default rewriter model
-        target_model = model_id or self.rewriter_model
+        target_model = (
+            normalize_retired_text_model(model_id)
+            if model_id
+            else self.rewriter_model
+        )
 
         logger.info(
             "Sending text generation request to model: %s", target_model
@@ -525,7 +530,7 @@ class GeminiService:
 
         try:
             response = self.client.models.generate_content(
-                model=model_name,
+                model=normalize_retired_text_model(model_name),
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -746,7 +751,7 @@ class GeminiService:
 
         try:
             response = await self.client.aio.models.generate_content(
-                model=request.model,
+                model=normalize_retired_text_model(request.model),
                 contents=contents,
                 **config_args,
             )
