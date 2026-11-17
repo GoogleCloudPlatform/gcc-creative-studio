@@ -234,3 +234,35 @@ def test_search_gallery_invalid_payload_returns_422(client):
         json={"workspace_id": 0, "limit": 10, "offset": 0},
     )
     assert response.status_code == 422
+
+
+def test_get_item_revisions_route(mock_user):
+    from src.galleries.dto.unified_gallery_response import (
+        RevisionHistoryResponseDto,
+    )
+    from src.galleries.revision_service import RevisionService
+
+    mock_revision_service = AsyncMock()
+    mock_revision_service.get_revisions.return_value = (
+        RevisionHistoryResponseDto(
+            root_id=40,
+            revision_count=2,
+            takes=[],
+        )
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[RevisionService] = lambda: mock_revision_service
+
+    test_client = TestClient(app)
+    response = test_client.get("/api/gallery/item/42/revisions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rootId"] == 40
+    assert body["revisionCount"] == 2
+    assert body["takes"] == []
+    mock_revision_service.get_revisions.assert_awaited_once_with(
+        item_id=42, current_user=mock_user
+    )

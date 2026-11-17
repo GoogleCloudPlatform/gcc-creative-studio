@@ -486,11 +486,14 @@ export class VtoComponent implements OnInit, AfterViewInit {
       return;
     }
 
+    const parentMediaItemId =
+      selectedModel?.inputLink?.sourceMediaItem?.mediaItemId;
     const payload: VtoRequest = {
       numberOfMedia: 4, // Defaulting to 4 as per DTO
       personImage: selectedModel.inputLink,
       workspaceId,
       contextWorkspaceId,
+      ...(parentMediaItemId !== undefined ? {parentMediaItemId} : {}),
     };
 
     if (this.selectedTop) payload.topImage = this.selectedTop.inputLink;

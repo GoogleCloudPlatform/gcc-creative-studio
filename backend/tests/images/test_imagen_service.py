@@ -28,6 +28,7 @@ from src.common.schema.media_item_model import (
     MediaItemModel,
     MimeTypeEnum,
 )
+from src.galleries.revision_lineage import RevisionLineage
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.dto.vto_dto import VtoDto, VtoInputLink, VtoSourceMediaItemLink
@@ -169,6 +170,12 @@ class TestImagenServiceMethods:
                 "src.images.imagen_service.ensure_can_reference_inputs",
                 new=AsyncMock(return_value=None),
             ) as ensure_refs,
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(None, None, 1, None)
+                ),
+            ),
         ):
             repo_cls.return_value.ensure_personal_workspace = AsyncMock(
                 return_value=personal_ws
@@ -2582,3 +2589,311 @@ def test_process_image_in_background_sync_video_ref_media_item_youtube_resolved(
                 reference_parts[0].file_data.file_uri
                 == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             )
+
+
+class TestImagenServiceRevisionLineage:
+    """Behavioral tests for revision lineage wiring across image generation jobs."""
+
+    @staticmethod
+    def _build_placeholder(
+        item_id: int, workspace_id: int = 10
+    ) -> MediaItemModel:
+        return MediaItemModel(
+            id=item_id,
+            workspace_id=workspace_id,
+            user_id=1,
+            user_email="test@example.com",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+            aspect_ratio="1:1",
+            gcs_uris=[],
+            original_gcs_uris=[],
+        )
+
+    @pytest.mark.anyio
+    async def test_generate_image_persists_revision_lineage_and_inherited_folder(
+        self, imagen_service, mock_media_repo, sample_user
+    ):
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured_models: list[MediaItemModel] = []
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured_models.append(item)
+            item.id = 502
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        dto = CreateImagenDto(
+            workspace_id=30,
+            prompt="Refine lighting",
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+            parent_media_item_id=500,
+        )
+
+        with (
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+            patch(
+                "src.images.imagen_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 30, 88)),
+            ),
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=400,
+                        revision_parent_id=500,
+                        revision_number=3,
+                        inherited_folder_id=77,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await imagen_service.start_image_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert res.id == 502
+        assert ensure_refs.await_args.kwargs["media_item_ids"] == [500]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 500
+        saved = captured_models[0]
+        assert saved.workspace_id == 10
+        assert saved.folder_id == 77
+        assert saved.revision_root_id == 400
+        assert saved.revision_parent_id == 500
+        assert saved.revision_number == 3
+
+    @pytest.mark.anyio
+    async def test_upload_upscale_falls_back_to_existing_media_id_for_lineage(
+        self, imagen_service, mock_media_repo, sample_user
+    ):
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured_models: list[MediaItemModel] = []
+        existing = MagicMock(id=210, gcs_uris=["gs://bucket/src.png"])
+        mock_media_repo.get_by_id.return_value = existing
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured_models.append(item)
+            item.id = 211
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+            patch(
+                "src.images.imagen_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=200,
+                        revision_parent_id=210,
+                        revision_number=2,
+                        inherited_folder_id=19,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await imagen_service.start_upload_upscale_job(
+                user=sample_user,
+                executor=mock_executor,
+                workspace_id=10,
+                gcs_uri="",
+                mime_type="image/png",
+                file_bytes=b"fake_bytes",
+                media_item_id_existing=210,
+            )
+
+        assert res.id == 211
+        assert ensure_refs.await_args.kwargs["media_item_ids"] == [210]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 210
+        assert captured_models[0].revision_root_id == 200
+        assert captured_models[0].revision_number == 2
+        assert captured_models[0].folder_id == 19
+
+    @pytest.mark.anyio
+    async def test_vto_persists_lineage_from_person_media_item(
+        self, imagen_service, mock_media_repo, sample_user
+    ):
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured_models: list[MediaItemModel] = []
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured_models.append(item)
+            item.id = 602
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        dto = VtoDto(
+            workspace_id=10,
+            person_image=VtoInputLink(
+                source_media_item=VtoSourceMediaItemLink(
+                    media_item_id=600, media_index=0
+                )
+            ),
+            top_image=VtoInputLink(source_asset_id=102),
+            parent_media_item_id=601,
+        )
+
+        with (
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+            patch(
+                "src.images.imagen_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, 5)),
+            ),
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=600,
+                        revision_parent_id=601,
+                        revision_number=2,
+                        inherited_folder_id=5,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await imagen_service.start_vto_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert res.id == 602
+        assert sorted(ensure_refs.await_args.kwargs["media_item_ids"]) == [
+            600,
+            601,
+        ]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 601
+        assert (
+            mock_lineage.await_args.kwargs["source_media_items"][
+                0
+            ].media_item_id
+            == 600
+        )
+        assert captured_models[0].revision_root_id == 600
+        assert captured_models[0].revision_number == 2
+
+    @pytest.mark.anyio
+    async def test_upload_upscale_validates_gcs_pixels_before_locking_lineage(
+        self, imagen_service, mock_media_repo, mock_gcs_service, sample_user
+    ):
+        from src.workspaces.generation_workspace import GenerationContext
+
+        buf = io.BytesIO()
+        PILImage.new("RGB", (4000, 4000)).save(buf, format="PNG")
+        mock_gcs_service.download_bytes_from_gcs.return_value = buf.getvalue()
+        mock_media_repo.get_by_id.return_value = MagicMock(
+            id=210, gcs_uris=["gs://bucket/huge.png"]
+        )
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.images.imagen_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(),
+            ) as mock_lineage,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await imagen_service.start_upload_upscale_job(
+                    user=sample_user,
+                    executor=mock_executor,
+                    workspace_id=10,
+                    gcs_uri="",
+                    mime_type="image/png",
+                    media_item_id_existing=210,
+                    upscale_factor="x4",
+                )
+
+        assert exc.value.status_code == 400
+        mock_gcs_service.download_bytes_from_gcs.assert_called_once_with(
+            "gs://bucket/huge.png"
+        )
+        mock_lineage.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_authorize_and_prepare_generation_target_resolves_lineage(
+        self, imagen_service, mock_media_repo, sample_user
+    ):
+        from src.common.schema.media_item_model import SourceMediaItemLink
+        from src.galleries.revision_lineage import RevisionLineage
+        from src.workspaces.generation_workspace import GenerationContext
+
+        links = [
+            SourceMediaItemLink(
+                media_item_id=501, media_index=0, role=AssetRoleEnum.INPUT
+            )
+        ]
+        with (
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as mock_refs,
+            patch(
+                "src.images.imagen_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, 8)),
+            ) as mock_ctx,
+            patch(
+                "src.images.imagen_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=500,
+                        revision_parent_id=501,
+                        revision_number=2,
+                        inherited_folder_id=4,
+                    )
+                ),
+            ) as mock_lin,
+        ):
+            auth_ctx = await imagen_service._authorize_generation_target(
+                user=sample_user,
+                workspace_id=10,
+                folder_id=None,
+                media_ids=[501],
+                asset_ids=[12],
+            )
+            ctx, lin, eff_folder = (
+                await imagen_service._prepare_generation_target(
+                    user=sample_user,
+                    workspace_id=10,
+                    folder_id=None,
+                    media_ids=[501],
+                    asset_ids=[12],
+                    explicit_parent_id=501,
+                    source_media_items=links,
+                )
+            )
+
+        assert auth_ctx == ctx == GenerationContext(10, 10, 8)
+        assert lin.revision_root_id == 500
+        assert eff_folder == 4
+        assert mock_refs.await_count == 2
+        assert mock_ctx.await_count == 2
+        mock_lin.assert_awaited_once()

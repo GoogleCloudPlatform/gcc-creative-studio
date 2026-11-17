@@ -264,6 +264,14 @@ export class UpscaleComponent implements OnInit, OnDestroy {
     if (!this.selectedAsset) return;
 
     const {workspaceId} = this.workspaceStateService.getTargetWorkspaceParam();
+    const assetMeta = this.selectedAsset as SourceAssetResponseDto & {
+      itemType?: string;
+      isMediaItem?: boolean;
+    };
+    const parentMediaItemId =
+      assetMeta.itemType === 'media_item' || assetMeta.isMediaItem === true
+        ? assetMeta.id
+        : undefined;
     this.isLoadingUpscale = true;
     // Use the service to start the upscale job
     this.sourceAssetService
@@ -272,6 +280,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
         enhance_input_image: this.enhanceInputImage,
         image_preservation_factor: this.imagePreservationFactor,
         ...(workspaceId !== null ? {workspaceId} : {}),
+        ...(parentMediaItemId !== undefined ? {parentMediaItemId} : {}),
       })
       .subscribe({
         next: () => {

@@ -162,6 +162,9 @@ class TestFolderRepository:
         assert item_count == 5
         assert subfolder_count == 1
         mock_db.execute.assert_called_once()
+        # Revision stack deduplication uses COALESCE(revision_root_id, id)
+        stmt = mock_db.execute.call_args[0][0]
+        assert "revision_root_id" in str(stmt)
 
     @pytest.mark.anyio
     async def test_get_folder_counts_none(self, folder_repo, mock_db):
@@ -317,7 +320,11 @@ class TestFolderRepository:
         assert count == 2
         mock_db.commit.assert_called_once()
         executed_stmt = mock_db.execute.call_args[0][0]
-        assert "media_items.deleted_at IS NULL" in str(executed_stmt)
+        stmt_text = str(executed_stmt)
+        assert "media_items.deleted_at IS NULL" in stmt_text
+        # Keeps revision stacks moving atomically across folders/workspaces
+        assert "revision_root_id" in stmt_text
+        assert "workspaces.scope" not in stmt_text
 
     @pytest.mark.anyio
     async def test_move_media_items_without_commit(self, folder_repo, mock_db):
@@ -1722,15 +1729,12 @@ class TestFolderRepository:
         assert copied_asset.promoted_from_source_asset_id is None
 
     @pytest.mark.anyio
-    async def test_sanitize_copied_media_kwargs_handles_typed_and_dict_links(
+    async def test_sanitize_copied_media_kwargs_filters_allowed_refs(
         self, folder_repo, mock_db
     ):
-        from src.common.schema.media_item_model import (
-            AssetRoleEnum,
-            SourceAssetLink,
-            SourceMediaItemLink,
-        )
+        from src.galleries.revision_lineage import sanitize_copied_media_kwargs
 
+        _ = folder_repo
         allowed_assets_res = MagicMock()
         allowed_assets_res.fetchall.return_value = [(2,)]
         allowed_media_res = MagicMock()
@@ -1739,23 +1743,17 @@ class TestFolderRepository:
 
         kwargs = {
             "source_assets": [
-                SourceAssetLink(asset_id=1, role=AssetRoleEnum.INPUT),
-                SourceAssetLink(asset_id=2, role=AssetRoleEnum.INPUT),
+                {"asset_id": 1, "role": "input"},
+                {"asset_id": 2, "role": "input"},
             ],
             "source_media_items": [
-                SourceMediaItemLink(
-                    media_item_id=3, media_index=0, role=AssetRoleEnum.INPUT
-                ),
+                {"media_item_id": 3, "media_index": 0, "role": "input"},
                 {"media_item_id": 4, "media_index": 0, "role": "input"},
             ],
         }
-        await folder_repo._sanitize_copied_media_kwargs(kwargs, target_ws_id=88)
+        await sanitize_copied_media_kwargs(
+            mock_db, kwargs, target_workspace_id=88
+        )
 
-        assert [
-            folder_repo._entry_id(a, "asset_id")
-            for a in kwargs["source_assets"]
-        ] == [2]
-        assert [
-            folder_repo._entry_id(m, "media_item_id")
-            for m in kwargs["source_media_items"]
-        ] == [4]
+        assert [a["asset_id"] for a in kwargs["source_assets"]] == [2]
+        assert [m["media_item_id"] for m in kwargs["source_media_items"]] == [4]

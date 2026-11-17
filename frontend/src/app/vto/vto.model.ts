@@ -28,6 +28,7 @@ export interface VtoInputLink {
 export interface VtoRequest {
   workspaceId: number;
   contextWorkspaceId?: number;
+  parentMediaItemId?: number | null;
   numberOfMedia: number;
   personImage: VtoInputLink;
   topImage?: VtoInputLink;

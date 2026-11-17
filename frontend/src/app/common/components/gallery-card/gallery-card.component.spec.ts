@@ -24,6 +24,8 @@ import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {GalleryCardComponent} from './gallery-card.component';
 import {UserService} from '../../services/user.service';
 import {GalleryItem} from '../../models/gallery-item.model';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {WorkspaceScope} from '../../models/workspace.model';
 
 describe('GalleryCardComponent', () => {
   let component: GalleryCardComponent;
@@ -219,5 +221,47 @@ describe('GalleryCardComponent', () => {
     expect(videos[0].querySelector('source')?.getAttribute('src')).toBe(
       'https://example.com/v2.mp4',
     );
+  });
+
+  it('renders inline revision status text only in personal workspace outside selector mode', () => {
+    const wsState = TestBed.inject(WorkspaceStateService);
+    wsState.setWorkspaces([
+      {
+        id: 1,
+        name: 'My Workspace',
+        ownerId: 'u1',
+        scope: WorkspaceScope.PERSONAL,
+        members: [],
+        memberIds: ['u1'],
+      },
+      {
+        id: 2,
+        name: 'Shared Team',
+        ownerId: 'u2',
+        scope: WorkspaceScope.PRIVATE,
+        members: [],
+        memberIds: ['u1', 'u2'],
+      },
+    ]);
+
+    component.item = {
+      ...mockItem,
+      workspaceId: 1,
+      revisionNumber: 3,
+      revisionCount: 3,
+    };
+    fixture.detectChanges();
+
+    const statusLine = fixture.nativeElement.querySelector('.card-status-line');
+    expect(statusLine?.textContent?.trim()).toBe('v3 · 3 versions');
+
+    component.isSelectorMode = true;
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.card-status-line')).toBeNull();
+
+    component.isSelectorMode = false;
+    component.item = {...component.item, workspaceId: 2};
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.card-status-line')).toBeNull();
   });
 });

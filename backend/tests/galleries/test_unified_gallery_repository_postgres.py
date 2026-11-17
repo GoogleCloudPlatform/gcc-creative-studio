@@ -354,7 +354,10 @@ async def _view_reference_query(
     model = UnifiedGalleryView
     q = select(model)
     if not search_dto.include_deleted:
-        q = q.where(model.deleted_at.is_(None))
+        q = q.where(
+            model.deleted_at.is_(None),
+            model.is_latest_revision.is_(True),
+        )
     if not search_dto.include_external:
         ext = model.metadata_["external_url"].astext
         q = q.where(ext.is_(None) | (ext == ""))

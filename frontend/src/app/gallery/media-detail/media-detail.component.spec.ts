@@ -25,7 +25,7 @@ import {WorkspaceStateService} from '../../services/workspace/workspace-state.se
 import {MatDialog} from '@angular/material/dialog';
 import {DomSanitizer} from '@angular/platform-browser';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
-import {of, throwError} from 'rxjs';
+import {of, Subject, throwError} from 'rxjs';
 import {GalleryItem} from '../../common/models/gallery-item.model';
 import {FolderService} from '../../common/services/folder.service';
 import {FolderBreadcrumb} from '../../common/models/folder.model';
@@ -95,6 +95,13 @@ describe('MediaDetailComponent', () => {
       bulkDelete: jasmine
         .createSpy('bulkDelete')
         .and.returnValue(of({deleted_count: 1})),
+      getItemRevisions: jasmine.createSpy('getItemRevisions').and.returnValue(
+        of({
+          rootId: 123,
+          revisionCount: 1,
+          takes: [],
+        }),
+      ),
     };
 
     mockLoadingService = {
@@ -113,6 +120,9 @@ describe('MediaDetailComponent', () => {
     mockWorkspaceStateService = {
       getActiveWorkspaceId: jasmine
         .createSpy('getActiveWorkspaceId')
+        .and.returnValue(1),
+      personalWorkspaceId: jasmine
+        .createSpy('personalWorkspaceId')
         .and.returnValue(1),
     };
 
@@ -375,6 +385,209 @@ describe('MediaDetailComponent', () => {
         'B',
         'C',
       ]);
+    });
+  });
+
+  describe('revision history and cold-load resilience', () => {
+    const makeTake = (id: number, rev: number): GalleryItem => ({
+      id,
+      workspaceId: 10,
+      itemType: 'media_item',
+      createdAt: `2026-07-08T22:2${rev}:10Z`,
+      status: 'COMPLETED',
+      mimeType: 'image/png',
+      prompt: `Prompt v${rev}`,
+      presignedUrls: [`http://example.com/v${rev}.png`],
+      presignedThumbnailUrls: [`http://example.com/v${rev}_thumb.png`],
+      revisionRootId: 120,
+      revisionNumber: rev,
+      revisionCount: 2,
+      metadata: {},
+    });
+
+    it('loads revision history on cold direct URL load even before workspaces resolve', () => {
+      mockWorkspaceStateService.personalWorkspaceId.and.returnValue(null);
+      const take1 = makeTake(120, 1);
+      const take2 = makeTake(121, 2);
+      mockGalleryService.getMedia.and.returnValue(of(take2));
+      mockGalleryService.getItemRevisions.and.returnValue(
+        of({
+          rootId: 120,
+          revisionCount: 2,
+          takes: [take1, take2],
+        }),
+      );
+
+      component.fetchMediaDetails(121, false);
+      fixture.detectChanges();
+
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledWith(121);
+      expect(component.revisionHistory?.takes.map(t => t.id)).toEqual([
+        120, 121,
+      ]);
+      const stripEl = (fixture.nativeElement as HTMLElement).querySelector(
+        'app-revision-history-strip',
+      );
+      expect(stripEl).not.toBeNull();
+    });
+
+    it('switches displayed take, branches with parentMediaItemId, and deletes a take', () => {
+      const take1 = makeTake(120, 1);
+      const take2 = makeTake(121, 2);
+      component.mediaItem = take2;
+      component.revisionHistory = {
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      };
+
+      component.onEditFromRevisionTake(take1);
+      expect(component.mediaItem?.id).toBe(120);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              parentMediaItemId: 120,
+              sourceMediaItems: [
+                {mediaItemId: 120, mediaIndex: 0, role: 'input'},
+              ],
+            }),
+          },
+        }),
+      );
+
+      mockGalleryService.getItemRevisions.and.returnValue(
+        of({
+          rootId: 120,
+          revisionCount: 1,
+          takes: [take1],
+        }),
+      );
+      component.onDeleteRevisionTake(take2);
+      expect(mockGalleryService.bulkDelete).toHaveBeenCalledWith(
+        [{id: 121, type: 'media_item'}],
+        10,
+      );
+      expect(component.mediaItem?.id).toBe(120);
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledWith(120);
+    });
+
+    it('renders revisionHistoryError banner and retries loading on Retry click', () => {
+      spyOn(console, 'error');
+      mockGalleryService.getItemRevisions.calls.reset();
+      const take1 = makeTake(123, 1);
+      const take2 = makeTake(124, 2);
+      mockGalleryService.getItemRevisions.and.returnValues(
+        throwError(() => new Error('network down')),
+        of({
+          rootId: 123,
+          revisionCount: 2,
+          takes: [take1, take2],
+        }),
+      );
+
+      component.fetchMediaDetails(123, false);
+      fixture.detectChanges();
+
+      expect(component.revisionHistory).toBeNull();
+      expect(component.revisionHistoryError).toBeTrue();
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.textContent).toContain("Couldn't load version history");
+
+      const retryBtn = el.querySelector(
+        '#revision-history-retry-btn',
+      ) as HTMLButtonElement;
+      expect(retryBtn).not.toBeNull();
+      retryBtn.click();
+      fixture.detectChanges();
+
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledTimes(2);
+      expect(component.revisionHistoryError).toBeFalse();
+      expect(component.revisionHistory?.takes.map(t => t.id)).toEqual([
+        123, 124,
+      ]);
+      expect(el.textContent).not.toContain("Couldn't load version history");
+    });
+
+    it('drops stale out-of-order revision responses, hides strip for single-take stacks, and keeps take references isolated', () => {
+      const firstRev$ = new Subject<any>();
+      const secondRev$ = new Subject<any>();
+      const take1: GalleryItem = {
+        ...makeTake(120, 1),
+        enrichedSourceAssets: undefined,
+        enrichedSourceMediaItems: undefined,
+      };
+      const take2: GalleryItem = {
+        ...makeTake(121, 2),
+        presignedUrls: [
+          'http://example.com/v2a.png',
+          'http://example.com/v2b.png',
+        ],
+        enrichedSourceAssets: [
+          {
+            assetId: 50,
+            role: 'input',
+            presignedUrl: 'http://example.com/ref.png',
+            presignedThumbnailUrl: 'http://example.com/ref_t.png',
+            mimeType: 'image/png',
+            originalFilename: 'ref.png',
+          },
+        ],
+      };
+      const singleItem = makeTake(200, 1);
+
+      mockGalleryService.getMedia.and.returnValues(of(take2), of(singleItem));
+      mockGalleryService.getItemRevisions.and.returnValues(
+        firstRev$.asObservable(),
+        secondRev$.asObservable(),
+      );
+
+      component.fetchMediaDetails(121, false);
+      component.currentImageIndex = 1;
+      component.onEditFromRevisionTake(take2);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              sourceMediaItems: [
+                {mediaItemId: 121, mediaIndex: 1, role: 'input'},
+              ],
+            }),
+          },
+        }),
+      );
+      component.onRevisionTakeSelected(take1);
+      expect(component.mediaItem?.enrichedSourceAssets).toBeUndefined();
+      expect(component.mediaItem?.enrichedSourceMediaItems).toBeUndefined();
+
+      component.revisionHistory = {
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      };
+      component.fetchMediaDetails(200, false);
+      expect(component.revisionHistory).toBeNull();
+
+      secondRev$.next({
+        rootId: 200,
+        revisionCount: 1,
+        takes: [singleItem],
+      });
+      firstRev$.next({
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      });
+      fixture.detectChanges();
+
+      expect(component.revisionHistory?.rootId).toBe(200);
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          'app-revision-history-strip',
+        ),
+      ).toBeNull();
     });
   });
 });

@@ -470,4 +470,32 @@ describe('HomeComponent', () => {
     expect(payload.workspaceId).toBe(11);
     expect(payload.contextWorkspaceId).toBe(22);
   });
+
+  it('tracks and forwards parentMediaItemId on result edit and clears it when removing the parent reference', () => {
+    mockWorkspaceStateService.getReferencedGenerationWorkspaceParams.and.returnValue(
+      {
+        workspaceId: 10,
+        contextWorkspaceId: 30,
+      },
+    );
+    mockSearchService.startImagenGeneration.and.returnValue(of({} as any));
+
+    component.imagenDocuments = {id: 123, presignedUrls: ['url1']} as any;
+    component.editResultImage(0);
+    expect(component.parentMediaItemId).toBe(123);
+
+    component.searchRequest.prompt = 'Refine edited output';
+    component.searchTerm();
+    const editedPayload =
+      mockSearchService.startImagenGeneration.calls.mostRecent().args[0];
+    expect(editedPayload.parentMediaItemId).toBe(123);
+
+    component.clearImage(0, new MouseEvent('click'));
+    expect(component.parentMediaItemId).toBeNull();
+
+    component.searchTerm();
+    const unlinkedPayload =
+      mockSearchService.startImagenGeneration.calls.mostRecent().args[0];
+    expect(unlinkedPayload.parentMediaItemId).toBeUndefined();
+  });
 });
