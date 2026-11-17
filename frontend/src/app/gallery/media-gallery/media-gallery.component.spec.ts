@@ -45,6 +45,7 @@ import {WorkspaceService} from '../../services/workspace/workspace.service';
 import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
+import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 
 const mockWorkspaces: Workspace[] = [
@@ -162,6 +163,17 @@ describe('MediaGalleryComponent', () => {
             images$: of([]),
             allImagesLoaded: of(true),
             searchTerm: () => {},
+            searchGalleryPage: jasmine
+              .createSpy('searchGalleryPage')
+              .and.returnValue(
+                of({
+                  count: 0,
+                  page: 1,
+                  pageSize: 40,
+                  totalPages: 1,
+                  data: [],
+                }),
+              ),
             filtersState: null,
             setFiltersState: () => {},
             setFilters: () => {},
@@ -257,7 +269,29 @@ describe('MediaGalleryComponent', () => {
     } as unknown as Event;
 
     component.onFilesSelected(mockEvent);
-    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(
+      1,
+      [dummyFile],
+      null,
+    );
+  });
+
+  it('should pass currentFolderId to MediaUploadService.uploadFiles when inside a subfolder', () => {
+    spyOn(uploadService, 'uploadFiles');
+    component.currentFolderId = 42;
+
+    const dummyFile = new File(['test'], 'subfolder-demo.png', {
+      type: 'image/png',
+    });
+    const mockEvent = {
+      target: {
+        files: [dummyFile],
+        value: 'subfolder-demo.png',
+      },
+    } as unknown as Event;
+
+    component.onFilesSelected(mockEvent);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile], 42);
   });
 
   it('should trigger MediaUploadService.uploadFiles when files are selected from Google Drive', () => {
@@ -268,7 +302,11 @@ describe('MediaGalleryComponent', () => {
 
     component.openGoogleDrivePicker();
     expect(driveService.openPicker).toHaveBeenCalled();
-    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(
+      1,
+      [dummyFile],
+      null,
+    );
   });
 
   describe('ngOnInit filters restoration', () => {
@@ -1633,6 +1671,116 @@ describe('MediaGalleryComponent', () => {
         'Only tag creator or workspace manager can delete.',
         'Close',
         jasmine.objectContaining({duration: 4000}),
+      );
+    });
+
+    it('uses searchGalleryPage and loadMore pagination when workspaceIdOverride is set without mutating shared filters', () => {
+      const setFiltersSpy = spyOn(galleryService, 'setFilters');
+      const overrideSpy = (
+        galleryService as unknown as {searchGalleryPage: jasmine.Spy}
+      ).searchGalleryPage;
+      const item1 = {
+        id: 701,
+        itemType: 'media_item' as const,
+        workspaceId: 99,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+      const item2 = {
+        id: 702,
+        itemType: 'media_item' as const,
+        workspaceId: 99,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+
+      overrideSpy.and.returnValues(
+        of({
+          count: 2,
+          page: 1,
+          pageSize: 1,
+          totalPages: 2,
+          data: [item1],
+        }),
+        of({
+          count: 2,
+          page: 2,
+          pageSize: 1,
+          totalPages: 2,
+          data: [item2],
+        }),
+      );
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const overrideComp = freshFixture.componentInstance;
+      overrideComp.isSelectorMode = true;
+      overrideComp.workspaceIdOverride = 99;
+      overrideComp.ngOnInit();
+
+      expect(setFiltersSpy).not.toHaveBeenCalled();
+      expect(overrideSpy).toHaveBeenCalledTimes(1);
+      expect(overrideSpy.calls.argsFor(0)[0].offset).toBe(0);
+      expect(overrideSpy.calls.argsFor(0)[1]).toBe(99);
+      expect(overrideComp.images.map(i => i.id)).toEqual([701]);
+      expect(overrideComp.allImagesLoaded).toBeFalse();
+
+      overrideComp.loadMore();
+      expect(overrideSpy).toHaveBeenCalledTimes(2);
+      expect(overrideSpy.calls.argsFor(1)[0].offset).toBeGreaterThan(0);
+      expect(overrideSpy.calls.argsFor(1)[1]).toBe(99);
+      expect(overrideComp.images.map(i => i.id)).toEqual([701, 702]);
+      expect(overrideComp.allImagesLoaded).toBeTrue();
+    });
+
+    it('cancels in-flight override search on null transition, preserves external selectedKeys across reloads, and passes workspaceId to AssignTagsDialog', () => {
+      const lateOverride$ = new Subject<any>();
+      const overrideSpy = (
+        galleryService as unknown as {searchGalleryPage: jasmine.Spy}
+      ).searchGalleryPage;
+      overrideSpy.and.returnValue(lateOverride$.asObservable());
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const comp = freshFixture.componentInstance;
+      comp.isSelectorMode = true;
+      comp.workspaceIdOverride = 99;
+      comp.selectedKeys = new Set(['media_item:55']);
+      comp.ngOnInit();
+
+      expect(comp.selectedItems.has('media_item:55')).toBeTrue();
+
+      comp.workspaceIdOverride = null;
+      comp.ngOnChanges({
+        workspaceIdOverride: {
+          previousValue: 99,
+          currentValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+      lateOverride$.next({
+        count: 1,
+        page: 1,
+        pageSize: 40,
+        totalPages: 1,
+        data: [
+          {id: 888, itemType: 'media_item', workspaceId: 99, metadata: {}},
+        ],
+      });
+      expect(comp.images.some(i => i.id === 888)).toBeFalse();
+      expect(comp.selectedItems.has('media_item:55')).toBeTrue();
+
+      const dialog = TestBed.inject(MatDialog);
+      const openSpy = spyOn(dialog, 'open').and.returnValue({
+        afterClosed: () => of(undefined),
+      } as any);
+      comp.openBulkAssignTagsDialog();
+      expect(openSpy).toHaveBeenCalledWith(
+        jasmine.anything(),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            workspaceId: activeWorkspaceIdSubject.value,
+          }),
+        }),
       );
     });
   });

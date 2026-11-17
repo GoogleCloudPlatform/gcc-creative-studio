@@ -89,6 +89,13 @@ class CreateVeoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+    context_workspace_id: PositiveInt | None = Field(
+        default=None,
+        description=(
+            "Optional shared workspace ID providing context such as brand "
+            "guidelines while outputting to the user's personal workspace."
+        ),
+    )
 
     metadata_generation_model: GenerationModelEnum | str | None = Field(
         default=GenerationModelEnum.GEMINI_3_5_FLASH,

@@ -813,8 +813,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       }
     });
 
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (!activeWorkspaceId) {
+    const {workspaceId, contextWorkspaceId} =
+      this.workspaceStateService.getReferencedGenerationWorkspaceParams();
+    if (!workspaceId) {
       handleErrorSnackbar(
         this._snackBar,
         {message: 'Please select a workspace first.'},
@@ -844,7 +845,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         this.currentMode === 'Ingredients to Image' && sourceAssetIds.length
           ? sourceAssetIds
           : undefined,
-      workspaceId: activeWorkspaceId ?? undefined,
+      workspaceId,
+      contextWorkspaceId,
       referenceVideo,
       externalUrl: this.externalUrl,
     };
@@ -1115,21 +1117,29 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   openCropperDialog(file: File, index?: number) {
-    ImageCropperDialogComponent.open(this.dialog, {imageFile: file}).subscribe(
-      result => {
-        if (result && result.id) {
-          this.processInput(result, index);
-        }
-      },
-    );
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    ImageCropperDialogComponent.open(this.dialog, {
+      imageFile: file,
+      targetWorkspaceId,
+    }).subscribe(result => {
+      if (result && result.id) {
+        this.processInput(result, index);
+      }
+    });
   }
 
   onEditPromptReferenceImage(data: {index: number; ref: ReferenceImage}) {
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     ImageCropperDialogComponent.openEditPromptReferenceImage(
       this.dialog,
       data,
       this.referenceImages,
       () => this.saveState(),
+      targetWorkspaceId,
     );
   }
 
@@ -1200,12 +1210,20 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     event.preventDefault();
     const files = event.dataTransfer?.files;
     if (files && files.length > 0) {
+      const uploadWorkspaceId =
+        this.workspaceStateService.personalWorkspaceId() ??
+        this.workspaceStateService.getActiveWorkspaceId();
       // Handle multiple files if dropped
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file.type.startsWith('image/')) {
           this.sourceAssetService
-            .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
+            .uploadAsset(
+              file,
+              {assetType: AssetTypeEnum.GENERIC_IMAGE},
+              uploadWorkspaceId,
+              null,
+            )
             .subscribe((result: SourceAssetResponseDto) => {
               if (result && result.id) {
                 this.processInput(
@@ -1299,8 +1317,10 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   deleteGeneratedMedia() {
     if (!this.imagenDocuments?.id) return;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId === null) return;
+    const workspaceId =
+      this.imagenDocuments.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null || workspaceId === undefined) return;
 
     const confirmDelete = confirm(
       'Are you sure you want to delete this generation result?',

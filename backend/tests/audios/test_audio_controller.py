@@ -93,7 +93,7 @@ def test_generate_audio_success(
 
     assert response.status_code == 200
     assert response.json()["id"] == 123
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
     mock_audio_service.start_audio_generation_job.assert_called_once()
     request_dto = (
         mock_audio_service.start_audio_generation_job.call_args.kwargs[
@@ -153,13 +153,13 @@ def test_generate_audio_rejects_invalid_folder_id(
     mock_audio_service.start_audio_generation_job.assert_not_called()
 
 
-def test_generate_audio_forbids_viewer_403(
+def test_generate_audio_rejects_unauthorized_403(
     client, mock_audio_service, mock_workspace_auth
 ):
     from fastapi import HTTPException
 
-    mock_workspace_auth.authorize_write.side_effect = HTTPException(
-        status_code=403, detail="Viewers have read-only access"
+    mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden workspace access"
     )
     response = client.post("/api/audios/generate", json=AUDIO_PAYLOAD)
     assert response.status_code == 403

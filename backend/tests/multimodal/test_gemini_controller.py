@@ -64,7 +64,9 @@ async def test_generate_multimodal_endpoint_success(mock_gemini_service):
 
     assert isinstance(response, MultimodalGenerationResponseDto)
     assert response.text == "Generated text response"
-    mock_gemini_service.generate_multimodal.assert_called_once_with(request)
+    mock_gemini_service.generate_multimodal.assert_called_once_with(
+        request, current_user=mock_user
+    )
     mock_workspace_auth.authorize.assert_called_once_with(
         workspace_id=1, user=mock_user
     )
@@ -243,3 +245,32 @@ async def test_generate_multimodal_endpoint_http_exception_propagation(
         )
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Workspace access denied"
+
+
+@pytest.mark.anyio
+async def test_generate_multimodal_endpoint_service_403_propagation(
+    mock_gemini_service,
+):
+    request = MultimodalGenerationRequestDto(
+        workspace_id=1,
+        prompt="Test prompt",
+        media_item_ids=[99],
+        model="gemini-3.5-flash",
+    )
+    mock_workspace_auth = AsyncMock()
+    mock_user = MagicMock()
+    mock_gemini_service.generate_multimodal.side_effect = HTTPException(
+        status_code=403, detail="Cannot access foreign personal workspace"
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await generate_multimodal_endpoint(
+            request=request,
+            gemini_service=mock_gemini_service,
+            current_user=mock_user,
+            workspace_auth=mock_workspace_auth,
+        )
+    assert exc_info.value.status_code == 403
+    mock_gemini_service.generate_multimodal.assert_called_once_with(
+        request, current_user=mock_user
+    )

@@ -51,6 +51,8 @@ export enum UploadStatus {
 export interface UploadItem {
   id: string;
   file?: File;
+  workspaceId?: number;
+  folderId?: number | null;
   filename: string;
   originalFilename: string;
   size: number;
@@ -302,7 +304,11 @@ export class MediaUploadService implements OnDestroy {
   /**
    * Initiates multi-file upload for selected files.
    */
-  uploadFiles(workspaceId: number, files: File[]): void {
+  uploadFiles(
+    workspaceId: number,
+    files: File[],
+    folderId: number | null = null,
+  ): void {
     if (!files || files.length === 0) return;
     this.activeWorkspaceId = workspaceId;
 
@@ -311,6 +317,8 @@ export class MediaUploadService implements OnDestroy {
       return {
         id: this.generateUniqueId(),
         file,
+        workspaceId,
+        folderId,
         filename: file.name,
         originalFilename: file.name,
         size: file.size,
@@ -565,8 +573,9 @@ export class MediaUploadService implements OnDestroy {
     workspaceId: number,
     item: UploadItem,
   ): void {
+    const targetWorkspaceId = item.workspaceId ?? workspaceId;
     const generatePayload = {
-      workspaceId,
+      workspaceId: targetWorkspaceId,
       filename: item.filename,
       contentType: item.mimeType,
       size: item.size,
@@ -585,12 +594,12 @@ export class MediaUploadService implements OnDestroy {
             gcsUri: res.gcsUri,
             uploadUrl: res.uploadUrl,
           });
-          this.performGcsPut(workspaceId, item.id, res.uploadUrl, item);
+          this.performGcsPut(targetWorkspaceId, item.id, res.uploadUrl, item);
         },
         error: err => {
           this.activeSubscriptions.delete(item.id);
           this.handleUploadError(
-            workspaceId,
+            targetWorkspaceId,
             item.id,
             err.error?.detail ||
               err.message ||
@@ -669,14 +678,18 @@ export class MediaUploadService implements OnDestroy {
       return;
     }
 
-    const finalizePayload = {
-      workspaceId,
+    const targetWorkspaceId = item.workspaceId ?? workspaceId;
+    const finalizePayload: Record<string, unknown> = {
+      workspaceId: targetWorkspaceId,
       gcsUri: item.gcsUri,
       filename: item.filename,
       mimeType: item.mimeType,
       size: item.size,
       assetType: this.determineAssetType(item.mimeType),
     };
+    if (item.folderId !== undefined && item.folderId !== null) {
+      finalizePayload['folderId'] = item.folderId;
+    }
 
     const sub = this.http
       .post(`${this.apiUrl}/finalize-upload`, finalizePayload)
@@ -687,12 +700,12 @@ export class MediaUploadService implements OnDestroy {
             status: UploadStatus.COMPLETED,
             progress: 100,
           });
-          this.processQueue(workspaceId);
+          this.processQueue(targetWorkspaceId);
         },
         error: err => {
           this.activeSubscriptions.delete(itemId);
           this.handleUploadError(
-            workspaceId,
+            targetWorkspaceId,
             itemId,
             err.error?.detail ||
               err.message ||
@@ -741,6 +754,8 @@ export class MediaUploadService implements OnDestroy {
       if (typeof sessionStorage === 'undefined') return;
       const queueToStore = this.uploadQueue().map(item => ({
         id: item.id,
+        workspaceId: item.workspaceId,
+        folderId: item.folderId,
         filename: item.filename,
         originalFilename: item.originalFilename,
         size: item.size,

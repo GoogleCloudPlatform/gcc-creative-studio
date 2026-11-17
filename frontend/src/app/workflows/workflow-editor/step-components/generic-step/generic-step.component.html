@@ -338,7 +338,7 @@
               </mat-select>
             </mat-form-field>
             <mat-form-field
-              *ngIf="setting.type === 'folder'"
+              *ngIf="setting.type === 'folder' && !isOutputFolderRoutedToPersonal"
               [class]="folderDomNames.fieldClass"
               appearance="outline"
               [floatLabel]="folderFloatLabel"
@@ -385,6 +385,15 @@
                 >Select a folder to loop over.</mat-error
               >
             </mat-form-field>
+            <div
+              *ngIf="setting.type === 'folder' && isOutputFolderRoutedToPersonal"
+              class="output-folder-personal-notice text-xs text-neutral-400 flex items-center gap-1.5 py-1"
+            >
+              <mat-icon class="text-base !w-4 !h-4 leading-none"
+                >folder_special</mat-icon
+              >
+              <span>Outputs save to each runner's My Workspace</span>
+            </div>
             <mat-form-field
               *ngIf="setting.type === 'text' || setting.type === 'textarea'"
               appearance="outline"

@@ -233,6 +233,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private isSaving = false;
   /** Monotonic id of the latest timeline fetch (see the timeline effect). */
   private timelineLoadSeq = 0;
+  private loadedTimelineWorkspaceId?: number | string;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -270,6 +271,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           return;
         }
         if (timelineId) {
+          this.loadedTimelineWorkspaceId = undefined;
           // Publish the in-flight state so the chat can lock session switching
           // until the timeline for this storyboard has actually landed. The
           // sequence guards against a superseded fetch clearing the flag that
@@ -313,6 +315,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           });
         } else {
           // No timeline to load: invalidate any in-flight fetch and unlock.
+          this.loadedTimelineWorkspaceId = undefined;
           this.timelineLoadSeq++;
           this.timelineState.isLoadingTimeline.set(false);
           this.timelineState.timelineClips.set([]);
@@ -811,6 +814,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   processGeneratedData(data: TimelineDTO) {
+    this.loadedTimelineWorkspaceId = data.workspace_id;
     const newClips: TimelineClip[] = [];
     const videoStartTimes: number[] = [];
     const assetsToExtract: MediaAsset[] = [];
@@ -1845,7 +1849,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
       });
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId =
+      timelineId && this.loadedTimelineWorkspaceId
+        ? this.loadedTimelineWorkspaceId
+        : sb?.workspace_id
+          ? sb.workspace_id
+          : (this.workspaceStateService.personalWorkspaceId() ??
+            this.workspaceStateService.getActiveWorkspaceId());
+
+    if (!workspaceId) {
+      this.lastSavedText.set('Workspace required');
+      handleErrorSnackbar(
+        this.snackBar,
+        {message: 'Please select a workspace before saving your timeline.'},
+        'Save timeline',
+      );
+      return of(null);
+    }
 
     const timelineData: TimelineDTO = {
       timeline_id: timelineId || undefined,
@@ -1854,7 +1874,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         sb?.session_id ||
         this.agentChatService.selectedSessionId() ||
         undefined,
-      workspace_id: workspaceId || 1,
+      workspace_id: workspaceId,
       title: 'Timeline',
       video_clips: videoClips,
       audio_clips: audioClips,
@@ -1872,6 +1892,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.activeSaveSubscription = request$.subscribe({
       next: (res: TimelineDTO) => {
         this.lastSavedText.set('Saved');
+        this.loadedTimelineWorkspaceId = res.workspace_id ?? workspaceId;
         if (res.timeline_id) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);
           if (!res.storyboard_id && !res.session_id) {

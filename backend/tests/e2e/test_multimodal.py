@@ -13,11 +13,21 @@
 # limitations under the License.
 """E2E tests for Multimodal Generation (R1)."""
 
+from contextlib import asynccontextmanager
 import pytest
 from unittest.mock import MagicMock
 
+from sqlalchemy import delete, select
+
 from src.common.schema.media_item_model import MediaItem, JobStatusEnum
+from src.database import async_session_local
 from src.source_assets.schema.source_asset_model import SourceAsset
+from src.users.user_model import User, UserRoleEnum
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceMemberAssociation,
+    WorkspaceScopeEnum,
+)
 
 
 @pytest.mark.anyio
@@ -304,12 +314,62 @@ async def test_multimodal_generation_workspace_not_found(e2e_client):
     assert "Workspace with ID '999999' not found." in resp.json()["detail"]
 
 
+async def _cleanup_workspace(ws_id: int) -> None:
+    async with async_session_local() as session:
+        await session.execute(
+            delete(MediaItem).where(MediaItem.workspace_id == ws_id)
+        )
+        await session.execute(
+            delete(SourceAsset).where(SourceAsset.workspace_id == ws_id)
+        )
+        await session.execute(
+            delete(WorkspaceMemberAssociation).where(
+                WorkspaceMemberAssociation.workspace_id == ws_id
+            )
+        )
+        await session.execute(delete(Workspace).where(Workspace.id == ws_id))
+        await session.commit()
+
+
+@asynccontextmanager
+async def _foreign_private_workspace(name: str):
+    foreign_uid = 904
+    async with async_session_local() as session:
+        res = await session.execute(select(User).where(User.id == foreign_uid))
+        if res.scalar_one_or_none() is None:
+            session.add(
+                User(
+                    id=foreign_uid,
+                    email="foreign_mm@example.com",
+                    roles=[UserRoleEnum.USER.value],
+                    name="Foreign User",
+                    picture="http://example.com/foreign.jpg",
+                )
+            )
+            await session.flush()
+        ws = Workspace(
+            name=name,
+            owner_id=foreign_uid,
+            scope=WorkspaceScopeEnum.PRIVATE.value,
+        )
+        session.add(ws)
+        await session.commit()
+        await session.refresh(ws)
+        ws_id = ws.id
+    try:
+        yield ws_id, foreign_uid
+    finally:
+        await _cleanup_workspace(ws_id)
+        async with async_session_local() as session:
+            await session.execute(delete(User).where(User.id == foreign_uid))
+            await session.commit()
+
+
 @pytest.mark.anyio
 async def test_multimodal_generation_workspace_mismatch_media_item(
     e2e_client, e2e_test_workspace
 ):
-    """Test boundary check when a media item belongs to a different workspace."""
-    # 1. Create a second workspace in DB
+    """Readable cross-workspace references pass; foreign private references return 403."""
     resp_ws = e2e_client.post(
         "/api/workspaces", json={"name": "Second Temporary Test Workspace"}
     )
@@ -317,9 +377,6 @@ async def test_multimodal_generation_workspace_mismatch_media_item(
     second_ws_id = resp_ws.json()["id"]
 
     try:
-        # 2. Create a media item in the second workspace
-        from src.database import async_session_local
-
         async with async_session_local() as session:
             media_item = MediaItem(
                 workspace_id=second_ws_id,
@@ -336,53 +393,64 @@ async def test_multimodal_generation_workspace_mismatch_media_item(
             session.add(media_item)
             await session.commit()
             await session.refresh(media_item)
-            media_id = media_item.id
+            readable_media_id = media_item.id
 
-        # 3. Call multimodal generation for e2e_test_workspace using the media item of the second workspace
-        payload = {
-            "workspace_id": e2e_test_workspace,
-            "prompt": "Analyze this image",
-            "media_item_ids": [media_id],
-            "model": "gemini-3.5-flash",
-        }
-        resp = e2e_client.post(
-            "/api/gemini/multimodal-generation", json=payload
+        ok_resp = e2e_client.post(
+            "/api/gemini/multimodal-generation",
+            json={
+                "workspace_id": e2e_test_workspace,
+                "prompt": "Analyze this readable cross-workspace image",
+                "media_item_ids": [readable_media_id],
+                "model": "gemini-3.5-flash",
+            },
         )
-        assert resp.status_code == 403
+        assert ok_resp.status_code == 200
         assert (
-            f"Media item {media_id} does not belong to workspace"
-            in resp.json()["detail"]
+            ok_resp.json()["text"] == "Mock Multimodal Generated Content Text"
         )
-    finally:
-        # Cleanup second workspace and its media items
-        from src.database import async_session_local
-        from src.workspaces.schema.workspace_model import (
-            Workspace,
-            WorkspaceMemberAssociation,
-        )
-        from sqlalchemy import delete
 
-        async with async_session_local() as session:
-            await session.execute(
-                delete(MediaItem).where(MediaItem.workspace_id == second_ws_id)
-            )
-            await session.execute(
-                delete(WorkspaceMemberAssociation).where(
-                    WorkspaceMemberAssociation.workspace_id == second_ws_id
+        async with _foreign_private_workspace("Foreign Media Workspace") as (
+            foreign_ws_id,
+            foreign_uid,
+        ):
+            async with async_session_local() as session:
+                foreign_item = MediaItem(
+                    workspace_id=foreign_ws_id,
+                    user_id=foreign_uid,
+                    user_email="foreign_mm@example.com",
+                    model="imagen-3.0-generate-002",
+                    aspect_ratio="1:1",
+                    gcs_uris=["gs://mock-bucket/foreign_coffee.png"],
+                    mime_type="image/png",
+                    status=JobStatusEnum.COMPLETED,
+                    titles=["Foreign Coffee Cup"],
+                    descriptions=["Foreign private image"],
                 )
+                session.add(foreign_item)
+                await session.commit()
+                await session.refresh(foreign_item)
+                foreign_media_id = foreign_item.id
+
+            forb_resp = e2e_client.post(
+                "/api/gemini/multimodal-generation",
+                json={
+                    "workspace_id": e2e_test_workspace,
+                    "prompt": "Analyze unauthorized image",
+                    "media_item_ids": [foreign_media_id],
+                    "model": "gemini-3.5-flash",
+                },
             )
-            await session.execute(
-                delete(Workspace).where(Workspace.id == second_ws_id)
-            )
-            await session.commit()
+            assert forb_resp.status_code == 403
+            assert "permission" in forb_resp.json()["detail"].lower()
+    finally:
+        await _cleanup_workspace(second_ws_id)
 
 
 @pytest.mark.anyio
 async def test_multimodal_generation_workspace_mismatch_source_asset(
     e2e_client, e2e_test_workspace
 ):
-    """Test boundary check when a source asset belongs to a different workspace."""
-    # 1. Create a second workspace in DB
+    """Readable cross-workspace assets pass; foreign private assets return 403."""
     resp_ws = e2e_client.post(
         "/api/workspaces", json={"name": "Second Temporary Test Workspace"}
     )
@@ -390,9 +458,6 @@ async def test_multimodal_generation_workspace_mismatch_source_asset(
     second_ws_id = resp_ws.json()["id"]
 
     try:
-        # 2. Create a source asset in the second workspace
-        from src.database import async_session_local
-
         async with async_session_local() as session:
             asset = SourceAsset(
                 workspace_id=second_ws_id,
@@ -407,44 +472,52 @@ async def test_multimodal_generation_workspace_mismatch_source_asset(
             session.add(asset)
             await session.commit()
             await session.refresh(asset)
-            asset_id = asset.id
+            readable_asset_id = asset.id
 
-        # 3. Call multimodal generation for e2e_test_workspace using the asset of the second workspace
-        payload = {
-            "workspace_id": e2e_test_workspace,
-            "prompt": "Analyze this logo",
-            "source_asset_ids": [asset_id],
-            "model": "gemini-3.5-flash",
-        }
-        resp = e2e_client.post(
-            "/api/gemini/multimodal-generation", json=payload
+        ok_resp = e2e_client.post(
+            "/api/gemini/multimodal-generation",
+            json={
+                "workspace_id": e2e_test_workspace,
+                "prompt": "Analyze this readable cross-workspace logo",
+                "source_asset_ids": [readable_asset_id],
+                "model": "gemini-3.5-flash",
+            },
         )
-        assert resp.status_code == 403
+        assert ok_resp.status_code == 200
         assert (
-            f"Asset {asset_id} does not belong to workspace"
-            in resp.json()["detail"]
+            ok_resp.json()["text"] == "Mock Multimodal Generated Content Text"
         )
-    finally:
-        # Cleanup second workspace and its source assets
-        from src.database import async_session_local
-        from src.workspaces.schema.workspace_model import (
-            Workspace,
-            WorkspaceMemberAssociation,
-        )
-        from sqlalchemy import delete
 
-        async with async_session_local() as session:
-            await session.execute(
-                delete(SourceAsset).where(
-                    SourceAsset.workspace_id == second_ws_id
+        async with _foreign_private_workspace("Foreign Asset Workspace") as (
+            foreign_ws_id,
+            foreign_uid,
+        ):
+            async with async_session_local() as session:
+                foreign_asset = SourceAsset(
+                    workspace_id=foreign_ws_id,
+                    user_id=foreign_uid,
+                    gcs_uri="gs://mock-bucket/assets/foreign_logo.png",
+                    mime_type="image/png",
+                    original_filename="foreign_logo.png",
+                    file_hash="foreign-hash",
+                    titles=["Foreign Logo"],
+                    descriptions=["Foreign private logo"],
                 )
+                session.add(foreign_asset)
+                await session.commit()
+                await session.refresh(foreign_asset)
+                foreign_asset_id = foreign_asset.id
+
+            forb_resp = e2e_client.post(
+                "/api/gemini/multimodal-generation",
+                json={
+                    "workspace_id": e2e_test_workspace,
+                    "prompt": "Analyze unauthorized logo",
+                    "source_asset_ids": [foreign_asset_id],
+                    "model": "gemini-3.5-flash",
+                },
             )
-            await session.execute(
-                delete(WorkspaceMemberAssociation).where(
-                    WorkspaceMemberAssociation.workspace_id == second_ws_id
-                )
-            )
-            await session.execute(
-                delete(Workspace).where(Workspace.id == second_ws_id)
-            )
-            await session.commit()
+            assert forb_resp.status_code == 403
+            assert "permission" in forb_resp.json()["detail"].lower()
+    finally:
+        await _cleanup_workspace(second_ws_id)

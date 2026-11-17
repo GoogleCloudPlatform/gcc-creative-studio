@@ -374,19 +374,12 @@ class UnifiedGalleryRepository(
             data=data,
         )
 
-    def _loop_item_conditions(
-        self, *, workspace_id: int, mime_type_prefix: str
+    def _eligible_item_conditions(
+        self, *, mime_type_prefix: str
     ) -> tuple[Any, ...]:
-        """Conditions of a row a workflow ``Loop`` step may iterate over.
-
-        Non-deleted rows of the workspace whose ``mime_type`` starts with
-        ``"<mime_type_prefix>/"``: completed generated ``media_item`` rows
-        and uploaded ``source_asset`` rows. External resources
-        (``external_url`` set) are skipped, as in the default gallery view.
-        """
+        """Conditions for non-deleted gallery rows matching a MIME prefix."""
         external_url = self.model.metadata_["external_url"].astext
         return (
-            self.model.workspace_id == workspace_id,
             self.model.deleted_at.is_(None),
             self.model.metadata_["mime_type"].astext.like(
                 f"{mime_type_prefix}/%"
@@ -399,6 +392,21 @@ class UnifiedGalleryRepository(
                 ),
                 self.model.item_type == LOOP_SOURCE_ASSET,
             ),
+        )
+
+    def _loop_item_conditions(
+        self, *, workspace_id: int, mime_type_prefix: str
+    ) -> tuple[Any, ...]:
+        """Conditions of a row a workflow ``Loop`` step may iterate over.
+
+        Non-deleted rows of the workspace whose ``mime_type`` starts with
+        ``"<mime_type_prefix>/"``: completed generated ``media_item`` rows
+        and uploaded ``source_asset`` rows. External resources
+        (``external_url`` set) are skipped, as in the default gallery view.
+        """
+        return (
+            self.model.workspace_id == workspace_id,
+            *self._eligible_item_conditions(mime_type_prefix=mime_type_prefix),
         )
 
     async def list_folder_loop_items(
@@ -452,6 +460,21 @@ class UnifiedGalleryRepository(
         rows = [(item_type, item_id) for item_type, item_id in rows_result]
         return rows, total
 
+    @staticmethod
+    def _build_loop_id_filters(
+        model: Any,
+        media_item_ids: Iterable[int],
+        source_asset_ids: Iterable[int],
+    ) -> list[Any]:
+        return [
+            and_(model.item_type == item_type, model.id.in_(ids))
+            for item_type, ids in (
+                (LOOP_MEDIA_ITEM, sorted(set(media_item_ids))),
+                (LOOP_SOURCE_ASSET, sorted(set(source_asset_ids))),
+            )
+            if ids
+        ]
+
     async def filter_linked_loop_items(
         self,
         *,
@@ -478,14 +501,9 @@ class UnifiedGalleryRepository(
             ``"media_item"`` or ``"source_asset"``). Empty, without any
             query, when no id is given.
         """
-        id_filters = [
-            and_(self.model.item_type == item_type, self.model.id.in_(ids))
-            for item_type, ids in (
-                (LOOP_MEDIA_ITEM, sorted(set(media_item_ids))),
-                (LOOP_SOURCE_ASSET, sorted(set(source_asset_ids))),
-            )
-            if ids
-        ]
+        id_filters = self._build_loop_id_filters(
+            self.model, media_item_ids, source_asset_ids
+        )
         if not id_filters:
             return set()
         result = await self.db.execute(
@@ -498,3 +516,34 @@ class UnifiedGalleryRepository(
             )
         )
         return {(item_type, item_id) for item_type, item_id in result}
+
+    async def lookup_linked_loop_item_workspaces(
+        self,
+        *,
+        media_item_ids: Iterable[int],
+        source_asset_ids: Iterable[int],
+        mime_type_prefix: str,
+    ) -> dict[tuple[str, int], int]:
+        """Returns workspace_id for eligible linked loop items across workspaces."""
+        id_filters = self._build_loop_id_filters(
+            self.model, media_item_ids, source_asset_ids
+        )
+        if not id_filters:
+            return {}
+        result = await self.db.execute(
+            select(
+                self.model.item_type,
+                self.model.id,
+                self.model.workspace_id,
+            ).where(
+                *self._eligible_item_conditions(
+                    mime_type_prefix=mime_type_prefix
+                ),
+                or_(*id_filters),
+            )
+        )
+        return {
+            (item_type, item_id): workspace_id
+            for item_type, item_id, workspace_id in result
+            if workspace_id is not None
+        }

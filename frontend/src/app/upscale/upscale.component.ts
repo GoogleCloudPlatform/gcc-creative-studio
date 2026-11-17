@@ -29,6 +29,7 @@ import {GalleryService} from '../gallery/gallery.service';
 import {AssetTypeEnum} from '../admin/source-assets-management/source-asset.model';
 import {MediaItem, JobStatus} from '../common/models/media-item.model';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
+import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {MatIconRegistry} from '@angular/material/icon';
 import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 
@@ -77,6 +78,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
     private galleryService: GalleryService,
     private _snackBar: MatSnackBar,
     private router: Router,
+    private workspaceStateService: WorkspaceStateService,
   ) {
     // Initialize the combined job stream
     this.activeUpscaleJob$ = this.sourceAssetService.activeUpscaleJob$;
@@ -261,6 +263,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
   startUpscale(): void {
     if (!this.selectedAsset) return;
 
+    const {workspaceId} = this.workspaceStateService.getTargetWorkspaceParam();
     this.isLoadingUpscale = true;
     // Use the service to start the upscale job
     this.sourceAssetService
@@ -268,6 +271,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
         upscaleFactor: 'x' + this.upscaleFactor.replace('x', ''), // Ensure format "x2", "x4"
         enhance_input_image: this.enhanceInputImage,
         image_preservation_factor: this.imagePreservationFactor,
+        ...(workspaceId !== null ? {workspaceId} : {}),
       })
       .subscribe({
         next: () => {
