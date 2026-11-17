@@ -1580,7 +1580,7 @@ def _process_upload_upscale_in_background(
                                     gemini_service.generate_media_metadata,
                                     prompt="Describe this image in detail.",
                                     media_uris=[uri_for_metadata],
-                                    model_name="gemini-2.5-pro",
+                                    model_name=config_service.GEMINI_MODEL_ID,
                                     mime_type=MimeTypeEnum.IMAGE_PNG.value,
                                 )
                                 if not final_titles and "titles" in metadata:

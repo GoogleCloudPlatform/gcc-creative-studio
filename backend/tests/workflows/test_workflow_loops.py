@@ -109,7 +109,7 @@ def _text(step_id: str, prompt: Any = "Write") -> GenerateTextStep:
     return GenerateTextStep(
         step_id=step_id,
         inputs=GenerateTextInputs(prompt=prompt),
-        settings=GenerateTextSettings(model="gemini-2.5-flash", temperature=1),
+        settings=GenerateTextSettings(model="gemini-4-hydrogen", temperature=1),
     )
 
 

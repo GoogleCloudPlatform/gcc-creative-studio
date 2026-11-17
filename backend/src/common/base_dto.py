@@ -46,12 +46,22 @@ class WildcardMimeTypeEnum(str, Enum):
     AUDIO_WILDCARD = "audio/*"
 
 
+RETIRED_TEXT_MODEL_REPLACEMENTS: dict[str, str] = {
+    "gemini-2.5-pro": "gemini-4-argon",
+    "gemini-2.5-flash": "gemini-4-hydrogen",
+}
+
+
+def normalize_retired_text_model(model: str | Enum) -> str:
+    """Maps retired Gemini 2.5 text model IDs to active Gemini 4 equivalents."""
+    raw_value = model.value if isinstance(model, Enum) else str(model)
+    return RETIRED_TEXT_MODEL_REPLACEMENTS.get(raw_value, raw_value)
+
+
 class GenerationModelEnum(str, Enum):
     """Enum representing the available generation models."""
 
     # Image-Specific Models
-    GEMINI_2_5_PRO = "gemini-2.5-pro"
-    GEMINI_2_5_FLASH = "gemini-2.5-flash"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
     GEMINI_1_5_FLASH = "gemini-1.5-flash"
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
@@ -70,6 +80,7 @@ class GenerationModelEnum(str, Enum):
     GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview"
     GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
     GEMINI_4_ARGON = "gemini-4-argon"
+    GEMINI_4_HYDROGEN = "gemini-4-hydrogen"
 
     # Video-Specific Models
     GEMINI_OMNI = "gemini-omni-generate-preview"
@@ -98,6 +109,8 @@ class GenerationModelEnum(str, Enum):
     WORKBENCH_RENDER = "workbench-render"
 
     # Deprecated models (For old generations only, do not use)
+    GEMINI_2_5_PRO = "gemini-2.5-pro"
+    GEMINI_2_5_FLASH = "gemini-2.5-flash"
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
     GEMINI_3_1_FLASH_LITE_PREVIEW = "gemini-3.1-flash-lite-preview"

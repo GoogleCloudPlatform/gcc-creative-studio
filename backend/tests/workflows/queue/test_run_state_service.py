@@ -83,7 +83,7 @@ def _snapshot_with_two_steps(
                     )
                 },
                 "settings": {
-                    "model": "gemini-2.5-flash",
+                    "model": "gemini-4-hydrogen",
                     "temperature": 0.7,
                 },
             },
@@ -965,7 +965,7 @@ class TestResume:
                 "step_id": "step_c",
                 "type": "generate_text",
                 "inputs": {"prompt": "old c"},
-                "settings": {"model": "gemini-2.5-flash", "temperature": 0.7},
+                "settings": {"model": "gemini-4-hydrogen", "temperature": 0.7},
             }
         )
         old_def_hash = compute_definition_hash(old_snap["steps"])
@@ -1006,7 +1006,7 @@ class TestResume:
                 "step_id": "step_d",
                 "type": "generate_text",
                 "inputs": {"prompt": "after b"},
-                "settings": {"model": "gemini-2.5-flash", "temperature": 0.5},
+                "settings": {"model": "gemini-4-hydrogen", "temperature": 0.5},
             }
         )
 
@@ -1049,7 +1049,7 @@ class TestResume:
                 "step_id": "step_indep",
                 "type": "generate_text",
                 "inputs": {"prompt": "Static prompt"},
-                "settings": {"model": "gemini-2.5-flash", "temperature": 0.7},
+                "settings": {"model": "gemini-4-hydrogen", "temperature": 0.7},
             }
         )
         def_hash = compute_definition_hash(snap["steps"])

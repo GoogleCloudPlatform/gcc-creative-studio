@@ -28,6 +28,19 @@ describe('generate-text-step.config', () => {
     expect(gemini4Argon?.label).toBe('Gemini 4 Argon');
   });
 
+  it('offers Gemini 4 Hydrogen in the model dropdown', () => {
+    const gemini4Hydrogen = modelSetting?.options?.find(
+      opt => opt.value === 'gemini-4-hydrogen',
+    );
+    expect(gemini4Hydrogen?.label).toBe('Gemini 4 Hydrogen');
+  });
+
+  it('excludes retired Gemini 2.5 text models from the dropdown', () => {
+    const values = modelSetting?.options?.map(opt => opt.value) ?? [];
+    expect(values).not.toContain('gemini-2.5-pro');
+    expect(values).not.toContain('gemini-2.5-flash');
+  });
+
   it('keeps Gemini 3.8 Flash as the default model', () => {
     expect(modelSetting?.defaultValue).toBe('gemini-3.8-flash');
   });
