@@ -344,6 +344,14 @@ class GeminiService:
             sections.append(f"Elements to avoid: {negative}")
         return "\n\n".join(sections)
 
+    @staticmethod
+    def _is_gemini_i2i(dto: CreateImagenDto | CreateVeoDto) -> bool:
+        return bool(
+            isinstance(dto, CreateImagenDto)
+            and dto.generation_model.is_gemini_image_model
+            and (dto.source_asset_ids or dto.source_media_items)
+        )
+
     async def enhance_prompt_from_dto(
         self,
         dto: CreateImagenDto | CreateVeoDto | CreateAudioDto,
@@ -397,11 +405,7 @@ class GeminiService:
         # This logic is placed here to ensure that any call to enhance a prompt
         # for Gemini Flash i2i will automatically include these critical
         # instructions, making the behavior consistent across the application.
-        is_gemini_i2i = (
-            isinstance(dto, CreateImagenDto)
-            and dto.generation_model.is_gemini_image_model
-            and (dto.source_asset_ids or dto.source_media_items)
-        )
+        is_gemini_i2i = self._is_gemini_i2i(dto)
 
         if is_gemini_i2i:
             dto.prompt = (
@@ -491,11 +495,6 @@ class GeminiService:
         for_rewrite: bool = False,
     ) -> str:
         """Returns prompt prefixed with workspace brand guidelines when active."""
-        is_gemini_i2i = (
-            isinstance(dto, CreateImagenDto)
-            and dto.generation_model.is_gemini_image_model
-            and (dto.source_asset_ids or dto.source_media_items)
-        )
         guideline_workspace_id = (
             dto.context_workspace_id
             if isinstance(dto, (CreateImagenDto, CreateVeoDto))
@@ -505,7 +504,7 @@ class GeminiService:
         if (
             dto.use_brand_guidelines
             and guideline_workspace_id
-            and not is_gemini_i2i
+            and not self._is_gemini_i2i(dto)
         ):
             search_dto = BrandGuidelineSearchDto(
                 workspace_id=guideline_workspace_id, limit=1

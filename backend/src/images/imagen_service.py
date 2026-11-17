@@ -692,12 +692,11 @@ def _process_image_in_background(
                         )
                         request_dto.prompt = rewritten_prompt
                     elif request_dto.use_brand_guidelines:
-                        rewritten_prompt = (
+                        rewritten_prompt = request_dto.prompt = (
                             await gemini_service.apply_brand_guidelines_to_dto(
                                 request_dto
                             )
                         )
-                        request_dto.prompt = rewritten_prompt
                     else:
                         rewritten_prompt = request_dto.prompt
 
