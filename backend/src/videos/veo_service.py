@@ -122,14 +122,19 @@ async def _get_active_media_item(
 def _format_omni_prompt(
     prompt: str,
     aspect_ratio: AspectRatioEnum | str | None,
+    *,
+    keyword_check_prompt: str | None = None,
 ) -> str:
     """Formats prompt with aspect ratio and resolution directives for Gemini Omni."""
     cleaned_prompt = prompt.strip()
+    check = (
+        prompt if keyword_check_prompt is None else keyword_check_prompt
+    ).lower()
     if (
         aspect_ratio == AspectRatioEnum.RATIO_9_16
-        and "9:16" not in prompt
-        and "vertical" not in prompt.lower()
-        and "portrait" not in prompt.lower()
+        and "9:16" not in check
+        and "vertical" not in check
+        and "portrait" not in check
     ):
         directive = (
             "Aspect ratio: 9:16 vertical portrait format. Resolution: 720p."
@@ -137,9 +142,9 @@ def _format_omni_prompt(
         return f"{cleaned_prompt}\n{directive}" if cleaned_prompt else directive
     if (
         aspect_ratio == AspectRatioEnum.RATIO_16_9
-        and "16:9" not in prompt
-        and "widescreen" not in prompt.lower()
-        and "landscape" not in prompt.lower()
+        and "16:9" not in check
+        and "widescreen" not in check
+        and "landscape" not in check
     ):
         directive = (
             "Aspect ratio: 16:9 widescreen landscape format. Resolution: 720p."
@@ -263,6 +268,7 @@ def _process_video_in_background(
                         cfg = config_service
                         gcs_output_directory = f"gs://{cfg.GENMEDIA_BUCKET}"
 
+                        omni_kw_prompt: str | None = None
                         if request_dto.enhance_prompt:
                             rewritten_prompt = (
                                 await gemini_service.enhance_prompt_from_dto(
@@ -271,6 +277,22 @@ def _process_video_in_background(
                                 )
                             )
                             # Update the prompt in the DTO for logging and future reference
+                            request_dto.prompt = rewritten_prompt
+                        elif request_dto.use_brand_guidelines:
+                            omni_kw_prompt = request_dto.prompt
+                            has_source_video = bool(
+                                request_dto.source_video_asset_id
+                            ) or any(
+                                i.role == AssetRoleEnum.VIDEO_EXTENSION_SOURCE
+                                for i in (request_dto.source_media_items or [])
+                            )
+                            if has_source_video and not omni_kw_prompt.strip():
+                                request_dto.prompt = (
+                                    "Continue the video seamlessly."
+                                )
+                            rewritten_prompt = await gemini_service.apply_brand_guidelines_to_dto(
+                                request_dto
+                            )
                             request_dto.prompt = rewritten_prompt
                         else:
                             rewritten_prompt = request_dto.prompt
@@ -842,7 +864,9 @@ def _process_video_in_background(
                                     parent_video_bytes = f.read()
 
                                 omni_prompt = _format_omni_prompt(
-                                    request_dto.prompt, request_dto.aspect_ratio
+                                    request_dto.prompt,
+                                    request_dto.aspect_ratio,
+                                    keyword_check_prompt=omni_kw_prompt,
                                 )
 
                                 turn2_input = [
@@ -900,6 +924,7 @@ def _process_video_in_background(
                                     omni_prompt = _format_omni_prompt(
                                         request_dto.prompt,
                                         request_dto.aspect_ratio,
+                                        keyword_check_prompt=omni_kw_prompt,
                                     )
 
                                 t1_inputs = [

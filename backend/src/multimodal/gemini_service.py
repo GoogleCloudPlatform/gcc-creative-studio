@@ -327,6 +327,36 @@ class GeminiService:
             return dto.prompt
 
         # --- Prepend Brand Guidelines if available ---
+        dto.prompt = await self.apply_brand_guidelines_to_dto(
+            dto, for_rewrite=True
+        )
+
+        prompt_template = (
+            REWRITE_IMAGE_JSON_PROMPT_TEMPLATE
+            if target_type == PromptTargetEnum.IMAGE
+            else REWRITE_VIDEO_JSON_PROMPT_TEMPLATE
+        )
+        prompt_string = self._convert_dto_to_string(dto)
+
+        return self.generate_structured_prompt(
+            original_prompt=prompt_string,
+            target_type=target_type,
+            prompt_template=prompt_template,
+            response_mime_type=response_mime_type,
+        )
+
+    async def apply_brand_guidelines_to_dto(
+        self,
+        dto: CreateImagenDto | CreateVeoDto,
+        *,
+        for_rewrite: bool = False,
+    ) -> str:
+        """Returns prompt prefixed with workspace brand guidelines when active."""
+        is_gemini_i2i = (
+            isinstance(dto, CreateImagenDto)
+            and dto.generation_model.is_gemini_image_model
+            and (dto.source_asset_ids or dto.source_media_items)
+        )
         guideline_workspace_id = (
             dto.context_workspace_id
             if isinstance(dto, (CreateImagenDto, CreateVeoDto))
@@ -348,41 +378,30 @@ class GeminiService:
 
             if guideline_response and guideline_response.data:
                 guideline = guideline_response.data[0]
-                # Construct a prefix to guide the prompt rewriter.
-                prefix_parts = [
+                visual = (guideline.visual_style_summary or "").strip()
+                tone = (guideline.tone_of_voice_summary or "").strip()
+                if not visual and not tone:
+                    return dto.prompt
+                header = (
                     "Based on the following brand guidelines, "
-                    "enhance the user's prompt.",
-                ]
-                if guideline.visual_style_summary:
-                    prefix_parts.append(
-                        f"**Visual Style:** {guideline.visual_style_summary}",
-                    )
-                if guideline.tone_of_voice_summary:
-                    prefix_parts.append(
-                        f"**Tone of Voice:** {guideline.tone_of_voice_summary}",
-                    )
+                    "enhance the user's prompt."
+                    if for_rewrite
+                    else "Follow these brand guidelines when generating:"
+                )
+                prefix_parts = [header]
+                if visual:
+                    prefix_parts.append(f"**Visual Style:** {visual}")
+                if tone:
+                    prefix_parts.append(f"**Tone of Voice:** {tone}")
                 prefix_parts.append("\n---")
                 brand_guideline_prefix = "\n".join(prefix_parts) + "\n\n"
-                dto.prompt = brand_guideline_prefix + dto.prompt
+                return brand_guideline_prefix + dto.prompt
             else:
                 logger.info(
                     "No brand guidelines found for workspace '%s'.",
                     guideline_workspace_id,
                 )
-
-        prompt_template = (
-            REWRITE_IMAGE_JSON_PROMPT_TEMPLATE
-            if target_type == PromptTargetEnum.IMAGE
-            else REWRITE_VIDEO_JSON_PROMPT_TEMPLATE
-        )
-        prompt_string = self._convert_dto_to_string(dto)
-
-        return self.generate_structured_prompt(
-            original_prompt=prompt_string,
-            target_type=target_type,
-            prompt_template=prompt_template,
-            response_mime_type=response_mime_type,
-        )
+        return dto.prompt
 
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=10),

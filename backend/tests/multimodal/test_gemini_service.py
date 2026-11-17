@@ -174,6 +174,155 @@ async def test_enhance_prompt_from_dto_with_brand_guidelines(gemini_service):
         )
         assert res == '{"prompt": "enhanced"}'
         gemini_service.brand_guideline_repo.query.assert_called_once()
+        original_prompt = mock_gen.call_args.kwargs["original_prompt"]
+        assert (
+            "Based on the following brand guidelines, enhance the user's prompt."
+            in original_prompt
+        )
+        assert "Visual summary" in original_prompt
+        assert "Tone summary" in original_prompt
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_direct_and_pure(gemini_service):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        context_workspace_id=20,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_guideline = MagicMock()
+    mock_guideline.visual_style_summary = "  Visual summary  "
+    mock_guideline.tone_of_voice_summary = "  Tone summary  "
+    mock_data.data = [mock_guideline]
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert dto.prompt == "test prompt"
+    gemini_service.brand_guideline_repo.query.assert_awaited_once()
+    assert (
+        gemini_service.brand_guideline_repo.query.call_args.kwargs[
+            "workspace_id"
+        ]
+        == 20
+    )
+    assert res == (
+        "Follow these brand guidelines when generating:\n"
+        "**Visual Style:** Visual summary\n"
+        "**Tone of Voice:** Tone summary\n"
+        "\n---\n\n"
+        "test prompt"
+    )
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_missing_guideline_returns_unchanged(
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_data.data = []
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    assert "---" not in res
+    gemini_service.brand_guideline_repo.query.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("visual", "tone"),
+    [
+        (None, None),
+        ("", ""),
+        ("   ", "\n\t "),
+    ],
+)
+async def test_apply_brand_guidelines_to_dto_blank_summaries_skip_separator(
+    gemini_service,
+    visual,
+    tone,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_guideline = MagicMock()
+    mock_guideline.visual_style_summary = visual
+    mock_guideline.tone_of_voice_summary = tone
+    mock_data.data = [mock_guideline]
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    assert "---" not in res
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_skips_gemini_i2i(gemini_service):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="make the sky brighter",
+        generation_model="gemini-3.1-flash-image-preview",
+        workspace_id=10,
+        use_brand_guidelines=True,
+        source_asset_ids=[1],
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "make the sky brighter"
+    gemini_service.brand_guideline_repo.query.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_skips_when_disabled(
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=False,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    gemini_service.brand_guideline_repo.query.assert_not_called()
 
 
 @pytest.mark.anyio
