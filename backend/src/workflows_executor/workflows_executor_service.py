@@ -60,6 +60,7 @@ from src.workflows_executor.step_errors import (
     backend_error,
     invalid_input_error,
     job_failed_error,
+    job_item_deleted_error,
     step_in_progress_error,
     to_step_error,
 )
@@ -593,6 +594,11 @@ class WorkflowsExecutorService:
 
         while True:
             data = await self._fetch_job_status(url, headers, media_id)
+            if data and (data.get("deletedAt") or data.get("deleted_at")):
+                logger.warning(
+                    "Polled job %s: gallery item was deleted.", media_id
+                )
+                raise job_item_deleted_error()
             status = data.get("status") if data else None
             if status == "completed":
                 return True
@@ -1631,7 +1637,7 @@ class WorkflowsExecutorService:
             )
             step_inputs.update(
                 mode="folder",
-                folder_id=folder.id,
+                folder=folder.id,
                 folder_name=folder.name,
                 item_type=request.config.item_type,
             )

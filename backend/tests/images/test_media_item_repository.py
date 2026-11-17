@@ -14,7 +14,8 @@
 """Tests for Media Item Repository."""
 
 
-from unittest.mock import AsyncMock, MagicMock
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -133,3 +134,34 @@ async def test_media_repository_query_custom_model_value():
     assert len(response.data) == 1
     # Check that model is successfully validated and stored as "custom-model-id" string
     assert response.data[0].model == "custom-model-id"
+
+
+@pytest.mark.anyio
+async def test_media_repository_update_warns_when_item_missing(caplog):
+    repo = MediaRepository(db=AsyncMock())
+
+    with patch(
+        "src.common.base_repository.BaseRepository.update",
+        AsyncMock(return_value=None),
+    ):
+        with caplog.at_level(logging.WARNING):
+            result = await repo.update(7, {"status": "completed"})
+
+    assert result is None
+    assert "Media item 7 not updated" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_media_repository_update_returns_item_without_warning(caplog):
+    repo = MediaRepository(db=AsyncMock())
+    updated_item = MagicMock()
+
+    with patch(
+        "src.common.base_repository.BaseRepository.update",
+        AsyncMock(return_value=updated_item),
+    ):
+        with caplog.at_level(logging.WARNING):
+            result = await repo.update(7, {"status": "completed"})
+
+    assert result is updated_item
+    assert "not updated" not in caplog.text

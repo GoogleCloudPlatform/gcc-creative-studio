@@ -92,7 +92,7 @@ Need to run the same workflow 50 times with different prompts or parameters? **B
 A **Folder** parameter column holds a Media Gallery folder **path** of the active workspace, e.g. `Campaign / Shoes`.
 * **Preview:** each folder cell shows ✅ with the full path, or ⚠️ when it can't be resolved. Click any folder cell to pick a folder instead. Rows with a ⚠️ are always listed (even past the first 5, with their `#` row number), and **Run Batch** stays disabled until every folder cell is ✅.
 * **Sent as ids:** the batch request carries each folder as a numeric id, never the path.
-* **Backend re-check:** every row is checked again before it is queued. The user must have access to the workspace (`Workspace not found or not accessible.`), and the folder must exist, not deleted, in that workspace (`Folder not found for '<param>'.`, the same message for a missing, deleted or foreign folder). A failing row is created as `FAILED`; the other rows still run. A folder column left out of the CSV is not checked; an empty value fails the row.
+* **Backend re-check:** every row is checked again before it is queued. The user must have access to the workspace (`Workspace not found or not accessible.`), and the folder must exist, not deleted, in that workspace (`Folder not found for '<param>'.`, the same message for a missing, deleted or foreign folder). A failing row is not queued: no run is created for it, and the batch response returns it with `status: "FAILED"` and the error message. The other rows still run. A folder column left out of the CSV is not checked; an empty value fails the row.
 
 ---
 
@@ -179,6 +179,6 @@ The **Output folder** input (`inputs.output_folder`) picks the Media Gallery fol
 * **Changing a parameter's type** removes its links to inputs that no longer accept it (e.g. Text → Folder unlinks a Prompt); compatible links are kept. Undo restores them.
 * **Strict ids:** the backend only accepts a positive integer folder id (or a link); `"42"`, `true`, `0` or negative numbers are rejected.
 * **Same workspace only:** the folder must belong to the workspace the run executes in. Any workspace member may save into any folder of that workspace (same rule as moving items into a folder).
-* **Missing folder:** in the editor, a deleted, foreign or inaccessible folder shows as `Folder #<id>` with a warning icon. At run time the step fails with `INVALID_INPUT` before generating anything and the run pauses in `NEEDS_ATTENTION`; pick another folder (or the root) and resume.
+* **Missing folder:** in the editor, a deleted, foreign or inaccessible folder shows as `Folder #<id>` with a warning icon. At run time the step fails with `INVALID_INPUT` before generating anything and the run pauses in `NEEDS_ATTENTION`. If the folder comes from a linked **Folder** parameter, choose another folder in the Resume form and resume (the root can't be chosen there). If it is a Fixed folder, fix it in the editor (choose another folder or **All Media (root)**), save and start a new run.
 * **Folder names in the editor:** the folder tree is loaded lazily (only when a node has a folder or its select is opened), once per workspace, and shared by every node of the editor. It is refreshed after the folder picker closes; folders changed elsewhere (another tab or user) show after reloading the editor.
 

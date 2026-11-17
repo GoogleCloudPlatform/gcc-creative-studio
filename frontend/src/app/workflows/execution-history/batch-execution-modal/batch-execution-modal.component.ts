@@ -485,14 +485,17 @@ export class BatchExecutionModalComponent {
     const usedInputs = new Set<string>();
     const mapping: Record<string, string | null> = {};
 
+    const inputByNormalizedName = new Map(
+      this.expectedInputs.map(input => [this.normalizeHeader(input), input]),
+    );
+
     this.headers.forEach(header => {
-      const normalized = this.normalizeHeader(header);
-      if (this.expectedInputs.includes(normalized)) {
-        mapping[header] = normalized;
-        usedInputs.add(normalized);
-      } else if (this.expectedInputs.includes(header)) {
-        mapping[header] = header;
-        usedInputs.add(header);
+      const target =
+        inputByNormalizedName.get(this.normalizeHeader(header)) ??
+        (this.expectedInputs.includes(header) ? header : null);
+      if (target) {
+        mapping[header] = target;
+        usedInputs.add(target);
       } else {
         mapping[header] = null;
       }

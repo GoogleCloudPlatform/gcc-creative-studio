@@ -1935,3 +1935,57 @@ def test_image_step_inputs_omit_root_output_folder(mode):
     )
 
     assert "output_folder" not in step_inputs
+
+
+# --- Deleted gallery item while polling ---------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("deleted_key", ["deletedAt", "deleted_at"])
+@pytest.mark.parametrize("status", ["processing", "completed"])
+async def test_poll_job_status_fails_when_item_was_deleted(
+    service, deleted_key, status
+):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": status, deleted_key: "2026-11-17T19:00:00Z"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    error = exc.value
+    assert error.status_code == 404
+    assert error.error_category is ErrorCategory.MISSING_RESOURCE
+    assert error.job_terminal is True
+    service.mock_rest_client.get.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_poll_job_status_ignores_null_deleted_at(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed", "deletedAt": None}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        result = await service._poll_job_status(123)
+
+    assert result is True
+
+
+@pytest.mark.anyio
+async def test_deleted_item_during_job_stays_retry_safe(service):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 9})
+    service.mock_rest_client.get.return_value = Response(
+        200,
+        json={"status": "processing", "deletedAt": "2026-11-17T19:00:00Z"},
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service.execute_image(_image_request(), USER_AUTH)
+
+    error = exc.value
+    assert error.error_category is ErrorCategory.MISSING_RESOURCE
+    assert error.retry_safe is True
+    assert "retry_safe" not in error.to_body()

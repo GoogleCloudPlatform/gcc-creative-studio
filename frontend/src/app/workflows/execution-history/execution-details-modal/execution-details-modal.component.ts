@@ -57,6 +57,7 @@ import {
 } from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
 import {mergeLiveStepEntries} from '../../utils/step-history.util';
+import {labelToName, nameToLabel} from '../../utils/workflow-step.util';
 import {getLoopBodies, LoopGraphStep} from '../../utils/workflow-loop.util';
 import {StepHistorySidebarDialogComponent} from '../../workflow-editor/step-history-sidebar/step-history-sidebar-dialog.component';
 import {
@@ -451,7 +452,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
       const folderId = isFolder ? (folderValues[name] ?? null) : null;
       return {
         name,
-        label: name,
+        label: nameToLabel(name),
         errorMessage: errors[name] ?? null,
         isFolder,
         folderLabel:
@@ -568,6 +569,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
       stepTitle: stepId,
       stepMode: step.stepMode,
       mediaUrlMap: this.mediaUrlMap,
+      folderPaths: this.folderPaths,
     };
     this.dialog.open(StepHistorySidebarDialogComponent, {
       data,
@@ -660,7 +662,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
       [];
     for (const def of dynamicDefinitions) {
       if (def?.name) {
-        fieldSet.add(def.name);
+        fieldSet.add(labelToName(def.name));
       }
     }
     if (userInputStep?.outputs && typeof userInputStep.outputs === 'object') {

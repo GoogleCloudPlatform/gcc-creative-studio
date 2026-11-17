@@ -14,19 +14,25 @@
  * limitations under the License.
  */
 
-import {Component, computed, inject, input, signal} from '@angular/core';
-import {takeUntilDestroyed, toObservable} from '@angular/core/rxjs-interop';
-import {FormControl} from '@angular/forms';
-import {MatDialog} from '@angular/material/dialog';
-import {MatSelectChange} from '@angular/material/select';
-import {filter, startWith, switchMap, take} from 'rxjs';
-import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
 import {
-  ImageSelectorComponent,
-  ImageSelectorDialogData,
-} from '../../../../../../common/components/image-selector/image-selector.component';
-import {FolderSelectionResult} from '../../../../../../common/models/folder.model';
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+  untracked,
+} from '@angular/core';
+import {
+  takeUntilDestroyed,
+  toObservable,
+  toSignal,
+} from '@angular/core/rxjs-interop';
+import {FormControl} from '@angular/forms';
+import {MatSelectChange} from '@angular/material/select';
+import {filter, startWith, switchMap} from 'rxjs';
 import {WorkspaceStateService} from '../../../../../../services/workspace/workspace-state.service';
+import {RunFolderService} from '../../../../../shared/run-folder.service';
 import {WorkflowFolderTreeStore} from '../../../../workflow-folder-tree.store';
 import {
   FOLDER_CHOOSE_VALUE,
@@ -116,7 +122,7 @@ export class StepFolderInputComponent {
 
   private readonly folderTreeStore = inject(WorkflowFolderTreeStore);
   private readonly workspaceStateService = inject(WorkspaceStateService);
-  private readonly dialog = inject(MatDialog);
+  private readonly runFolderService = inject(RunFolderService);
 
   readonly chooseValue: FolderChooseValue = FOLDER_CHOOSE_VALUE;
   readonly rootLabel = FOLDER_ROOT_LABEL;
@@ -132,8 +138,11 @@ export class StepFolderInputComponent {
     () => `${this.domNames().selectIdPrefix}${this.stepId()}`,
   );
 
-  /** Workspace whose folder tree resolves the saved folder. */
-  private readonly workspaceId = signal<number | null>(null);
+  /** Active workspace; its folder tree resolves the saved folder. */
+  private readonly workspaceId = toSignal(
+    this.workspaceStateService.activeWorkspaceId$,
+    {initialValue: null},
+  );
   /**
    * Folders confirmed in the picker. They show at once, before the refreshed
    * tree lists them, and are cleared when the picker reopens.
@@ -214,7 +223,14 @@ export class StepFolderInputComponent {
   private wasPristine = true;
 
   constructor() {
-    this.syncWorkspace();
+    // Loads the active workspace's tree whenever a folder is set or the
+    // workspace is switched, so the saved folder is resolved against it.
+    effect(() => {
+      const folderId = this.folderId();
+      this.workspaceId();
+      if (folderId === null) return;
+      untracked(() => this.ensureTreeLoaded());
+    });
     // Follows external updates (history undo/redo, workflow load, reset). The
     // transient "Choose folder…" value is ignored so the revert target is kept.
     toObservable(this.control)
@@ -235,7 +251,6 @@ export class StepFolderInputComponent {
   onOpenedChange(opened: boolean): void {
     if (!opened) return;
     this.wasPristine = this.control().pristine;
-    this.syncWorkspace();
     this.ensureTreeLoaded();
   }
 
@@ -257,34 +272,16 @@ export class StepFolderInputComponent {
   openFolderSelector(): void {
     const control = this.control();
     if (control.disabled) return;
-    const data: ImageSelectorDialogData = {
-      selectionTarget: 'folder',
-      initialFolderId: this.folderId(),
-      mimeType: this.pickerMimeType(),
-      assetType: AssetTypeEnum.GENERIC_IMAGE,
-    };
     // The refreshed tree (requested on close) is the source of truth again.
     this.pickedFolders.set(new Map());
-    this.dialog
-      .open<
-        ImageSelectorComponent,
-        ImageSelectorDialogData,
-        FolderSelectionResult | null
-      >(ImageSelectorComponent, {
-        width: '90vw',
-        height: '80vh',
-        maxWidth: '90vw',
-        panelClass: 'image-selector-dialog',
-        data,
-      })
-      .afterClosed()
-      .pipe(take(1))
+    this.runFolderService
+      .pickFolder(this.folderId(), this.pickerMimeType())
       .subscribe(result => {
         // The picker embeds the Media Gallery, where folders can be created,
         // renamed, moved or deleted: every node of the workspace must update.
         this.refreshTree();
-        const folderId = toFolderId(result?.folderId);
-        if (!result || folderId === null) return;
+        if (!result) return;
+        const folderId = result.folderId;
         this.pickedFolders.set(
           new Map([[folderId, {name: result.folderName, path: result.path}]]),
         );
@@ -295,18 +292,9 @@ export class StepFolderInputComponent {
       });
   }
 
-  /** Stores the saved folder id and loads the tree when a folder is set. */
+  /** Stores the saved folder id (the tree is loaded by the constructor effect). */
   private setFolderId(value: unknown): void {
-    const folderId = toFolderId(value);
-    this.folderId.set(folderId);
-    if (folderId !== null) {
-      this.ensureTreeLoaded();
-    }
-  }
-
-  /** Follows the active workspace (its tree resolves the saved folder). */
-  private syncWorkspace(): void {
-    this.workspaceId.set(this.workspaceStateService.getActiveWorkspaceId());
+    this.folderId.set(toFolderId(value));
   }
 
   /** Idempotent: no request when the tree is already loaded or loading. */
@@ -317,7 +305,6 @@ export class StepFolderInputComponent {
   }
 
   private refreshTree(): void {
-    this.syncWorkspace();
     const workspaceId = this.workspaceId();
     if (workspaceId === null) return;
     this.folderTreeStore.refresh(workspaceId);

@@ -164,7 +164,7 @@ async def test_folder_mode_lists_scalar_items_and_checkpoints_inputs(
         outputs,
         step_inputs={
             "mode": "folder",
-            "folder_id": 42,
+            "folder": 42,
             "folder_name": "Product Photos",
             "item_type": "image",
         },

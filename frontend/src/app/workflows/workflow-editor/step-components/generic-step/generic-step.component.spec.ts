@@ -124,6 +124,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           useValue: jasmine.createSpyObj<WorkspaceStateService>(
             'WorkspaceStateService',
             {getActiveWorkspaceId: 1},
+            {activeWorkspaceId$: of(1)},
           ),
         },
       ],

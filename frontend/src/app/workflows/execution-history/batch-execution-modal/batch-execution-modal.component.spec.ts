@@ -599,4 +599,57 @@ describe('BatchExecutionModalComponent', () => {
       expect(component.previewFooterText()).toBe('Showing first 5 of 7 rows');
     });
   });
+
+  describe('with a multi-word capitalized Folder parameter', () => {
+    const multiWordFolderWorkflow = buildWorkflow([
+      {
+        ...userInputStep,
+        outputs: {prompt: {type: 'text'}, Target_Folder: {type: 'folder'}},
+      },
+    ]);
+
+    function loadMultiWordFolderCsv(folderHeader: string): void {
+      component.csvFile = new File(['csv'], 'batch.csv', {type: 'text/csv'});
+      component.headers = ['Prompt', folderHeader];
+      component.parsedItems = [
+        {Prompt: 'Item 1', [folderHeader]: 'Campaign / Shoes'},
+      ];
+      component.validateHeaders();
+      fixture.detectChanges();
+    }
+
+    beforeEach(async () => {
+      await setup(multiWordFolderWorkflow);
+    });
+
+    ['Target Folder', 'target_folder', 'Target_Folder'].forEach(
+      folderHeader => {
+        it(`maps the "${folderHeader}" header to the original-cased input name`, () => {
+          loadMultiWordFolderCsv(folderHeader);
+
+          expect(component.isValid).toBeTrue();
+          expect(component.missingInputs).toEqual([]);
+          expect(component.columnMapping).toEqual({
+            Prompt: 'prompt',
+            [folderHeader]: 'Target_Folder',
+          });
+        });
+
+        it(`keeps the original-cased key in the row payload for "${folderHeader}"`, () => {
+          loadMultiWordFolderCsv(folderHeader);
+
+          component.runBatch();
+
+          expect(
+            workflowServiceSpy.batchExecuteWorkflow,
+          ).toHaveBeenCalledOnceWith('wf-batch-1', [
+            {
+              row_index: 0,
+              args: {workspace_id: 42, prompt: 'Item 1', Target_Folder: 42},
+            },
+          ]);
+        });
+      },
+    );
+  });
 });

@@ -78,7 +78,7 @@ describe('WorkflowExecutionPollingService', () => {
 
     const emitted: WorkflowRunSummary[][] = [];
     let completed = false;
-    const sub = service.pollRuns('wf-1').subscribe({
+    const sub = service.pollRuns('wf-1', 7).subscribe({
       next: runs => emitted.push(runs),
       complete: () => {
         completed = true;
@@ -105,6 +105,13 @@ describe('WorkflowExecutionPollingService', () => {
     expect(completed).toBeTrue();
     expect(service.isPolling()).toBeFalse();
     expect(workflowServiceSpy.getRuns).toHaveBeenCalledTimes(3);
+    expect(workflowServiceSpy.getRuns).toHaveBeenCalledWith(
+      'wf-1',
+      7,
+      20,
+      0,
+      'ALL',
+    );
 
     // Further ticks do not trigger extra calls
     tick(6000);
@@ -125,7 +132,7 @@ describe('WorkflowExecutionPollingService', () => {
     );
 
     const emitted: WorkflowRunSummary[][] = [];
-    service.pollExecutions('wf-1').subscribe(runs => emitted.push(runs));
+    service.pollExecutions('wf-1', 7).subscribe(runs => emitted.push(runs));
 
     tick(0);
     expect(emitted.length).toBe(1);
@@ -167,7 +174,7 @@ describe('WorkflowExecutionPollingService', () => {
 
       const emitted: WorkflowRunSummary[][] = [];
       const sub = service
-        .pollRuns('wf-1')
+        .pollRuns('wf-1', 7)
         .subscribe(runs => emitted.push(runs));
 
       tick(0);
@@ -189,7 +196,7 @@ describe('WorkflowExecutionPollingService', () => {
 
       const emitted: WorkflowRunSummary[][] = [];
       let completed = false;
-      service.pollRuns('wf-1').subscribe({
+      service.pollRuns('wf-1', 7).subscribe({
         next: runs => emitted.push(runs),
         complete: () => {
           completed = true;
@@ -227,7 +234,7 @@ describe('WorkflowExecutionPollingService', () => {
       );
 
       const emitted: WorkflowRunSummary[][] = [];
-      service.pollRuns('wf-1').subscribe(runs => emitted.push(runs));
+      service.pollRuns('wf-1', 7).subscribe(runs => emitted.push(runs));
 
       tick(0);
       const ticksUntilLimitAfterReset = failuresBeforeLimit * 2;
@@ -279,7 +286,9 @@ describe('WorkflowExecutionPollingService', () => {
     );
 
     const emitted: WorkflowRunSummary[][] = [];
-    const sub = service.pollRuns('wf-1').subscribe(runs => emitted.push(runs));
+    const sub = service
+      .pollRuns('wf-1', 7)
+      .subscribe(runs => emitted.push(runs));
 
     // t = 0ms: first request starts
     tick(0);

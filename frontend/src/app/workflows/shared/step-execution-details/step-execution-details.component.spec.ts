@@ -473,7 +473,7 @@ describe('StepExecutionDetailsComponent', () => {
       component.stepType = NodeTypes.LOOP;
       component.inputs = {
         mode: 'folder',
-        folder_id: 7,
+        folder: 7,
         folder_name: 'Shoes',
         item_type: 'image',
       };
@@ -508,7 +508,7 @@ describe('StepExecutionDetailsComponent', () => {
     it('surfaces folder metadata and renders items as media in folder mode', () => {
       component.inputs = {
         mode: 'folder',
-        folder_id: 42,
+        folder: 42,
         folder_name: 'Product Photos',
         item_type: 'video',
       };

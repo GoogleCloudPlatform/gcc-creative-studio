@@ -21,6 +21,7 @@ import {AssetTypeEnum} from '../../admin/source-assets-management/source-asset.m
 import {
   ImageSelectorComponent,
   ImageSelectorDialogData,
+  SelectorMimeType,
 } from '../../common/components/image-selector/image-selector.component';
 import {FolderSelectionResult} from '../../common/models/folder.model';
 import {FolderService} from '../../common/services/folder.service';
@@ -35,7 +36,8 @@ type ResolvedFolderPathEntry = readonly [number, string];
 
 /**
  * Folder picking and path resolution for workflow runs (run modal, resume,
- * batch). Stateless: nothing is cached between calls.
+ * batch) and the editor's folder inputs. Stateless: nothing is cached
+ * between calls.
  */
 @Injectable({providedIn: 'root'})
 export class RunFolderService {
@@ -44,16 +46,17 @@ export class RunFolderService {
 
   /**
    * Opens the Media Gallery in folder mode at `initialFolderId` (`null` =
-   * root). Emits once: the picked folder, or `null` on cancel or an invalid
-   * id. Never errors.
+   * root), previewing `mimeType` media (`null` = default). Emits once: the
+   * picked folder, or `null` on cancel or an invalid id. Never errors.
    */
   pickFolder(
     initialFolderId: number | null,
+    mimeType: SelectorMimeType = null,
   ): Observable<FolderSelectionResult | null> {
     const data: ImageSelectorDialogData = {
       selectionTarget: 'folder',
       initialFolderId,
-      mimeType: null,
+      mimeType,
       assetType: AssetTypeEnum.GENERIC_IMAGE,
     };
     return this.dialog

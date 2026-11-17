@@ -56,6 +56,7 @@ from src.workflows.queue.failure_classifier import (
 from src.workflows.repository.workflow_run_repository import (
     WorkflowRunRepository,
 )
+from src.workflows.schema.folder_parameters import folder_arg_names
 from src.workflows.schema.workflow_model import (
     StepStatusEnum,
     WorkflowBase,
@@ -85,6 +86,11 @@ CONTINUATION_DELAY_SECONDS = 5
 # Stale RUNNING claim threshold when execution_ids is empty (spec §8.4, E5).
 STALE_CLAIM_SECONDS = 120
 SECONDS_PER_DAY = 86400
+
+
+def _is_valid_folder_id(value: Any) -> bool:
+    """True when ``value`` is a strict positive int (bools rejected)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 class MissingResumeInputsError(StepError):
@@ -745,6 +751,21 @@ class RunStateService:
             missing = missing_required_args(steps, effective_args)
             if missing:
                 raise MissingResumeInputsError(missing)
+
+            invalid_folder_args = sorted(
+                name
+                for name in folder_arg_names(steps)
+                if name in cleaned_override
+                and not _is_valid_folder_id(cleaned_override[name])
+            )
+            if invalid_folder_args:
+                raise StepError(
+                    422,
+                    ErrorCategory.INVALID_INPUT,
+                    "Folder inputs must be positive integer ids: "
+                    + ", ".join(invalid_folder_args),
+                    retry_safe=False,
+                )
 
             changed_inputs = [
                 key

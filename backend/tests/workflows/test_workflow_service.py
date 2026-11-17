@@ -1631,7 +1631,16 @@ class TestListRuns:
         mock_run_repo.compute_queue_positions.return_value = {"run-q1": 3}
 
         result = await workflow_service.list_runs(
-            workflow_id="id-123", user_id=1, limit=20, offset=0
+            workflow_id="id-123",
+            user_id=1,
+            limit=20,
+            offset=0,
+            workspace_id=5,
+        )
+
+        assert (
+            mock_run_repo.list_by_workflow.await_args.kwargs["workspace_id"]
+            == 5
         )
 
         assert result.count == 2

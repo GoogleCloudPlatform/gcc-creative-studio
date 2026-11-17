@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from typing import Any
 
 from fastapi import Depends
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,12 +26,34 @@ from src.common.schema.media_item_model import MediaItem, MediaItemModel
 from src.database import get_db
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 
+logger = logging.getLogger(__name__)
+
 
 class MediaRepository(BaseRepository[MediaItem, MediaItemModel]):
     """Handles database operations for MediaItem objects."""
 
     def __init__(self, db: AsyncSession = Depends(get_db)):
         super().__init__(model=MediaItem, schema=MediaItemModel, db=db)
+
+    async def update(
+        self,
+        item_id: int,
+        update_data: BaseModel | dict[str, Any],
+    ) -> MediaItemModel | None:
+        """Partial update; warns when the item is missing or soft-deleted.
+
+        Generation workers finalize their placeholder item through this
+        method: a ``None`` result means the generated output was discarded
+        (e.g. its folder was deleted while the job was running).
+        """
+        updated = await super().update(item_id, update_data)
+        if updated is None:
+            logger.warning(
+                "Media item %s not updated: it is missing or soft-deleted; "
+                "the update was discarded.",
+                item_id,
+            )
+        return updated
 
     async def query(
         self,

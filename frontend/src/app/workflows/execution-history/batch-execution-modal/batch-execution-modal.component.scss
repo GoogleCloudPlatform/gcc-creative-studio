@@ -68,9 +68,13 @@ div {
 
   &:hover,
   &:focus-visible {
-    outline: none;
     background: rgba(255, 255, 255, 0.08);
     box-shadow: 0 0 10px hsla(38, 66%, 51%, 0.2);
+  }
+
+  &:focus-visible {
+    outline: 2px solid hsl(38, 66%, 51%);
+    outline-offset: 2px;
   }
 
   &--valid {

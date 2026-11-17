@@ -152,6 +152,17 @@ def job_failed_error(error_message: str) -> StepError:
     )
 
 
+def job_item_deleted_error() -> StepError:
+    """Terminal 404 ``MISSING_RESOURCE``: the job's gallery item was deleted."""
+    return StepError(
+        404,
+        ErrorCategory.MISSING_RESOURCE,
+        "The generated item was deleted (its output folder may have been "
+        "removed) before the job finished.",
+        job_terminal=True,
+    )
+
+
 def step_in_progress_error(detail: str) -> StepError:
     """504 ``STEP_IN_PROGRESS``: the job is still running; retry to resume."""
     return StepError(504, ErrorCategory.STEP_IN_PROGRESS, detail)

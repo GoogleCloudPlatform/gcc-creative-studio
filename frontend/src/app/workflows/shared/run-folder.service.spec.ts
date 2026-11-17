@@ -99,6 +99,13 @@ describe('RunFolderService', () => {
       expect(data.initialFolderId).toBeNull();
     });
 
+    it('previews the given media type in the picker', () => {
+      service.pickFolder(7, 'video/*').subscribe();
+      const data = dialogSpy.open.calls.mostRecent().args[1]
+        ?.data as ImageSelectorDialogData;
+      expect(data.mimeType).toBe('video/*');
+    });
+
     it('emits the picked folder once', () => {
       const values = collect(service.pickFolder(null));
       afterClosed$.next(SHOES);

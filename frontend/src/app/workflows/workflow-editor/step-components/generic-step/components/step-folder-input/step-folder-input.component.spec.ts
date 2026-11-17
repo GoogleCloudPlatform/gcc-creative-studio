@@ -22,7 +22,7 @@ import {MatSelect, MatSelectModule} from '@angular/material/select';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {NEVER, Subject, of, throwError} from 'rxjs';
+import {BehaviorSubject, NEVER, Subject, of, throwError} from 'rxjs';
 import {
   ImageSelectorComponent,
   ImageSelectorDialogData,
@@ -118,6 +118,7 @@ describe('StepFolderInputComponent', () => {
   let folderServiceSpy: jasmine.SpyObj<FolderService>;
   let store: WorkflowFolderTreeStore;
   let afterClosed$: Subject<FolderSelectionResult | null | undefined>;
+  let activeWorkspaceId$: BehaviorSubject<number | null>;
 
   beforeEach(async () => {
     dialogSpy = jasmine.createSpyObj<MatDialog>('MatDialog', ['open']);
@@ -132,6 +133,7 @@ describe('StepFolderInputComponent', () => {
       'getFolderTree',
     ]);
     folderServiceSpy.getFolderTree.and.returnValue(of(TREE));
+    activeWorkspaceId$ = new BehaviorSubject<number | null>(1);
 
     await TestBed.configureTestingModule({
       declarations: [StepFolderInputComponent],
@@ -148,10 +150,7 @@ describe('StepFolderInputComponent', () => {
         {provide: FolderService, useValue: folderServiceSpy},
         {
           provide: WorkspaceStateService,
-          useValue: jasmine.createSpyObj<WorkspaceStateService>(
-            'WorkspaceStateService',
-            {getActiveWorkspaceId: 1},
-          ),
+          useValue: {activeWorkspaceId$: activeWorkspaceId$.asObservable()},
         },
       ],
     }).compileComponents();
@@ -266,6 +265,26 @@ describe('StepFolderInputComponent', () => {
       expect(control.value).toBe(42);
       expect(query(fixture, '.loop-folder-missing-icon')).not.toBeNull();
       expect(component.missingTooltip).toBe(FOLDER_MISSING_TOOLTIP);
+    });
+
+    it('flags the folder as missing after switching to a workspace without it', () => {
+      const archiveOnlyTree: FolderTreeNode[] = [
+        {id: 4, name: 'Archive', children: []},
+      ];
+      folderServiceSpy.getFolderTree.and.callFake(workspaceId =>
+        of(workspaceId === 2 ? archiveOnlyTree : TREE),
+      );
+      const {fixture, component} = mountLoop(2);
+      expect(component.folderOption().label).toBe('Summer');
+      const ensureLoadedSpy = spyOn(store, 'ensureLoaded').and.callThrough();
+
+      activeWorkspaceId$.next(2);
+      fixture.detectChanges();
+
+      expect(ensureLoadedSpy).toHaveBeenCalledWith(2);
+      const option = component.folderOption();
+      expect(option.label).toBe('Folder #2');
+      expect(option.isMissing).toBeTrue();
     });
 
     it('shows the folder id without a warning while the tree is loading', () => {
@@ -415,6 +434,17 @@ describe('StepFolderInputComponent', () => {
       const {component, control} = mountLoop(2);
       component.openFolderSelector();
       afterClosed$.next({...SUMMER_RESULT, folderId: 0});
+      expect(control.value).toBe(2);
+      expect(control.pristine).toBeTrue();
+    });
+
+    it('keeps the folder and refreshes the tree when the picker fails', () => {
+      spyOn(console, 'warn');
+      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
+      const {component, control} = mountLoop(2);
+      component.openFolderSelector();
+      afterClosed$.error(new Error('boom'));
+      expect(refreshSpy).toHaveBeenCalledOnceWith(1);
       expect(control.value).toBe(2);
       expect(control.pristine).toBeTrue();
     });

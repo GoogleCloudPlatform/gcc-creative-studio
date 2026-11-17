@@ -26,6 +26,7 @@ from src.workflows_executor.step_errors import (
     backend_error,
     invalid_input_error,
     job_failed_error,
+    job_item_deleted_error,
     status_for_category,
     step_in_progress_error,
     to_step_error,
@@ -286,3 +287,12 @@ def test_route_reports_validation_errors_without_echoing_input():
     assert "body.count" in body["detail"]
     assert "not-a-number" not in body["detail"]
     assert "secret prompt" not in body["detail"]
+
+
+def test_job_item_deleted_error_is_terminal_missing_resource():
+    error = job_item_deleted_error()
+    assert error.status_code == 404
+    assert error.error_category is ErrorCategory.MISSING_RESOURCE
+    assert error.job_terminal is True
+    assert error.retry_safe is True
+    assert "deleted" in error.detail

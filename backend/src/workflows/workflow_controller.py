@@ -374,6 +374,7 @@ async def list_runs(
     status_filter: WorkflowRunStatusEnum | None = Query(
         default=None, alias="status"
     ),
+    workspace_id: int = Query(...),
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
 ):
@@ -386,6 +387,7 @@ async def list_runs(
         workflow_id=workflow_id,
         user_id=current_user.id,
         status=status_filter,
+        workspace_id=workspace_id,
         limit=limit,
         offset=offset,
     )

@@ -497,6 +497,13 @@ describe('ExecutionDetailsModalComponent', () => {
       });
     });
 
+    it('passes the live folder paths signal to the opened sidebar', () => {
+      component.openStepHistory(component.stepViewModels()[0]);
+      expect(lastOpenArgs().config.data?.folderPaths).toBe(
+        component.folderPaths,
+      );
+    });
+
     it('toggles inline details from the chevron without opening the sidebar', () => {
       const wasExpanded = component.stepViewModels()[0].isExpanded;
 
@@ -596,6 +603,58 @@ describe('ExecutionDetailsModalComponent', () => {
       expect(
         fixture.debugElement.query(By.css('#resume-input-prompt')),
       ).not.toBeNull();
+    });
+
+    it('merges a multi-word folder definition and its output key into one resume field', () => {
+      const multiWordFolderRun: WorkflowRunDetail = {
+        ...folderRun,
+        input_args: {prompt: 'Original prompt text', Target_Folder: 42},
+        workflow_snapshot: snapshot
+          ? {
+              ...snapshot,
+              steps: [
+                {
+                  ...snapshotUserInput,
+                  outputs: {
+                    prompt: {type: 'text'},
+                    Target_Folder: {type: 'folder'},
+                  },
+                  settings: {
+                    definitions: [{name: 'Target Folder', type: 'folder'}],
+                  },
+                },
+                ...snapshotOtherSteps,
+              ],
+            }
+          : undefined,
+      };
+      workflowServiceSpy.getRunDetails.and.returnValue(of(multiWordFolderRun));
+      component.loadDetails();
+      fixture.detectChanges();
+
+      const folderFields = component
+        .resumeFieldList()
+        .filter(field => field.isFolder);
+      expect(component.resumeFieldNames()).toEqual(['prompt', 'Target_Folder']);
+      expect(folderFields.length).toBe(1);
+      expect(folderFields[0].name).toBe('Target_Folder');
+      expect(folderFields[0].label).toBe('Target Folder');
+      expect(component.resumeForm.contains('Target Folder')).toBeFalse();
+
+      workflowServiceSpy.resumeRun.and.returnValue(
+        of({
+          run_id: 'run-attention-1',
+          status: WorkflowRunStatusEnum.RUNNING,
+          execution_id: 'exec-3',
+        }),
+      );
+      component.submitResume();
+
+      expect(workflowServiceSpy.resumeRun).toHaveBeenCalledOnceWith(
+        'wf-1',
+        'run-attention-1',
+        {prompt: 'Original prompt text', Target_Folder: 42},
+      );
     });
 
     it('stores the picked folder, shows its path and resumes with its id', () => {

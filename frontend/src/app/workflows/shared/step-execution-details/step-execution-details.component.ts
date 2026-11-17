@@ -48,9 +48,6 @@ const LOOP_ITEMS_KEY = 'items';
 /** Input key holding a Loop step's source mode. */
 const LOOP_MODE_KEY = 'mode';
 
-/** Folder id recorded by Loop runs before the folder became an input. */
-const LOOP_FOLDER_ID_KEY = 'folder_id';
-
 /** Folder name recorded by Loop runs (fallback label when no path is known). */
 const LOOP_FOLDER_NAME_KEY = 'folder_name';
 
@@ -116,17 +113,6 @@ export class StepExecutionDetailsComponent implements OnInit {
     this.folderPathsState.set(value ?? new Map());
   }
 
-  /** Recorded inputs; a Loop's legacy `folder_id` is exposed as `folder`. */
-  private readonly displayInputs = computed<DynamicStepRecord>(() => {
-    const inputs = this.inputsState();
-    if (!this.isLoopStep()) return inputs;
-    return {
-      ...inputs,
-      [LOOP_FOLDER_INPUT_KEY]:
-        inputs[LOOP_FOLDER_INPUT_KEY] ?? inputs[LOOP_FOLDER_ID_KEY],
-    };
-  });
-
   /**
    * Display label of each folder input holding a folder id: its path, else
    * the Loop's recorded `folder_name`, else `Folder #<id>`. The root (`null`)
@@ -134,7 +120,7 @@ export class StepExecutionDetailsComponent implements OnInit {
    */
   readonly folderInputLabels = computed<Readonly<Record<string, string>>>(
     () => {
-      const inputs = this.displayInputs();
+      const inputs = this.inputsState();
       const paths = this.folderPathsState();
       const folderName = inputs[LOOP_FOLDER_NAME_KEY];
       const fallbackName =
@@ -245,7 +231,7 @@ export class StepExecutionDetailsComponent implements OnInit {
     const result: Record<string, any> = {};
 
     if (this.isLoopStep()) {
-      const loopInputs = this.displayInputs();
+      const loopInputs = this.inputsState();
       const loopMode = toLoopMode(loopInputs[LOOP_MODE_KEY]);
       LOOP_INPUT_KEYS_BY_MODE[loopMode]
         .filter(key => this.hasValue(loopInputs[key]))

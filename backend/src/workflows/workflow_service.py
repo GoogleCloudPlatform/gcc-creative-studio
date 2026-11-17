@@ -56,10 +56,10 @@ from src.workflows.repository.workflow_run_repository import (
 from src.workflows.repository.workflow_template_repository import (
     WorkflowTemplateRepository,
 )
+from src.workflows.schema.folder_parameters import folder_arg_names
 from src.workflows.schema.workflow_model import (
     WorkflowBase,
     WorkflowCreateDto,
-    NodeTypes,
     WorkflowModel,
     WorkflowRunStatusEnum,
 )
@@ -79,6 +79,7 @@ from src.workflows.workflow_yaml_builder import (
     build_workflow_yaml,
     compute_definition_hash,
     initial_step_states,
+    missing_required_args,
 )
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -86,7 +87,6 @@ logger = install_secret_redaction(logging.getLogger(__name__))
 PROJECT_ID = config_service.PROJECT_ID
 LOCATION = config_service.WORKFLOWS_LOCATION
 BACKEND_EXECUTOR_URL = config_service.WORKFLOWS_EXECUTOR_URL
-FOLDER_PARAMETER_TYPE = "folder"
 BATCH_FOLDER_NOT_FOUND_ERROR = "Folder not found for '{name}'."
 BATCH_FOLDER_WORKSPACE_ERROR = "Workspace not found or not accessible."
 
@@ -95,14 +95,7 @@ def _folder_arg_names(workflow_model: WorkflowModel | None) -> frozenset[str]:
     """Execution argument names of the workflow's Folder parameters."""
     if workflow_model is None:
         return frozenset()
-    return frozenset(
-        name
-        for step in workflow_model.steps
-        if step.type == NodeTypes.USER_INPUT
-        for name, output in (step.outputs or {}).items()
-        if isinstance(output, Mapping)
-        and output.get("type") == FOLDER_PARAMETER_TYPE
-    )
+    return folder_arg_names(workflow_model.steps)
 
 
 def _batch_workspace_id(raw_workspace_id: Any) -> int | None:
@@ -571,15 +564,27 @@ class WorkflowService:
         workflow_model = await self.get_by_id(workflow_id)
         if workflow_model:
             await self._ensure_gcp_workflow_is_current(workflow_model)
-        folder_arg_names = _folder_arg_names(workflow_model)
+        batch_folder_arg_names = _folder_arg_names(workflow_model)
         authorized_workspace_ids: set[int] = set()
 
         async def process_row(item) -> BatchItemResultDto:
             try:
                 processed_args: dict[str, Any] = {}
+                if workflow_model is not None:
+                    missing = missing_required_args(
+                        workflow_model.steps, item.args
+                    )
+                    if missing:
+                        raise ValueError(
+                            "Missing required workflow inputs: "
+                            + ", ".join(missing)
+                        )
                 workspace_id = item.args.get("workspace_id")
                 folder_args = await self._resolve_batch_folder_args(
-                    item.args, folder_arg_names, user, authorized_workspace_ids
+                    item.args,
+                    batch_folder_arg_names,
+                    user,
+                    authorized_workspace_ids,
                 )
 
                 for key, value in item.args.items():
@@ -786,12 +791,14 @@ class WorkflowService:
         status: WorkflowRunStatusEnum | str | None = None,
         limit: int = 20,
         offset: int = 0,
+        workspace_id: int,
     ) -> PaginationResponseDto[WorkflowRunSummaryDto]:
         """Lists DB workflow runs for ``workflow_id`` owned by ``user_id`` (§9.2, Q4)."""
         items, total = await self.workflow_run_repository.list_by_workflow(
             workflow_id,
             user_id=user_id,
             status=status,
+            workspace_id=workspace_id,
             limit=limit,
             offset=offset,
         )
