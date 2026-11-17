@@ -286,13 +286,19 @@ def _process_video_in_background(
                                 i.role == AssetRoleEnum.VIDEO_EXTENSION_SOURCE
                                 for i in (request_dto.source_media_items or [])
                             )
-                            if has_source_video and not omni_kw_prompt.strip():
-                                request_dto.prompt = (
-                                    "Continue the video seamlessly."
-                                )
-                            rewritten_prompt = await gemini_service.apply_brand_guidelines_to_dto(
-                                request_dto
+                            seed = "Continue the video seamlessly."
+                            dto_for_brand = (
+                                request_dto.model_copy(update={"prompt": seed})
+                                if has_source_video
+                                and not omni_kw_prompt.strip()
+                                else request_dto
                             )
+                            prefixed = await gemini_service.apply_brand_guidelines_to_dto(
+                                dto=dto_for_brand,
+                            )
+                            rewritten_prompt = prefixed
+                            if prefixed == dto_for_brand.prompt:
+                                rewritten_prompt = omni_kw_prompt
                             request_dto.prompt = rewritten_prompt
                         else:
                             rewritten_prompt = request_dto.prompt

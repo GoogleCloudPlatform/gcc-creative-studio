@@ -2902,6 +2902,60 @@ class TestBackgroundWorkers:
             assert "Crisp natural daylight" in actual
             assert actual.endswith("\n---\n\nContinue the video seamlessly.")
 
+    def test_process_video_in_background_empty_extension_without_guidelines_preserves_empty_prompt(
+        self,
+    ):
+        from src.config.config_service import config_service as cfg
+
+        db_cls = MagicMock()
+        db_cls.return_value.__aenter__.return_value = MagicMock(
+            return_value=AsyncMock()
+        )
+        op = MagicMock(done=True, error=None)
+        op.response.generated_videos = [
+            MagicMock(video=MagicMock(uri=f"gs://{cfg.GENMEDIA_BUCKET}/o.mp4"))
+        ]
+        client = MagicMock()
+        client.models.generate_videos.return_value = op
+        client.operations.get.return_value = op
+        media_repo = AsyncMock()
+        media_repo.get_by_id.return_value = _build_video_media_item(5)
+        brand_repo = AsyncMock()
+        brand_repo.query.return_value = MagicMock(data=[])
+        gcs = MagicMock()
+        gcs.download_from_gcs.return_value = "/tmp/local.mp4"
+        gcs.upload_file_to_gcs.return_value = "gs://b/t.png"
+        dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            enhance_prompt=False,
+            use_brand_guidelines=True,
+            source_video_asset_id={"id": 5, "type": "media_item"},
+        )
+        bg_path = "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository"
+        with (
+            patch("src.database.WorkerDatabase", db_cls),
+            patch("src.multimodal.gemini_service.GeminiModelSetup.init"),
+            patch.multiple(
+                "src.videos.veo_service",
+                GenAIModelSetup=MagicMock(init=MagicMock(return_value=client)),
+                MediaRepository=MagicMock(return_value=media_repo),
+                SourceAssetRepository=MagicMock(),
+                GcsService=MagicMock(return_value=gcs),
+                generate_thumbnail=MagicMock(return_value="/tmp/t/thumb.png"),
+                shutil=MagicMock(),
+            ),
+            patch(bg_path, return_value=brand_repo),
+        ):
+            _process_video_in_background(
+                media_item_id=129,
+                request_dto=dto,
+                user_email="user@example.com",
+            )
+        assert client.models.generate_videos.call_args.kwargs["prompt"] == ""
+        assert media_repo.update.call_args.args[1]["prompt"] == ""
+
 
 def _build_video_media_item(item_id: int, **overrides) -> MediaItemModel:
     """Builds a same-workspace video MediaItem, applying unvalidated overrides."""
