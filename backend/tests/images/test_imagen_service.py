@@ -2678,6 +2678,96 @@ def test_process_image_in_background_sync_video_ref_media_item_youtube_resolved(
             )
 
 
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
+@patch("src.multimodal.gemini_service.GeminiModelSetup.init")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_applies_brand_guidelines_without_enhance_prompt(
+    mock_genai_init,
+    mock_gemini_model_init,
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+    dto = CreateImagenDto(
+        workspace_id=10,
+        context_workspace_id=20,
+        prompt="A modern desk lamp",
+        generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+        aspect_ratio="1:1",
+        use_brand_guidelines=True,
+        enhance_prompt=False,
+        metadata_generation_model=None,
+    )
+
+    mock_db_context = AsyncMock()
+    mock_worker_db_class.return_value.__aenter__.return_value = MagicMock(
+        return_value=mock_db_context
+    )
+    mock_genai_init.return_value = MagicMock()
+    mock_gemini_model_init.return_value = MagicMock()
+
+    mock_guideline = MagicMock(
+        visual_style_summary="Warm cinematic editorial lighting",
+        tone_of_voice_summary="Confident minimalist",
+    )
+    mock_brand_repo = AsyncMock()
+    mock_brand_repo.query.return_value = MagicMock(data=[mock_guideline])
+
+    with (
+        patch("src.images.imagen_service.MediaRepository") as mock_media_cls,
+        patch("src.images.imagen_service.SourceAssetRepository"),
+        patch("src.images.imagen_service.UserRepository"),
+        patch(
+            "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository",
+            return_value=mock_brand_repo,
+        ),
+        patch("src.images.imagen_service.GcsService") as mock_gcs_cls,
+        patch("src.images.imagen_service.IamSignerCredentials"),
+        patch(
+            "src.images.imagen_service.gemini_generate_image"
+        ) as mock_gemini_gen,
+        patch(
+            "src.multimodal.gemini_service.GeminiService.generate_structured_prompt"
+        ) as mock_structured,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_cls.return_value = mock_media_repo
+
+        mock_gcs = MagicMock()
+        mock_gcs.bucket_name = "test-bucket"
+        mock_gcs_cls.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_0.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        _process_image_in_background(
+            media_item_id=126,
+            request_dto=dto,
+            current_user=sample_user,
+        )
+
+    mock_structured.assert_not_called()
+    mock_brand_repo.query.assert_awaited_once()
+    assert mock_brand_repo.query.call_args.kwargs["workspace_id"] == 20
+    assert mock_brand_repo.query.call_args.args[0].workspace_id == 20
+
+    gen_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+    saved_prompt = mock_media_repo.update.call_args.args[1]["prompt"]
+    for actual in (gen_prompt, saved_prompt):
+        assert actual.startswith(
+            "Follow these brand guidelines when generating:"
+        )
+        assert "Warm cinematic editorial lighting" in actual
+        assert "Confident minimalist" in actual
+        assert actual.endswith("\n---\n\nA modern desk lamp")
+
+
 class TestImagenServiceRevisionLineage:
     """Behavioral tests for revision lineage wiring across image generation jobs."""
 
