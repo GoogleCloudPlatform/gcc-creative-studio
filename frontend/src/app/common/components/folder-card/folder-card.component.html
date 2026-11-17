@@ -67,6 +67,12 @@
         <mat-icon>content_copy</mat-icon>
         <span>Copy</span>
       </button>
+      @if (canPromote) {
+        <button mat-menu-item (click)="onPromote($event)">
+          <mat-icon>publish</mat-icon>
+          <span>Promote</span>
+        </button>
+      }
       @if (canManage) {
         <button mat-menu-item (click)="onMove($event)">
           <mat-icon>drive_file_move</mat-icon>

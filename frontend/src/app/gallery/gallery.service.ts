@@ -33,8 +33,13 @@ import {
 import {environment} from '../../environments/environment';
 import {MediaItem} from '../common/models/media-item.model';
 import {
+  BulkCopyItem,
   GalleryItem,
   PaginatedGalleryResponse,
+  PromoteItemsRequest,
+  PromoteResponse,
+  PromoteTargetWorkspace,
+  PromotionSummary,
   RevisionHistoryResponse,
 } from '../common/models/gallery-item.model';
 import {
@@ -193,6 +198,7 @@ export class GalleryService implements OnDestroy {
         rootId: number;
         revisionCount: number;
         takes: Record<string, unknown>[];
+        promotions?: Record<string, unknown>[];
       }>(url)
       .pipe(
         map(res => ({
@@ -201,8 +207,29 @@ export class GalleryService implements OnDestroy {
           takes: (res.takes || []).map(take =>
             this.mapUnifiedItem({...take, itemType: 'media_item'}),
           ),
+          promotions: (res.promotions || []).map(p =>
+            this.mapPromotionSummary(p),
+          ),
         })),
       );
+  }
+
+  public getPromoteTargets(
+    sourceWorkspaceId: number,
+    items: BulkCopyItem[],
+  ): Observable<PromoteTargetWorkspace[]> {
+    const url = `${environment.backendURL}/gallery/promote-targets`;
+    return this.http.post<PromoteTargetWorkspace[]>(url, {
+      sourceWorkspaceId,
+      items,
+    });
+  }
+
+  public promoteItems(
+    request: PromoteItemsRequest,
+  ): Observable<PromoteResponse> {
+    const url = `${environment.backendURL}/gallery/promote`;
+    return this.http.post<PromoteResponse>(url, request);
   }
 
   private resetCache() {
@@ -289,8 +316,32 @@ export class GalleryService implements OnDestroy {
     return data.map(item => this.mapUnifiedItem(item));
   }
 
+  private mapPromotionSummary(raw: Record<string, unknown>): PromotionSummary {
+    return {
+      targetWorkspaceId: Number(
+        raw['targetWorkspaceId'] ?? raw['target_workspace_id'] ?? 0,
+      ),
+      targetWorkspaceName: String(
+        raw['targetWorkspaceName'] ?? raw['target_workspace_name'] ?? '',
+      ),
+      targetItemId: Number(raw['targetItemId'] ?? raw['target_item_id'] ?? 0),
+      targetFolderId: (raw['targetFolderId'] ??
+        raw['target_folder_id'] ??
+        null) as number | null,
+      promotedRevisionNumber: (raw['promotedRevisionNumber'] ??
+        raw['promoted_revision_number'] ??
+        null) as number | null,
+      promotedFromMediaItemId: (raw['promotedFromMediaItemId'] ??
+        raw['promoted_from_media_item_id'] ??
+        null) as number | null,
+    };
+  }
+
   public mapUnifiedItem(item: any): GalleryItem {
     const metadata = item.metadata || {};
+    const rawPromotions = (item.promotions ??
+      metadata.promotions ??
+      []) as Record<string, unknown>[];
     const galleryItem: GalleryItem = {
       id: item.id,
       tags: item.tags,
@@ -328,6 +379,21 @@ export class GalleryService implements OnDestroy {
         1,
       isLatestRevision:
         item.isLatestRevision ?? item.is_latest_revision ?? true,
+      promotedFromMediaItemId:
+        item.promotedFromMediaItemId ??
+        item.promoted_from_media_item_id ??
+        metadata.promotedFromMediaItemId ??
+        metadata.promoted_from_media_item_id ??
+        null,
+      promotedFromRootId:
+        item.promotedFromRootId ??
+        item.promoted_from_root_id ??
+        metadata.promotedFromRootId ??
+        metadata.promoted_from_root_id ??
+        null,
+      promotions: Array.isArray(rawPromotions)
+        ? rawPromotions.map(p => this.mapPromotionSummary(p))
+        : [],
       gcsUris: item.gcsUris,
       thumbnailUris: item.thumbnailUris,
       presignedUrls: item.presignedUrls,

@@ -6,8 +6,8 @@ These modular guides document the baseline authorization, session, data-isolatio
 
 - [`auth.md`](auth.md) — Token verification paths (`X-User-Authorization`, `ya29.` OAuth, Firebase/OIDC), outage fail-closed behavior, post-auth hook scope, and frontend browser session renewal.
 - [`admin.md`](admin.md) — `RoleChecker([UserRoleEnum.ADMIN])`, admin router and user-management protections, self-delete guard, soft-delete restore restrictions, and `AdminAuthGuard`.
-- [`gallery.md`](gallery.md) — Unified gallery search scoping (`UnifiedGalleryItemResponse`), `bulk_delete` workspace and owner/admin checks, admin-only restore, and `FolderService.is_workspace_manager`.
-- [`workspaces.md`](workspaces.md) — `WorkspaceScopeEnum` (`PUBLIC` vs `PRIVATE`), `WorkspaceRoleEnum`, `WorkspaceAuth.authorize`, creator `OWNER` assignment, and owner/admin invitation rules.
+- [`gallery.md`](gallery.md) — Unified gallery search scoping (`UnifiedGalleryItemResponse`), `bulk_delete` workspace write and manager/creator checks, admin restore isolation, and `is_workspace_manager`.
+- [`workspaces.md`](workspaces.md) — `WorkspaceScopeEnum` (`PERSONAL` / `PRIVATE` / `PUBLIC`), `WorkspaceRoleEnum`, `WorkspaceAuth.authorize` / `authorize_write`, private-first generation routing, revision stacks, and cross-workspace promotion.
 
 ## Test Harness & Contract Invariants
 

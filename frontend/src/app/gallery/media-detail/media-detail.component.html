@@ -43,7 +43,15 @@
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
         (moved)="onMediaMoved($event)"
+        (promoted)="onMediaPromoted()"
         [showMoveButton]="true"
+        [showWorkspacePromoteBar]="
+          !(
+            revisionHistory &&
+            (revisionHistory.takes.length > 1 ||
+              (revisionHistory.promotions?.length ?? 0) > 0)
+          )
+        "
         style="max-height: 80vh"
       ></app-media-lightbox>
     </div>
@@ -73,11 +81,18 @@
       </nav>
 
       <app-revision-history-strip
-        *ngIf="revisionHistory && revisionHistory.takes.length > 1"
+        *ngIf="
+          revisionHistory &&
+          (revisionHistory.takes.length > 1 ||
+            (revisionHistory.promotions?.length ?? 0) > 0)
+        "
         [takes]="revisionHistory.takes"
+        [promotions]="revisionHistory.promotions || []"
         [selectedTakeId]="mediaItem.id"
+        [canPromote]="canPromoteItem"
         [isDeleting]="isDeletingTake"
         (takeSelected)="onRevisionTakeSelected($event)"
+        (promoteRequested)="openPromoteDialog($event)"
         (editFromRequested)="onEditFromRevisionTake($event)"
         (deleteTakeRequested)="onDeleteRevisionTake($event)"
       ></app-revision-history-strip>

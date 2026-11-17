@@ -19,11 +19,14 @@ import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
 import {MatChipsModule} from '@angular/material/chips';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {of} from 'rxjs';
 
 import {GalleryCardComponent} from './gallery-card.component';
 import {UserService} from '../../services/user.service';
 import {GalleryItem} from '../../models/gallery-item.model';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {WorkspaceScope} from '../../models/workspace.model';
 
@@ -52,6 +55,7 @@ describe('GalleryCardComponent', () => {
         MatDialogModule,
         MatIconModule,
         MatChipsModule,
+        MatSnackBarModule,
       ],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
@@ -254,6 +258,73 @@ describe('GalleryCardComponent', () => {
 
     const statusLine = fixture.nativeElement.querySelector('.card-status-line');
     expect(statusLine?.textContent?.trim()).toBe('v3 · 3 versions');
+
+    component.item = {
+      ...component.item,
+      promotions: [
+        {
+          targetWorkspaceId: 2,
+          targetWorkspaceName: 'Shared Team',
+          targetItemId: 90,
+          promotedRevisionNumber: 1,
+        },
+      ],
+    };
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement
+        .querySelector('.card-status-line')
+        ?.textContent?.trim(),
+    ).toBe('3 versions · v1 in Shared Team · v3 latest');
+
+    component.item = {
+      ...component.item,
+      revisionNumber: 1,
+      revisionCount: 1,
+      promotions: [
+        {
+          targetWorkspaceId: 2,
+          targetWorkspaceName: 'Shared Team',
+          targetItemId: 90,
+          promotedRevisionNumber: 1,
+        },
+        {
+          targetWorkspaceId: 2,
+          targetWorkspaceName: 'Shared Team',
+          targetItemId: 91,
+          promotedRevisionNumber: 1,
+        },
+      ],
+    };
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement
+        .querySelector('.card-status-line')
+        ?.textContent?.trim(),
+    ).toBe('Shared to Shared Team');
+
+    const promoteLauncher = TestBed.inject(PromoteLauncherService);
+    const openSpy = spyOn(promoteLauncher, 'openPromoteDialog').and.returnValue(
+      of({
+        response: {
+          targetWorkspaceId: 2,
+          promotedCount: 1,
+          createdCount: 1,
+          updatedCount: 0,
+          promotedItems: [],
+        },
+        targetWorkspaceName: 'Shared Team',
+      }),
+    );
+    let promotedCount = 0;
+    component.promoted.subscribe(() => promotedCount++);
+    const quickBtn = fixture.nativeElement.querySelector(
+      '.quick-promote-btn',
+    ) as HTMLButtonElement;
+    expect(quickBtn).not.toBeNull();
+    quickBtn.click();
+    expect(openSpy).toHaveBeenCalled();
+    expect(promotedCount).toBe(1);
 
     component.isSelectorMode = true;
     fixture.detectChanges();
