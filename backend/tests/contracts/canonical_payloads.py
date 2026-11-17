@@ -131,6 +131,26 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
             "conflictStrategy": "keep_both",
         },
     ),
+    (
+        "POST",
+        "/api/gallery/promote-targets",
+        {
+            "sourceWorkspaceId": 10,
+            "items": [{"id": 42, "type": "media_item"}],
+        },
+    ),
+    (
+        "POST",
+        "/api/gallery/promote",
+        {
+            "sourceWorkspaceId": 10,
+            "targetWorkspaceId": 20,
+            "targetFolderId": 5,
+            "clearTargetFolder": False,
+            "items": [{"id": 42, "type": "media_item"}],
+            "mode": "update_or_create",
+        },
+    ),
     ("POST", "/api/workspaces", {"name": "Brand Workspace"}),
     (
         "POST",

@@ -13,11 +13,17 @@
 # limitations under the License.
 """Workspace access checks and effective-role / manager policy helpers."""
 
-from fastapi import Depends, HTTPException, status
+from collections.abc import Iterable
+
+from fastapi import Depends, HTTPException
+from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceMemberAssociation,
     WorkspaceModel,
     WorkspaceRoleEnum,
     WorkspaceScopeEnum,
@@ -66,6 +72,51 @@ def is_workspace_manager(user: UserModel, workspace: WorkspaceModel) -> bool:
             in _MANAGER_ROLES
         )
     return False
+
+
+def accessible_shared_workspace_clause(user: UserModel) -> ColumnElement[bool]:
+    """SQL predicate matching non-PERSONAL workspaces ``user`` may read."""
+    base_clause: ColumnElement[bool] = (
+        Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+    )
+    if UserRoleEnum.ADMIN in (user.roles or []):
+        return base_clause
+    member_exists = exists(
+        select(1).where(
+            WorkspaceMemberAssociation.workspace_id == Workspace.id,
+            WorkspaceMemberAssociation.user_id == user.id,
+        )
+    )
+    return and_(
+        base_clause,
+        or_(
+            Workspace.scope == WorkspaceScopeEnum.PUBLIC.value,
+            Workspace.owner_id == user.id,
+            member_exists,
+        ),
+    )
+
+
+async def get_accessible_shared_workspace_ids(
+    db: AsyncSession,
+    workspace_ids: Iterable[int],
+    user: UserModel,
+) -> set[int]:
+    """Filters ``workspace_ids`` to non-PERSONAL workspaces ``user`` may read."""
+    candidate_ids = sorted(
+        {
+            wid
+            for wid in workspace_ids
+            if isinstance(wid, int) and not isinstance(wid, bool) and wid > 0
+        }
+    )
+    if not candidate_ids:
+        return set()
+    stmt = select(Workspace.id).where(
+        Workspace.id.in_(candidate_ids),
+        accessible_shared_workspace_clause(user),
+    )
+    return set((await db.execute(stmt)).scalars().all())
 
 
 class WorkspaceAuth:
