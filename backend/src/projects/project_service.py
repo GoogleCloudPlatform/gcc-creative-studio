@@ -331,7 +331,11 @@ class ProjectService:
         already owns a storyboard gets that record back, with the scalar
         fields refreshed, instead of a second one: Izumi re-creates its
         storyboard on every pipeline restart and would otherwise leave the
-        Workbench pointing at a stale record.
+        Workbench pointing at a stale record. That record is authorized
+        first, like the by-id routes (owner, then ``ProjectAuth``): any
+        signed-in caller can send the agent header, so a member removed
+        from a private workspace could otherwise keep reading and editing
+        their storyboards in it.
 
         A new record's project comes from ``resolve_project_for_write``.
         Izumi sends no ``project_id``, so the chat's registered project is
@@ -345,6 +349,7 @@ class ProjectService:
                 storyboard_create.workspace_id, session_id, user.id
             )
             if existing:
+                await self.authorize_storyboard(user, existing.id)
                 scalar_updates = {
                     key: data[key]
                     for key in (

@@ -29,6 +29,7 @@ from src.projects.dto.project_dto import (
     StoryboardResponse,
     StoryboardUpdate,
 )
+from src.projects.project_auth_guard import ProjectAuth
 from src.projects.project_service import ProjectService
 from src.users.user_model import UserModel, UserRoleEnum
 
@@ -158,6 +159,7 @@ class TestCreateStoryboard:
     @pytest.mark.anyio
     async def test_reuse_returns_existing_session_record(self, service, repo):
         repo.find_latest_by_session.return_value = _existing(14)
+        repo.get_owner_and_project.return_value = (1, 60)
         res = await service.create_storyboard(
             _create(bg_music_description="warm pads"),
             user=USER,
@@ -182,6 +184,7 @@ class TestCreateStoryboard:
         self, service, repo
     ):
         repo.find_latest_by_session.return_value = _existing(14)
+        repo.get_owner_and_project.return_value = (1, 60)
         res = await service.create_storyboard(
             StoryboardCreate(workspace_id=10, session_id="s1"),
             user=USER,
@@ -189,6 +192,66 @@ class TestCreateStoryboard:
         )
         assert res.id == 14
         repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_reuse_authorizes_the_kept_record_before_touching_it(
+        self, service, repo, project_auth
+    ):
+        calls = []
+        repo.find_latest_by_session.return_value = _existing(14)
+        repo.get_owner_and_project.return_value = (1, 60)
+        project_auth.authorize.side_effect = (
+            lambda project_id, user: calls.append(("authorize", project_id))
+            or _project(project_id)
+        )
+        repo.update.side_effect = lambda storyboard_id, data: calls.append(
+            ("update", storyboard_id)
+        )
+
+        await service.create_storyboard(
+            _create(), user=USER, reuse_session_record=True
+        )
+
+        repo.get_owner_and_project.assert_awaited_once_with(14)
+        assert calls == [("authorize", 60), ("update", 14)]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            _create(bg_music_description="warm pads"),
+            StoryboardCreate(workspace_id=10, session_id="s1"),
+        ],
+        ids=["edit", "read"],
+    )
+    async def test_reuse_is_refused_after_losing_the_workspace(
+        self, service, repo, project_repo, workspace_auth, payload
+    ):
+        # The reported bypass: removed from a private workspace, the caller
+        # replays the agent header with an old session_id. The real
+        # ProjectAuth must reach WorkspaceAuth, which refuses.
+        service.project_auth = ProjectAuth(
+            project_repo=project_repo, workspace_auth=workspace_auth
+        )
+        repo.find_latest_by_session.return_value = _existing(14)
+        repo.get_owner_and_project.return_value = (1, 60)
+        project_repo.get_by_id.return_value = _project(60)
+        workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403,
+            detail="You do not have permission to access this workspace.",
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await service.create_storyboard(
+                payload, user=USER, reuse_session_record=True
+            )
+
+        assert exc.value.status_code == 403
+        workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        repo.update.assert_not_called()
+        repo.create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_reuse_creates_when_session_has_none(self, service, repo):
