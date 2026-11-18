@@ -891,10 +891,17 @@ class TestBatchExecuteWorkflow:
             lambda trigger, uid: dispatched.append((trigger, uid))
         )
 
+        workspace_id = "1"
         batch_dto = BatchExecutionRequestDto(
             items=[
-                BatchExecutionItemDto(row_index=0, args={"prompt": "test1"}),
-                BatchExecutionItemDto(row_index=1, args={"prompt": "test2"}),
+                BatchExecutionItemDto(
+                    row_index=0,
+                    args={"prompt": "test1", "workspace_id": workspace_id},
+                ),
+                BatchExecutionItemDto(
+                    row_index=1,
+                    args={"prompt": "test2", "workspace_id": workspace_id},
+                ),
             ],
         )
 
@@ -1160,11 +1167,17 @@ class TestBatchExecuteWorkflow:
 
         mock_run_repo.create = AsyncMock(side_effect=flaky_create)
 
+        workspace_id = "1"
         batch_dto = BatchExecutionRequestDto(
             items=[
-                BatchExecutionItemDto(row_index=0, args={"prompt": "row0"}),
-                BatchExecutionItemDto(row_index=1, args={"prompt": "row1"}),
-                BatchExecutionItemDto(row_index=2, args={"prompt": "row2"}),
+                BatchExecutionItemDto(
+                    row_index=index,
+                    args={
+                        "prompt": f"row{index}",
+                        "workspace_id": workspace_id,
+                    },
+                )
+                for index in range(3)
             ]
         )
 
