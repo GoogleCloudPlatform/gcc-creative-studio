@@ -336,6 +336,29 @@ async def test_chat_route_refuses_a_restored_chat(client):
 
 
 @pytest.mark.anyio
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_chat_route_refuses_a_chat_of_another_workspace(client):
+    # Registered in workspace 1: naming another one, even a workspace the
+    # caller may use, never runs the chat there.
+    repo = _registry_stub()
+    repo.get.return_value = _seen_row("s1")
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+
+    response = client.post(
+        "/api/agent/chat",
+        json={
+            "sessionId": "s1",
+            "workspaceId": 2,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "The chat belongs to another workspace."
+    repo.touch.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_create_session_success(mock_remote_agent, client):
     mock_remote_agent.async_create_session.return_value = {
         "id": "session_1",

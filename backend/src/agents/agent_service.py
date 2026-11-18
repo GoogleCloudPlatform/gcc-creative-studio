@@ -99,6 +99,7 @@ BUSY_CHAT_DELETE_DETAIL = (
     "Izumi is still working in this chat. Wait for it to finish before "
     "deleting the chat."
 )
+CHAT_IN_OTHER_WORKSPACE_DETAIL = "The chat belongs to another workspace."
 _active_runs: dict[str, float] = {}
 
 
@@ -225,6 +226,17 @@ def _session_owner_id(session: Any) -> str | None:
     if isinstance(owner, bool) or not isinstance(owner, (str, int)):
         return None
     return str(owner) or None
+
+
+def _session_workspace_id(session: Any) -> Any:
+    """The ``workspace_id`` a session's state names, as stored, if any."""
+    if isinstance(session, dict):
+        state = session.get("session_state") or session.get("state")
+    else:
+        state = getattr(session, "session_state", None) or getattr(
+            session, "state", None
+        )
+    return state.get("workspace_id") if isinstance(state, dict) else None
 
 
 def _is_session_not_found(error: Exception) -> bool:
@@ -544,6 +556,24 @@ class AgentService:
         if owner is not None and owner != user_id:
             raise ForeignSessionError()
 
+    @staticmethod
+    def _ensure_chat_workspace(
+        chat_workspace_id: Any, workspace_id: int | None
+    ) -> None:
+        """Refuses (400) a ``workspace_id`` other than the chat's own.
+
+        Like ``restore_session``. Nothing to compare when either is unknown.
+        Session state is JSON, so the chat's id may come back as a string
+        or a float; a value that is not a number matches no workspace.
+        """
+        if workspace_id is None or chat_workspace_id is None:
+            return
+        if safe_cast(chat_workspace_id, int) != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=CHAT_IN_OTHER_WORKSPACE_DETAIL,
+            )
+
     async def _get_session_or_none(
         self, agent_name: str, app_name: str, user_id: str, session_id: str
     ) -> Any:
@@ -566,9 +596,13 @@ class AgentService:
             ) from e
 
     async def _ensure_chat_owner(
-        self, app_name: str, user_id: str, session_id: str
+        self,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        workspace_id: int | None = None,
     ) -> Any:
-        """Refuses (403) to run a chat filed under another user.
+        """Refuses to run a foreign chat (403), or in another workspace (400).
 
         ``chat()`` appends the caller's bearer token to the session before
         the agent validates the run's user, and Agent Engine addresses
@@ -578,11 +612,20 @@ class AgentService:
         indexed lookup); only an unregistered chat costs a session read. An
         unknown session passes: the run itself then fails. Returns the
         chat's registry row, or None for an unregistered chat.
+
+        ``workspace_id`` (the caller's) must then name the chat's workspace:
+        the registry row's or, for an unregistered chat, the one its session
+        state names (``_ensure_chat_workspace``). Without that, a member
+        removed from a private workspace kept running its chats by naming a
+        workspace they can still use, and a run told another workspace filed
+        its storyboards and timelines there while the chat stayed in its
+        own. ``chat()`` authorizes the chat's workspace.
         """
         row = await self.agent_session_repo.get(session_id)
         if row is not None:
             if str(row.user_id) != user_id:
                 raise ForeignSessionError()
+            self._ensure_chat_workspace(row.workspace_id, workspace_id)
             return row
         agent_name = self._get_validated_agent_name(app_name)
         session = await self._get_session_or_none(
@@ -590,6 +633,9 @@ class AgentService:
         )
         if session is not None:
             self._ensure_session_owner(session, user_id)
+            self._ensure_chat_workspace(
+                _session_workspace_id(session), workspace_id
+            )
         return None
 
     def _map_session_to_dto(
@@ -1417,7 +1463,7 @@ class AgentService:
         if workspace_id is not None and row.workspace_id != workspace_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The chat belongs to another workspace.",
+                detail=CHAT_IN_OTHER_WORKSPACE_DETAIL,
             )
         await self.workspace_auth.authorize(
             workspace_id=row.workspace_id, user=current_user
@@ -1866,19 +1912,17 @@ class AgentService:
         session_id = body.get("sessionId")
         workspace_id = body.get("workspaceId")
 
+        row = None
         if session_id:
             # First: nothing below may read the session or, in
             # ``process_stream``, write the caller's token into it.
             row = await self._ensure_chat_owner(
-                body["appName"], user_id, session_id
+                body["appName"], user_id, session_id, workspace_id
             )
-            # A restored chat has no agent memory: a run there would start a
-            # new campaign that reuses, and overwrites, its storyboard.
-            if row is not None and row.restored_at is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=RESTORED_CHAT_DETAIL,
-                )
+            # A registered chat runs in its own workspace (the payload may
+            # name no other): that one is authorized and announced below.
+            if row is not None:
+                workspace_id = row.workspace_id
 
         if workspace_id is not None:
             injections.append(f"Active Workspace ID: {workspace_id}")
@@ -1916,6 +1960,15 @@ class AgentService:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Unauthorized: Could not verify session workspace authorization.",
                 )
+
+        # A restored chat has no agent memory: a run there would start a
+        # new campaign that reuses, and overwrites, its storyboard. Checked
+        # after the owner and workspace checks, like ``restore_session``.
+        if row is not None and row.restored_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=RESTORED_CHAT_DETAIL,
+            )
 
         if "newMessage" in body:
             new_msg = body["newMessage"]

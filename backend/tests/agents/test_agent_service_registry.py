@@ -1166,7 +1166,10 @@ class TestRestoreSession:
 
         error = await self._refused(service, workspace_id=11)
 
-        assert error.status_code == 400
+        assert (error.status_code, error.detail) == (
+            400,
+            module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
+        )
         service.workspace_auth.authorize.assert_not_called()
 
     @pytest.mark.anyio
@@ -1535,3 +1538,203 @@ class TestChatOwner:
         registry.touch.assert_not_called()
         service._sessions_get.assert_not_called()
         service._append_state_delta.assert_not_called()
+
+
+class TestChatWorkspace:
+    """``chat()`` runs a chat only in its own workspace.
+
+    The registry row names it, or the session state for an unregistered
+    chat. Another ``workspaceId`` answers 400, like ``restore_session``:
+    a member removed from the chat's workspace could otherwise keep running
+    it by naming one they can still use, and the run would file its
+    storyboards and timelines in that other workspace.
+    """
+
+    @staticmethod
+    async def _chat(service, workspace_id=10):
+        """The error ``chat()`` raised for ``s1``, sent with ``workspace_id``
+        (none for None). The chat is marked busy, so no run ever starts: the
+        run guard's 409 proves that the workspace checks let it through."""
+        body = {"sessionId": "s1"}
+        if workspace_id is not None:
+            body["workspaceId"] = workspace_id
+        payload = MagicMock()
+        payload.model_dump.return_value = body
+        module._mark_run_started("s1")
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await service.chat(
+                    current_user=USER,
+                    user_id="7",
+                    payload=payload,
+                    request=_request(),
+                )
+        finally:
+            module._mark_run_finished("s1")
+        return exc.value
+
+    @pytest.mark.anyio
+    async def test_a_registered_chat_named_in_another_workspace_is_refused(
+        self, service, registry
+    ):
+        # Even one the caller may use (here the public workspace 1).
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock()
+
+        error = await self._chat(service, workspace_id=1)
+
+        assert (error.status_code, error.detail) == (
+            400,
+            module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
+        )
+        service.workspace_auth.authorize.assert_not_called()
+        service._sessions_get.assert_not_called()
+        registry.touch.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_registered_chat_in_a_refused_workspace_is_not_run(
+        self, service, registry
+    ):
+        # Its owner was removed from the chat's private workspace.
+        registry.get.return_value = _row("s1")
+        service.workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not a member"
+        )
+
+        error = await self._chat(service)
+
+        assert error.status_code == 403
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        registry.touch.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("workspace_id", [10, None])
+    async def test_a_registered_chat_runs_in_its_own_workspace(
+        self, service, registry, workspace_id
+    ):
+        # Without a payload workspace the row still names it: no session
+        # read, unlike an unregistered chat.
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock()
+
+        error = await self._chat(service, workspace_id)
+
+        assert (error.status_code, error.detail) == (
+            409,
+            module.AGENT_BUSY_DETAIL,
+        )
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        service._sessions_get.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_another_users_chat_is_refused_before_its_workspace(
+        self, service, registry
+    ):
+        registry.get.return_value = _row("s1", user_id=99)
+
+        error = await self._chat(service, workspace_id=11)
+
+        assert error.status_code == 403
+        service.workspace_auth.authorize.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_restored_chat_answers_for_its_workspace_first(
+        self, service, registry
+    ):
+        # Like restore_session: the workspace checks come before the 409s.
+        registry.get.return_value = _row("s1", restored_at=_at(1_780_000_000))
+        service.workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not a member"
+        )
+
+        error = await self._chat(service)
+
+        assert error.status_code == 403
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "session",
+        [
+            _session(),
+            # The local ADK shape names it under ``state`` too.
+            {"id": "s1", "user_id": "7", "state": {"workspace_id": 10}},
+            # An Agent Engine ``Session`` object.
+            SimpleNamespace(
+                name="agents/a/sessions/s1",
+                user_id="7",
+                session_state={"workspace_id": 10},
+            ),
+        ],
+    )
+    async def test_an_unregistered_chat_named_in_another_workspace_is_refused(
+        self, service, session
+    ):
+        service._sessions_get = AsyncMock(return_value=session)
+        service._append_state_delta = AsyncMock()
+
+        error = await self._chat(service, workspace_id=11)
+
+        assert (error.status_code, error.detail) == (
+            400,
+            module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
+        )
+        service.workspace_auth.authorize.assert_not_called()
+        service._append_state_delta.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("state_workspace_id", [10, "10", 10.0])
+    async def test_an_unregistered_chat_runs_in_the_workspace_it_names(
+        self, service, state_workspace_id
+    ):
+        # Session state is JSON: the agent may write the id back as a
+        # string or a float.
+        service._sessions_get = AsyncMock(
+            return_value=_session(workspace_id=state_workspace_id)
+        )
+
+        error = await self._chat(service)
+
+        assert (error.status_code, error.detail) == (
+            409,
+            module.AGENT_BUSY_DETAIL,
+        )
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+
+    @pytest.mark.anyio
+    async def test_an_unregistered_chat_naming_no_number_is_refused(
+        self, service
+    ):
+        service._sessions_get = AsyncMock(
+            return_value=_session(workspace_id="default")
+        )
+
+        error = await self._chat(service)
+
+        assert error.status_code == 400
+        service.workspace_auth.authorize.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_an_unregistered_chat_without_a_workspace_takes_the_payloads(
+        self, service
+    ):
+        # Nothing to compare (e.g. a chat started in the ADK dev UI): the
+        # payload's workspace is authorized, as before.
+        service._sessions_get = AsyncMock(
+            return_value=_session(workspace_id=None)
+        )
+
+        error = await self._chat(service, workspace_id=11)
+
+        assert (error.status_code, error.detail) == (
+            409,
+            module.AGENT_BUSY_DETAIL,
+        )
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=11, user=USER
+        )
