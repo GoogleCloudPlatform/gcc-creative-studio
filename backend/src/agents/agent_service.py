@@ -99,6 +99,7 @@ BUSY_CHAT_DELETE_DETAIL = (
     "Izumi is still working in this chat. Wait for it to finish before "
     "deleting the chat."
 )
+DELETE_CHAT_FAILED_DETAIL = "Could not delete the chat. Try again."
 CHAT_IN_OTHER_WORKSPACE_DETAIL = "The chat belongs to another workspace."
 _active_runs: dict[str, float] = {}
 
@@ -1249,7 +1250,12 @@ class AgentService:
             logger.error(
                 f"Unexpected error deleting session: {e}", exc_info=True
             )
-            raise HTTPException(status_code=500, detail=str(e))
+            # Never str(e): it can name internal resources (the Agent Engine
+            # session path), and the chat shows the detail to the user.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=DELETE_CHAT_FAILED_DETAIL,
+            ) from e
 
     # --- Session registry (projects) ---------------------------------------
     # ``agent_sessions`` maps every chat to a project and stores its title.

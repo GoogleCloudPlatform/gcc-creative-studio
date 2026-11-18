@@ -1459,6 +1459,9 @@ export class ChatInterfaceComponent
   }
   deleteChat() {
     if (!this.currentSessionId || this.isSessionLocked()) return;
+    // The chat the user confirms deleting: another one can be opened while
+    // the dialog is open or the request is in flight.
+    const deletedId = this.currentSessionId;
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {
         title: 'Delete Chat',
@@ -1469,19 +1472,20 @@ export class ChatInterfaceComponent
       if (result) {
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
         this.agentChatService
-          .deleteSession(this.currentSessionId!, workspaceId ?? undefined)
+          .deleteSession(deletedId, workspaceId ?? undefined)
           .subscribe({
             next: () => {
               this.sessions.update(s =>
-                s.filter(sess => sess.id !== this.currentSessionId),
+                s.filter(sess => sess.id !== deletedId),
               );
-              const deletedId = this.currentSessionId!;
               this.topics.update(topics => {
                 const rest = {...topics};
                 delete rest[deletedId];
                 return rest;
               });
               this.agentChatService.forgetLegacyTitle(deletedId);
+              // Another chat (or New Chat) was opened meanwhile: keep it.
+              if (this.currentSessionId !== deletedId) return;
               this.currentSessionId = null;
               this.chatMessages.set([]);
               if (this.sessions().length > 0) {

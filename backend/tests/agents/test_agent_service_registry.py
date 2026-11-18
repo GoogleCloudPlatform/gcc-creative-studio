@@ -20,6 +20,7 @@
 
 import asyncio
 import datetime
+import logging
 import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -634,6 +635,28 @@ class TestDeleteSession:
 
         assert exc.value.status_code == 502
         service._sessions_delete.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_an_unexpected_failure_hides_the_raw_error(
+        self, service, registry, caplog
+    ):
+        # The chat shows the detail to the user, and the raw error can name
+        # the Agent Engine session path: it only goes to the log.
+        raw = "projects/p/locations/l/reasoningEngines/1/sessions/s1: boom"
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock(return_value=_session())
+        service._sessions_delete = AsyncMock(side_effect=RuntimeError(raw))
+
+        with caplog.at_level(logging.ERROR, logger=module.logger.name):
+            with pytest.raises(HTTPException) as exc:
+                await service.delete_session(USER, "s1", "7", _request())
+
+        assert (exc.value.status_code, exc.value.detail) == (
+            500,
+            module.DELETE_CHAT_FAILED_DETAIL,
+        )
+        assert raw in caplog.text
+        registry.delete.assert_not_called()
 
     @pytest.mark.anyio
     async def test_a_refused_workspace_stops_the_delete(self, service):

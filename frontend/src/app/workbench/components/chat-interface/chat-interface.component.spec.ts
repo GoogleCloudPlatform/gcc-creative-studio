@@ -1223,6 +1223,47 @@ describe('ChatInterfaceComponent', () => {
     });
   }
 
+  it('deletes the chat that was open when Delete was clicked', () => {
+    const confirmed = new Subject<boolean>();
+    spyOn(component['dialog'], 'open').and.returnValue({
+      afterClosed: () => confirmed.asObservable(),
+    } as ReturnType<MatDialog['open']>);
+    component.currentSessionId = 's1';
+    component.sessions.set([{id: 's1'}, {id: 's2'}]);
+
+    component.deleteChat();
+    component.currentSessionId = 's2'; // Switched while the dialog was open.
+    confirmed.next(true);
+
+    expect(agentChatService.deleteSession).toHaveBeenCalledOnceWith('s1', 1);
+    expect(component.sessions().map(s => s.id)).toEqual(['s2']);
+    expect(component.currentSessionId).toBe('s2');
+  });
+
+  it('keeps the chat opened while the delete was in flight', () => {
+    const deleted = new Subject<void>();
+    agentChatService.deleteSession.and.returnValue(deleted);
+    spyOn(component['dialog'], 'open').and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    component.topics.set({s1: 'Deleted', s2: 'Kept'});
+    component.currentSessionId = 's1';
+    component.sessions.set([{id: 's1'}, {id: 's2'}, {id: 's3'}]);
+
+    component.deleteChat();
+    component.currentSessionId = 's3'; // The user opened another chat.
+    agentChatService.getSessionDetail.calls.reset();
+    deleted.next();
+    deleted.complete();
+
+    expect(component.sessions().map(s => s.id)).toEqual(['s2', 's3']);
+    expect(component.topics()).toEqual({s2: 'Kept'});
+    expect(agentChatService.forgetLegacyTitle).toHaveBeenCalledOnceWith('s1');
+    expect(component.currentSessionId).toBe('s3');
+    // The deleted chat is not reopened, and s3 is not replaced.
+    expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+  });
+
   it('should handle error when createSession fails', () => {
     spyOn(console, 'error');
     agentChatService.createSession.and.returnValue(
