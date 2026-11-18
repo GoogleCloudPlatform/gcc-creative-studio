@@ -223,9 +223,13 @@ def test_generate_media_metadata_normalizes_retired_models(
 async def test_generate_multimodal_normalizes_retired_models(
     gemini_service, input_model, expected_model
 ):
+    import inspect
+    from typing import Any
+
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.users.user_model import UserModel
 
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
@@ -236,7 +240,12 @@ async def test_generate_multimodal_normalizes_retired_models(
         return_value=MagicMock(text="Summary")
     )
 
-    res = await gemini_service.generate_multimodal(request)
+    generate_fn: Any = gemini_service.generate_multimodal
+    if "current_user" in inspect.signature(generate_fn).parameters:
+        current_user = UserModel(id=1, email="user@test.com", name="User")
+        res = await generate_fn(request, current_user=current_user)
+    else:
+        res = await generate_fn(request)
 
     assert res == "Summary"
     call_kwargs = (
