@@ -24,6 +24,7 @@ There are deliberately no ORM relationships on `Project`. Deletes rely on the fo
 - **Legacy orphans** are the timelines with neither: no storyboard, and no session that owns one. When `timelines.workspace_id` names a real workspace, an orphan goes to the **workspace owner's** Default project, whatever its `user_id`. Its creator therefore loses it: in the public workspace, the owner is the admin. This is an accepted trade-off, since the pre-projects UI never sent `user_id` for manual timelines. All other orphans keep `project_id = NULL`.
 - Chats that storyboards reference are registered, with no activity time. Some may no longer exist: before projects, "Delete chat" removed the agent session but left `storyboards.session_id` in place. See [Chat activity](#chat-activity-and-latest_session_id).
 - An environment that ever ran the old `feature/projects` branch has the revision `fa5148bc6f42_create_projects_table` and an existing `projects` table. Both must be cleaned up by hand before this migration can run.
+- The downgrade keeps every storyboard, scene, timeline and clip, and puts the four foreign keys back without `ON DELETE CASCADE`. Timelines keep the `user_id` the backfill stamped. It drops `projects` and `agent_sessions`, so upgrading again rebuilds only the Default projects: other projects, chat titles and chat activity are lost.
 
 ## Access rules
 
@@ -186,6 +187,7 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
   - `tests/agents/test_agent_session_repository.py`;
   - `tests/agents/test_agent_controller.py`: `test_restore_session_route`, `test_chat_route_refuses_a_restored_chat`, `test_chat_route_refuses_a_chat_of_another_workspace`, `test_get_session_detail_route_refuses_another_users_chat`;
   - `tests/projects/`;
+  - `tests/alembic/test_projects_migration.py`: the `b3f1c9d2e8a4` backfill, cascades, constraints and downgrade, on seeded rows in a throwaway Postgres database (skipped without one);
   - `tests/workbench/test_timeline_auth_guard.py`.
 - **Workbench:**
   - `Entering the Workbench`;

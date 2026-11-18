@@ -115,6 +115,9 @@ To format and lint the **entire repository** at once:
 docker compose run --rm pre-commit run --all-files
 ```
 
+> [!NOTE]
+> `--all-files` only covers git-tracked files, so a new, untracked file is never checked: pass it explicitly with `--files <path>`. Pre-commit cannot diff an untracked file either, so black reports `Passed` even when it rewrote it. CI's `uv run black --check src tests` is the real verdict.
+
 ### 3. Linters Used
 
 - **Backend**: `black` (formatting), `pylint` (linting).
