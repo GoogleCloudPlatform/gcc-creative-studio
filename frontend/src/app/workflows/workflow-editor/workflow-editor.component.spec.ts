@@ -1594,7 +1594,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
             },
           },
           outputs: {generated_text: {type: 'text'}},
-          settings: {model: 'gemini-2.5-flash'},
+          settings: {model: 'gemini-4-hydrogen'},
         },
         {
           stepId: 'inserted_step_2',

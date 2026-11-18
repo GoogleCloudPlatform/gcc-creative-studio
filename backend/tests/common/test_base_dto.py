@@ -13,10 +13,46 @@
 # limitations under the License.
 """Tests for the shared base DTO enums."""
 
-from src.common.base_dto import GenerationModelEnum
+from enum import Enum
+
+import pytest
+
+from src.common.base_dto import (
+    GenerationModelEnum,
+    normalize_retired_text_model,
+)
 
 
 def test_generation_model_enum_resolves_argon_model_id():
     """The Argon model ID string maps to its enum member."""
     model = GenerationModelEnum("gemini-4-argon")
     assert model is GenerationModelEnum.GEMINI_4_ARGON
+
+
+def test_generation_model_enum_resolves_hydrogen_model_id():
+    """The Hydrogen model ID string maps to its enum member."""
+    model = GenerationModelEnum("gemini-4-hydrogen")
+    assert model is GenerationModelEnum.GEMINI_4_HYDROGEN
+
+
+@pytest.mark.parametrize(
+    ("raw_model", "expected"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        (GenerationModelEnum.GEMINI_2_5_PRO, "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+        (GenerationModelEnum.GEMINI_2_5_FLASH, "gemini-4-hydrogen"),
+        ("gemini-4-argon", "gemini-4-argon"),
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-3.8-flash", "gemini-3.8-flash"),
+        (GenerationModelEnum.GEMINI_3_5_FLASH, "gemini-3.5-flash"),
+        ("gemini-2.5-flash-image", "gemini-2.5-flash-image"),
+        ("gemini-2.5-flash-tts", "gemini-2.5-flash-tts"),
+    ],
+)
+def test_normalize_retired_text_model_returns_plain_str(raw_model, expected):
+    """Retired Gemini 2.5 text IDs map to Gemini 4 and all outputs are plain strs."""
+    normalized = normalize_retired_text_model(raw_model)
+    assert normalized == expected
+    assert isinstance(normalized, str)
+    assert not isinstance(normalized, Enum)

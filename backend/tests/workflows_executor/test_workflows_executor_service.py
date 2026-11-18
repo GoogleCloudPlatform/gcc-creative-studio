@@ -1710,6 +1710,69 @@ async def test_text_with_argon_model_sends_argon_model(service):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("input_model", "expected_model"),
+    [
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+async def test_text_normalizes_retired_and_hydrogen_models(
+    service, input_model, expected_model
+):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("Haiku line")]
+
+    request = GenerateTextRequest.model_validate(
+        {
+            "inputs": {"prompt": "Write a haiku"},
+            "config": {"model": input_model, "temperature": 0.4},
+        }
+    )
+    result = await service.generate_text(request)
+
+    assert result == {"generated_text": "Haiku line"}
+    stream.assert_called_once()
+    assert stream.call_args.kwargs["model"] == expected_model
+
+
+@pytest.mark.anyio
+async def test_text_vertex_404_surfaces_as_step_error(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = genai_errors.ClientError(
+        404,
+        {
+            "error": {
+                "code": 404,
+                "status": "NOT_FOUND",
+                "message": "Publisher Model was not found.",
+            }
+        },
+    )
+    guard = MagicMock()
+    guard.state_key = "text_1"
+    guard.run_id = "run-1"
+    guard.begin = AsyncMock(return_value=None)
+    guard.record_failure = AsyncMock()
+
+    request = GenerateTextRequest.model_validate(
+        {
+            "run_id": "run-1",
+            "step_id": "text_1",
+            "inputs": {"prompt": "Write a haiku"},
+            "config": {"model": "gemini-4-argon", "temperature": 0.4},
+        }
+    )
+    with pytest.raises(StepError) as exc:
+        await service.generate_text(request, guard=guard)
+
+    assert exc.value.status_code == 404
+    assert exc.value.error_category is ErrorCategory.MISSING_RESOURCE
+    guard.record_failure.assert_awaited_once_with(exc.value)
+
+
+@pytest.mark.anyio
 async def test_text_with_google_search_keeps_media_parts(service):
     stream = service.mock_genai_client.models.generate_content_stream
     stream.return_value = [_text_chunk("A rainy street in Paris.")]

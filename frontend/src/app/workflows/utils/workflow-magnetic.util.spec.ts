@@ -441,6 +441,12 @@ describe('WorkflowMagneticUtil', () => {
       expect(getMaxAllowedInputs('input_images', 'gemini-4-argon')).toBe(10);
     });
 
+    it('should return 10 for input_images when model is gemini-4-hydrogen or retired Gemini 2.5 text', () => {
+      expect(getMaxAllowedInputs('input_images', 'gemini-4-hydrogen')).toBe(10);
+      expect(getMaxAllowedInputs('input_images', 'gemini-2.5-pro')).toBe(10);
+      expect(getMaxAllowedInputs('input_images', 'gemini-2.5-flash')).toBe(10);
+    });
+
     it('should fallback to 14 for input_images when model is unknown or null', () => {
       expect(getMaxAllowedInputs('input_images', null)).toBe(14);
       expect(getMaxAllowedInputs('input_images', undefined)).toBe(14);
@@ -459,7 +465,7 @@ describe('WorkflowMagneticUtil', () => {
         1,
       );
       expect(getMaxAllowedInputs('end_frame', 'veo-3.1-generate-001')).toBe(1);
-      expect(getMaxAllowedInputs('input_videos', 'gemini-2.5-pro')).toBe(1);
+      expect(getMaxAllowedInputs('input_videos', 'gemini-4-argon')).toBe(1);
     });
   });
 
@@ -511,10 +517,10 @@ describe('WorkflowMagneticUtil', () => {
 
     it('should return true for single-value inputs with 1 item', () => {
       expect(
-        isInputPortFull({step: 's1', output: 'o1'}, 'prompt', 'gemini-2.5-pro'),
+        isInputPortFull({step: 's1', output: 'o1'}, 'prompt', 'gemini-4-argon'),
       ).toBeTrue();
-      expect(isInputPortFull('hello', 'prompt', 'gemini-2.5-pro')).toBeTrue();
-      expect(isInputPortFull(null, 'prompt', 'gemini-2.5-pro')).toBeFalse();
+      expect(isInputPortFull('hello', 'prompt', 'gemini-4-argon')).toBeTrue();
+      expect(isInputPortFull(null, 'prompt', 'gemini-4-argon')).toBeFalse();
     });
   });
 

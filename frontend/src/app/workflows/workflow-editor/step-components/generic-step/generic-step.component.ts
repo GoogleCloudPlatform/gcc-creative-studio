@@ -50,6 +50,7 @@ import {
   ASPECT_RATIO_SQUARE,
   MODEL_CONFIGS,
   getSupportedModelDurations,
+  normalizeTextModelId,
 } from '../../../../common/config/model-config';
 import {
   InputUnlinkState,
@@ -682,6 +683,12 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       // Subscribe to model changes
       if (settings.contains('model')) {
         const modelControl = settings.get('model');
+        if (this.localConfig.type === NodeTypes.GENERATE_TEXT) {
+          const normalizedModel = normalizeTextModelId(modelControl?.value);
+          if (normalizedModel && normalizedModel !== modelControl?.value) {
+            modelControl?.setValue(normalizedModel, {emitEvent: false});
+          }
+        }
         if (this.settingsSubscription) {
           this.settingsSubscription.unsubscribe();
         }
