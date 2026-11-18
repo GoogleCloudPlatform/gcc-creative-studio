@@ -814,6 +814,57 @@ def test_generate_text_google_search_rejects_non_boolean_values(raw_value):
         )
 
 
+@pytest.mark.parametrize(
+    ("raw_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+        ("gemini-4-argon", "gemini-4-argon"),
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-3.8-flash", "gemini-3.8-flash"),
+    ],
+)
+def test_generate_text_settings_normalizes_retired_gemini_2_5_models(
+    raw_model, expected_model
+):
+    settings = GenerateTextSettings(model=raw_model, temperature=0.7)
+    assert settings.model == expected_model
+
+
+@pytest.mark.parametrize(
+    ("raw_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+def test_translate_legacy_step_normalizes_text_models_without_mutating(
+    raw_model, expected_model
+):
+    from src.workflows.schema.workflow_model import (
+        WorkflowBase,
+        translate_legacy_step,
+    )
+
+    raw_settings = {"model": raw_model, "temperature": 0.7}
+    raw_step = _generate_text_step_dict(raw_settings)
+
+    translated = translate_legacy_step(raw_step)
+
+    assert translated["settings"]["model"] == expected_model
+    assert raw_settings["model"] == raw_model
+    assert raw_step["settings"]["model"] == raw_model
+
+    workflow = WorkflowBase.model_validate(
+        {
+            "name": "Legacy Gemini 2.5 Text Workflow",
+            "steps": [raw_step],
+        }
+    )
+    assert workflow.steps[0].settings.model == expected_model
+    assert raw_settings["model"] == raw_model
+
+
 # --- Workflow runs: statuses and queue / checkpoint columns -----
 
 RUN_STARTED_AT = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC)

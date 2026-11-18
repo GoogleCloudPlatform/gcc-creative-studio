@@ -13,6 +13,8 @@
 # limitations under the License.
 """Tests for the gallery search DTO."""
 
+import pytest
+
 from src.common.base_dto import GenerationModelEnum
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 
@@ -21,3 +23,24 @@ def test_gallery_search_dto_accepts_argon_model_filter():
     """The gallery filter accepts the Argon model ID."""
     gallery_filter = GallerySearchDto(model="gemini-4-argon")
     assert gallery_filter.model is GenerationModelEnum.GEMINI_4_ARGON
+
+
+def test_gallery_search_dto_accepts_hydrogen_model_filter():
+    """The gallery filter accepts the Hydrogen model ID."""
+    gallery_filter = GallerySearchDto(model="gemini-4-hydrogen")
+    assert gallery_filter.model is GenerationModelEnum.GEMINI_4_HYDROGEN
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_enum"),
+    [
+        ("gemini-2.5-pro", GenerationModelEnum.GEMINI_2_5_PRO),
+        ("gemini-2.5-flash", GenerationModelEnum.GEMINI_2_5_FLASH),
+    ],
+)
+def test_gallery_search_dto_accepts_historical_gemini_2_5_filters(
+    model_id, expected_enum
+):
+    """Historical gallery records with Gemini 2.5 IDs still deserialize."""
+    gallery_filter = GallerySearchDto(model=model_id)
+    assert gallery_filter.model is expected_enum

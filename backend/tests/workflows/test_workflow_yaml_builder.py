@@ -68,7 +68,7 @@ def _text_step(
         step_id=step_id,
         inputs=GenerateTextInputs(**inputs_data),
         settings=GenerateTextSettings(
-            model="gemini-2.5-flash",
+            model="gemini-4-hydrogen",
             temperature=0.7,
             google_search=google_search,
         ),
@@ -449,7 +449,7 @@ class TestBuildWorkflowYaml:
         )
         body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
         assert body_config == {
-            "model": "gemini-2.5-flash",
+            "model": "gemini-4-hydrogen",
             "temperature": 0.7,
             "google_search": google_search,
         }

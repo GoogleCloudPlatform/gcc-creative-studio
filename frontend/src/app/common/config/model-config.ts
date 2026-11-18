@@ -178,34 +178,6 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
 
   // --- Text Models ---
   {
-    value: 'gemini-2.5-pro',
-    viewValue: 'Gemini 2.5 Pro',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
-    value: 'gemini-2.5-flash',
-    viewValue: 'Gemini 2.5 Flash',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
     value: 'gemini-3-flash-preview',
     viewValue: 'Gemini 3 Flash Preview',
     type: 'TEXT',
@@ -320,6 +292,20 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   {
     value: 'gemini-4-argon',
     viewValue: 'Gemini 4 Argon',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-4-hydrogen',
+    viewValue: 'Gemini 4 Hydrogen',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -634,4 +620,18 @@ export function getSupportedModelDurations(
   }
 
   return [...baseDurations];
+}
+
+export const RETIRED_TEXT_MODEL_MAP: Record<string, string> = {
+  'gemini-2.5-pro': 'gemini-4-argon',
+  'gemini-2.5-flash': 'gemini-4-hydrogen',
+};
+
+export function normalizeTextModelId(
+  modelValue?: string | null,
+): string | null | undefined {
+  if (!modelValue) {
+    return modelValue;
+  }
+  return RETIRED_TEXT_MODEL_MAP[modelValue] ?? modelValue;
 }
