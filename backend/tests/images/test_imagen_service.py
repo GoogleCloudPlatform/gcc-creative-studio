@@ -1322,6 +1322,93 @@ def test_process_upload_upscale_in_background_sync(
 @patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
 @patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
 @patch("src.database.WorkerDatabase")
+def test_process_upload_upscale_in_background_metadata_uses_configured_model(
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+    from src.config.config_service import config_service
+
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+
+    with (
+        patch(
+            "src.images.imagen_service.MediaRepository",
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.SourceAssetRepository",
+        ) as mock_source_asset_repo_class,
+        patch(
+            "src.images.imagen_service.ImagenService",
+        ) as mock_imagen_service_class,
+        patch(
+            "src.images.imagen_service.GcsService",
+        ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.IamSignerCredentials",
+        ),
+        patch(
+            "src.images.imagen_service.GeminiService",
+        ) as mock_gemini_service_class,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_sa_repo = AsyncMock()
+        mock_source_asset_repo_class.return_value = mock_sa_repo
+
+        mock_imagen_service = AsyncMock()
+        mock_imagen_service_class.return_value = mock_imagen_service
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/upscaled.png"
+        mock_imagen_service.upscale_image.return_value = mock_result
+
+        mock_gcs = AsyncMock()
+        mock_gcs_class.return_value = mock_gcs
+
+        existing_asset = MagicMock()
+        existing_asset.id = 301
+        existing_asset.gcs_uri = "gs://bucket/original.png"
+        existing_asset.titles = None
+        existing_asset.descriptions = None
+        existing_asset.original_filename = None
+        mock_sa_repo.get_by_id.return_value = existing_asset
+
+        mock_gemini_service = MagicMock()
+        mock_gemini_service.generate_media_metadata.return_value = {
+            "titles": ["Upscaled Title"],
+            "descriptions": ["Upscaled Description"],
+        }
+        mock_gemini_service_class.return_value = mock_gemini_service
+
+        _process_upload_upscale_in_background(
+            media_item_id=334,
+            workspace_id=1,
+            user=sample_user,
+            gcs_uri="gs://bucket/original.png",
+            file_bytes=None,
+            filename=None,
+            upscale_factor="x4",
+            aspect_ratio=None,
+            source_asset_id=301,
+        )
+
+        mock_gemini_service.generate_media_metadata.assert_called_once()
+        metadata_kwargs = (
+            mock_gemini_service.generate_media_metadata.call_args.kwargs
+        )
+        assert metadata_kwargs["model_name"] == config_service.GEMINI_MODEL_ID
+        assert metadata_kwargs["model_name"] == "gemini-4-argon"
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
 def test_process_upload_upscale_in_background_sync_new_file(
     mock_worker_db_class,
     mock_thumb_mu,
@@ -2589,6 +2676,175 @@ def test_process_image_in_background_sync_video_ref_media_item_youtube_resolved(
                 reference_parts[0].file_data.file_uri
                 == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             )
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.images.imagen_service.WorkerDatabase")
+@patch("src.multimodal.gemini_service.GeminiModelSetup.init")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_applies_brand_guidelines_without_enhance_prompt(
+    mock_genai_init,
+    mock_gemini_model_init,
+    mock_worker_db_class,
+    mock_thumb_is,
+    imagen_service,
+    mock_media_repo,
+    sample_user,
+):
+    import asyncio
+    from src.workspaces.generation_workspace import GenerationContext
+
+    mock_thumb_is.return_value = "gs://bucket/thumb_0.png"
+    job_dto = CreateImagenDto(
+        workspace_id=20,
+        prompt="A modern desk lamp",
+        use_brand_guidelines=True,
+        enhance_prompt=False,
+        metadata_generation_model=None,
+    )
+    mock_media_repo.create.side_effect = _assign_placeholder_id
+    mock_executor = MagicMock()
+    ctx_mock = AsyncMock(return_value=GenerationContext(10, 20, None))
+    lin_mock = AsyncMock(return_value=RevisionLineage(None, None, 1, None))
+    with patch.multiple(
+        "src.images.imagen_service",
+        ensure_can_reference_inputs=AsyncMock(),
+        resolve_generation_context=ctx_mock,
+        resolve_revision_lineage=lin_mock,
+    ):
+        asyncio.run(
+            imagen_service.start_image_generation_job(
+                request_dto=job_dto, user=sample_user, executor=mock_executor
+            )
+        )
+    placeholder = mock_media_repo.create.call_args.args[0]
+    assert placeholder.original_prompt == "A modern desk lamp"
+    assert placeholder.prompt is None
+    dto = mock_executor.submit.call_args.kwargs["request_dto"]
+
+    mock_db_context = AsyncMock()
+    mock_worker_db_class.return_value.__aenter__.return_value = MagicMock(
+        return_value=mock_db_context
+    )
+    mock_genai_init.return_value = MagicMock()
+    mock_gemini_model_init.return_value = MagicMock()
+
+    mock_guideline = MagicMock(
+        visual_style_summary="Warm cinematic editorial lighting",
+        tone_of_voice_summary="Confident minimalist",
+    )
+    mock_brand_repo = AsyncMock()
+    mock_brand_repo.query.return_value = MagicMock(data=[mock_guideline])
+
+    with (
+        patch("src.images.imagen_service.MediaRepository") as mock_media_cls,
+        patch("src.images.imagen_service.SourceAssetRepository"),
+        patch("src.images.imagen_service.UserRepository"),
+        patch(
+            "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository",
+            return_value=mock_brand_repo,
+        ),
+        patch("src.images.imagen_service.GcsService") as mock_gcs_cls,
+        patch("src.images.imagen_service.IamSignerCredentials"),
+        patch(
+            "src.images.imagen_service.gemini_generate_image"
+        ) as mock_gemini_gen,
+        patch(
+            "src.multimodal.gemini_service.GeminiService.generate_structured_prompt"
+        ) as mock_structured,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_cls.return_value = mock_media_repo
+
+        mock_gcs = MagicMock()
+        mock_gcs.bucket_name = "test-bucket"
+        mock_gcs_cls.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_0.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        _process_image_in_background(
+            media_item_id=126,
+            request_dto=dto,
+            current_user=sample_user,
+        )
+
+    assert mock_worker_db_class.called
+    mock_structured.assert_not_called()
+    mock_brand_repo.query.assert_awaited_once()
+    assert mock_brand_repo.query.call_args.kwargs["workspace_id"] == 20
+    assert mock_brand_repo.query.call_args.args[0].workspace_id == 20
+
+    assert "original_prompt" not in mock_media_repo.update.call_args.args[1]
+    gen_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+    saved_prompt = mock_media_repo.update.call_args.args[1]["prompt"]
+    for actual in (gen_prompt, saved_prompt):
+        assert actual.startswith(
+            "Follow these brand guidelines when generating:"
+        )
+        assert "Warm cinematic editorial lighting" in actual
+        assert "Confident minimalist" in actual
+        assert actual.endswith("\n---\n\nA modern desk lamp")
+
+
+def test_process_image_in_background_skips_brand_guidelines_for_gemini_i2i(
+    sample_user,
+):
+    dto = CreateImagenDto(
+        workspace_id=10,
+        prompt="Edit shirt",
+        use_brand_guidelines=True,
+        enhance_prompt=False,
+        metadata_generation_model=None,
+        source_asset_ids=[1],
+    )
+    db_cls = MagicMock()
+    db_cls.return_value.__aenter__.return_value = MagicMock(
+        return_value=AsyncMock()
+    )
+    brand_repo, media_repo = AsyncMock(), AsyncMock()
+    sa_item = MagicMock(
+        asset_type=None,
+        external_url=None,
+        gcs_uri="gs://b/s.png",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+    res = MagicMock()
+    res.image.gcs_uri = "gs://b/o.png"
+    res.image.mime_type = MimeTypeEnum.IMAGE_PNG
+    gen = MagicMock(return_value=(res, None))
+    bg_path = "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository"
+    with (
+        patch.multiple(
+            "src.images.imagen_service",
+            WorkerDatabase=db_cls,
+            GenAIModelSetup=MagicMock(),
+            MediaRepository=MagicMock(return_value=media_repo),
+            SourceAssetRepository=MagicMock(
+                return_value=AsyncMock(
+                    get_by_id=AsyncMock(return_value=sa_item)
+                )
+            ),
+            UserRepository=MagicMock(),
+            GcsService=MagicMock(return_value=MagicMock(bucket_name="b")),
+            IamSignerCredentials=MagicMock(),
+            generate_image_thumbnail_from_gcs=MagicMock(
+                return_value="gs://b/t.png"
+            ),
+            gemini_generate_image=gen,
+        ),
+        patch("src.multimodal.gemini_service.GeminiModelSetup.init"),
+        patch(bg_path, return_value=brand_repo),
+    ):
+        _process_image_in_background(
+            media_item_id=127, request_dto=dto, current_user=sample_user
+        )
+    assert db_cls.called
+    brand_repo.query.assert_not_called()
+    assert gen.call_args.kwargs["prompt"] == "Edit shirt"
+    assert media_repo.update.call_args.args[1]["prompt"] == "Edit shirt"
 
 
 class TestImagenServiceRevisionLineage:

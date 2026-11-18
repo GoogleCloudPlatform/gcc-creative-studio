@@ -17,6 +17,7 @@
 import {
   MODEL_CONFIGS,
   isGeminiOmniModel,
+  normalizeTextModelId,
 } from '../../common/config/model-config';
 import {ReferenceImage} from '../../common/models/search.model';
 import {StepInputValue, StepOutputReference} from '../workflow.models';
@@ -244,13 +245,14 @@ export function getMaxAllowedInputs(
 ): number {
   if (inputName === 'input_images' || inputName === 'reference_images') {
     if (modelValue) {
-      const modelConfig = MODEL_CONFIGS.find(m => m.value === modelValue);
+      const normalizedModel = normalizeTextModelId(modelValue) ?? modelValue;
+      const modelConfig = MODEL_CONFIGS.find(m => m.value === normalizedModel);
       if (modelConfig?.capabilities?.maxReferenceImages !== undefined) {
         return modelConfig.capabilities.maxReferenceImages;
       }
       if (
-        isGeminiOmniModel(modelValue) ||
-        modelValue.toLowerCase().startsWith('veo-')
+        isGeminiOmniModel(normalizedModel) ||
+        normalizedModel.toLowerCase().startsWith('veo-')
       ) {
         return 3;
       }
