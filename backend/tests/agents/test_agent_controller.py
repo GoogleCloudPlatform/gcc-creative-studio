@@ -648,6 +648,33 @@ async def test_get_session_detail_storyboard_id_out_of_range(
 
 
 @pytest.mark.anyio
+async def test_get_session_detail_route_refuses_another_users_chat(
+    mock_remote_agent, mock_project_service, client
+):
+    # Registered to another user: refused before the agent backend is read,
+    # so no session is ever re-created and registered for the caller.
+    row = _seen_row("s1")
+    row.user_id = 2
+    repo = _registry_stub()
+    repo.get.return_value = row
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+    mock_project_service.list_storyboards.return_value = []
+    sessions = mock_remote_agent.vclient.agent_engines.sessions
+
+    response = client.get(
+        "/api/agent/sessions/detail?workspace_id=1&session_id=s1"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "You do not have permission to access this chat."
+    )
+    sessions.get.assert_not_called()
+    sessions.create.assert_not_called()
+    repo.register.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_agent_service_sync_fallbacks(mock_remote_agent):
     from src.agents.agent_service import AgentService
 

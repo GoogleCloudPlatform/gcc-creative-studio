@@ -154,6 +154,7 @@ async def test_get_session_detail_recreate_session():
             storyboard_repo=mock_storyboard_repo,
             workspace_auth=mock_workspace_auth,
             project_service=mock_project_service,
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -169,10 +170,11 @@ async def test_get_session_detail_recreate_session():
             storyboard_id=123,
         )
 
-        # Assert storyboard session_id was updated to the newly recreated session ID
-        mock_storyboard_repo.update.assert_called_once_with(
-            123, {"session_id": "new_session_id"}
+        # Assert the chat's storyboards moved to the newly recreated session ID
+        mock_storyboard_repo.reassign_session.assert_awaited_once_with(
+            "session_old", "new_session_id", 999
         )
+        mock_storyboard_repo.update.assert_not_called()
         assert res.session.id == "new_session_id"
 
 

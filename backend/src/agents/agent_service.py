@@ -947,57 +947,72 @@ class AgentService:
 
         session_dto = None
         if resolved_session_id is not None:
+            # Decided by the registry before the agent backend is read: a
+            # chat of another user, or of another workspace, must never get
+            # a session re-created and registered for the caller.
+            chat_app = appName
+            row = await self.agent_session_repo.get(resolved_session_id)
+            if row is not None:
+                if row.user_id != current_user.id:
+                    raise ForeignSessionError()
+                self._ensure_chat_workspace(row.workspace_id, workspace_id)
+                # The agent the chat was created with, like restore_session.
+                chat_app = row.app_name or appName
             try:
-                agent_name = self._get_validated_agent_name(appName)
-                try:
-                    session = await self._sessions_get(
-                        agent_name, appName, user_id, resolved_session_id
+                agent_name = self._get_validated_agent_name(chat_app)
+                # Only a session the agent backend reports missing is
+                # re-created: that moves the chat and can mark it restored,
+                # so a failed read (raised here) must leave it alone.
+                session = await self._get_session_or_none(
+                    agent_name, chat_app, user_id, resolved_session_id
+                )
+                if session is None:
+                    logger.warning(
+                        "Session %s not found. Re-creating dynamic session.",
+                        resolved_session_id,
                     )
-
-                    if session is None:
-                        raise ValueError("Session not found")
-                except Exception as inner_e:
-                    if "Session not found" in str(inner_e) or "404" in str(
-                        inner_e
-                    ):
-                        logger.warning(
-                            f"Session {resolved_session_id} not found. Re-creating dynamic session."
+                    auth_header = request.headers.get("Authorization", "")
+                    agent_config = self._get_agent_config(chat_app)
+                    auth_key = agent_config.get("token_key", "user_auth_token")
+                    state_data = {
+                        "workspace_id": workspace_id,
+                        auth_key: auth_header,
+                    }
+                    op = await self._sessions_create(
+                        agent_name, chat_app, user_id, state_data
+                    )
+                    session = getattr(op, "response", None) or op
+                    new_session_id = (
+                        getattr(session, "id", None)
+                        if not isinstance(session, dict)
+                        else session.get("id")
+                    )
+                    if new_session_id:
+                        # Every storyboard of the chat follows it, as in
+                        # restore_session (owner-scoped).
+                        await self.storyboard_repo.reassign_session(
+                            resolved_session_id,
+                            new_session_id,
+                            current_user.id,
                         )
-                        auth_header = request.headers.get("Authorization", "")
-                        agent_config = self._get_agent_config(appName)
-                        auth_key = agent_config.get(
-                            "token_key", "user_auth_token"
-                        )
-                        state_data = {
-                            "workspace_id": workspace_id,
-                            auth_key: auth_header,
-                        }
-                        op = await self._sessions_create(
-                            agent_name, appName, user_id, state_data
-                        )
-                        session = getattr(op, "response", None) or op
-                        new_session_id = (
-                            getattr(session, "id", None)
-                            if not isinstance(session, dict)
-                            else session.get("id")
-                        )
-                        if storyboard and new_session_id:
-                            await self.storyboard_repo.update(
-                                storyboard.id, {"session_id": new_session_id}
-                            )
+                        if storyboard:
+                            # The bulk move missed it when it had no chat
+                            # yet: it is linked to this one, as before.
+                            if storyboard.session_id != resolved_session_id:
+                                await self.storyboard_repo.update(
+                                    storyboard.id,
+                                    {"session_id": new_session_id},
+                                )
                             storyboard.session_id = new_session_id
-                        if new_session_id:
-                            await self._register_recreated_session(
-                                current_user,
-                                workspace_id,
-                                resolved_session_id,
-                                new_session_id,
-                                storyboard,
-                                appName,
-                            )
-                            resolved_session_id = new_session_id
-                    else:
-                        raise inner_e
+                        await self._register_recreated_session(
+                            current_user,
+                            workspace_id,
+                            resolved_session_id,
+                            new_session_id,
+                            storyboard,
+                            chat_app,
+                        )
+                        resolved_session_id = new_session_id
 
                 # Owner-only chats: Agent Engine reads sessions by id alone.
                 self._ensure_session_owner(session, user_id)
@@ -1006,7 +1021,7 @@ class AgentService:
                 try:
                     events_list = await self._events_list(
                         agent_name,
-                        appName,
+                        chat_app,
                         user_id,
                         resolved_session_id,
                         session,
@@ -1017,7 +1032,7 @@ class AgentService:
                     )
 
                 session_dto = self._map_session_to_dto(
-                    session, appName, user_id, events=events_list
+                    session, chat_app, user_id, events=events_list
                 )
                 await self._attach_session_registry(current_user, session_dto)
             except Exception as e:

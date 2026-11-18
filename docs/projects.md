@@ -79,6 +79,9 @@ An expired chat's conversation is gone, but its storyboard and timeline are Post
 - The response DTO is built from a fresh `agent_session_repo.get`: the bulk `UPDATE` expires the row's `func.now()` columns, and reading an expired attribute in async SQLAlchemy raises `MissingGreenlet`.
 - **A restored chat is never run by Izumi.** `restored_at` marks it and `SessionResponseDto.restored` reports it. `chat()` answers 409 (`RESTORED_CHAT_DETAIL`) right after the owner and workspace checks, before `touch` or any session read. The new session has no memory of the campaign, so a run would start a new one, and the agent's storyboard tools reuse the chat's records: `create_storyboard(reuse_session_record=True)` finds the chat's storyboard by session (`find_latest_by_session`), `update_storyboard_data` clears its scenes, and `create_timeline(reuse_for_storyboard=…)` replaces its timeline. The user edits the storyboard and timeline by hand, and starts a new chat for new Izumi work. **Do not lift the lock without solving that reuse first.**
 - The session-detail path re-creates a missing session too (a `?storyboardId=` link, or a chat that expired after it was listed). `_register_recreated_session` marks that chat restored only when a storyboard came back with it (`restored=storyboard is not None`): an empty expired chat keeps working with Izumi as before. `replace_session_id(restored=False)` never clears an existing mark.
+  - The registry decides first, before the agent is read: 403 (`ForeignSessionError`) for another user's chat, 400 (`CHAT_IN_OTHER_WORKSPACE_DETAIL`) for a chat of another workspace. The read, and any re-created session, use the chat's own `app_name`. Without this, another user's expired chat got a new session registered in the caller's default project. So did any of their chats in local mode, where the user-scoped ADK read finds nothing.
+  - Only a session the agent reports missing is re-created, through `_get_session_or_none` (`_is_session_not_found`, never a bare "404"). Re-creating moves the chat's registry row and can mark it restored, so an outage message that merely contained "404" (a `:4040` port, an id) locked a live chat for good. A failed read leaves the chat alone: the detail comes back without its session, as before.
+  - `StoryboardRepository.reassign_session` moves all of the caller's storyboards of the chat to the new session, like `restore_session`, not only the one the detail found. A storyboard shown without a chat of its own (a `storyboardId` link opened with a `sessionId`) cannot match that move, so it is linked explicitly, as before.
 
 ### Chat activity and `latest_session_id`
 
@@ -174,9 +177,9 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
 ## Specs that pin these rules
 
 - **Backend:**
-  - `tests/agents/test_agent_service_registry.py`: adoption, activity seeding, expired chats (`TestExpiredSessions`), restores (`TestRestoreSession`, `test_a_restored_chat_is_never_run`), owner-only sessions, chat workspaces (`TestChatWorkspace`), deletes;
+  - `tests/agents/test_agent_service_registry.py`: adoption, activity seeding, expired chats (`TestExpiredSessions`), restores (`TestRestoreSession`, `test_a_restored_chat_is_never_run`), owner-only sessions, chat workspaces (`TestChatWorkspace`), session-detail recovery (`TestSessionDetailRecovery`), deletes;
   - `tests/agents/test_agent_session_repository.py`;
-  - `tests/agents/test_agent_controller.py`: `test_restore_session_route`, `test_chat_route_refuses_a_restored_chat`, `test_chat_route_refuses_a_chat_of_another_workspace`;
+  - `tests/agents/test_agent_controller.py`: `test_restore_session_route`, `test_chat_route_refuses_a_restored_chat`, `test_chat_route_refuses_a_chat_of_another_workspace`, `test_get_session_detail_route_refuses_another_users_chat`;
   - `tests/projects/`;
   - `tests/workbench/test_timeline_auth_guard.py`.
 - **Workbench:**

@@ -34,7 +34,7 @@ from src.agents.agent_dtos import SessionResponseDto
 from src.agents.agent_service import AgentService
 from src.agents.agent_session_repository import AgentSessionRepository
 from src.agents.local_adk_client import LocalAgentError
-from src.projects.dto.project_dto import ProjectResponse
+from src.projects.dto.project_dto import ProjectResponse, StoryboardResponse
 from src.projects.project_service import ProjectService
 from src.users.user_model import UserModel
 
@@ -965,6 +965,196 @@ class TestSessionDetailRegistry:
         )
 
         registry.register.assert_not_called()
+
+
+class TestSessionDetailRecovery:
+    """``get_session_detail`` re-creates only the caller's missing chat.
+
+    The registry decides before the agent backend is read: another user's
+    chat answers 403 and a chat of another workspace 400, so neither ever
+    gets a session created and registered for the caller. Only a session
+    the backend reports missing (``_get_session_or_none``) is re-created: a
+    failed read whose message merely contained "404" (a port, an id) moved
+    a live chat onto a blank session and marked it restored, for good.
+    """
+
+    @staticmethod
+    def _chat(service, registry, row=None, read_error=None):
+        """``s1``: the caller's registered chat in workspace 10, owning
+        storyboard 14, and missing from the agent backend unless the read
+        raises ``read_error``. Its re-created session is ``s-new``, whose
+        registry row is the moved, restored one."""
+        rows = {
+            "s1": row or _row("s1"),
+            "s-new": _row("s-new", restored_at=_at(1_780_100_000)),
+        }
+        registry.get.side_effect = rows.get
+        registry.replace_session_id.return_value = True
+        service._sessions_get = AsyncMock(
+            return_value=None, side_effect=read_error
+        )
+        service._sessions_create = AsyncMock(
+            return_value={
+                "id": "s-new",
+                "user_id": "7",
+                "session_state": {"workspace_id": 10},
+            }
+        )
+        service._events_list = AsyncMock(return_value=[])
+        storyboard = StoryboardResponse(
+            id=14,
+            user_id=USER.id,
+            workspace_id=10,
+            project_id=5,
+            session_id="s1",
+        )
+        service.project_service.list_storyboards.return_value = [storyboard]
+        service.project_service.get_storyboard.return_value = storyboard
+
+    @staticmethod
+    def _assert_nothing_recreated(service, registry):
+        service._sessions_create.assert_not_called()
+        service.storyboard_repo.reassign_session.assert_not_called()
+        service.storyboard_repo.update.assert_not_called()
+        registry.replace_session_id.assert_not_called()
+        registry.register.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "read_error",
+        [
+            LocalAgentError("Local Izumi agent is not reachable at :4040"),
+            RuntimeError("get session failed (500): asset_4045"),
+            # A status code wins over its message.
+            genai_errors.ServerError(
+                503, {"error": {"code": 503, "message": "sessions/s-4040"}}
+            ),
+        ],
+    )
+    async def test_a_failed_read_leaves_the_chat_alone(
+        self, service, registry, read_error
+    ):
+        self._chat(service, registry, read_error=read_error)
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        # Best effort, as before: the storyboard comes back on its own.
+        assert res.session is None
+        assert res.storyboard.session_id == "s1"
+        self._assert_nothing_recreated(service, registry)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "read_error",
+        # The local ADK client returns None; Agent Engine raises a 404.
+        [None, google_exceptions.NotFound("Session gone")],
+    )
+    async def test_a_missing_session_is_recreated_with_all_its_storyboards(
+        self, service, registry, read_error
+    ):
+        self._chat(service, registry, read_error=read_error)
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        agent, app, user, state = service._sessions_create.await_args.args
+        assert (agent, app, user) == ("agent", "ads_x", "7")
+        assert state["workspace_id"] == 10
+        # Like restore_session: every storyboard of the chat follows it.
+        service.storyboard_repo.reassign_session.assert_awaited_once_with(
+            "s1", "s-new", USER.id
+        )
+        service.storyboard_repo.update.assert_not_called()
+        registry.replace_session_id.assert_awaited_once_with(
+            "s1", "s-new", USER.id, restored=True
+        )
+        assert (res.session.id, res.session.restored) == ("s-new", True)
+        assert res.storyboard.session_id == "s-new"
+
+    @pytest.mark.anyio
+    async def test_a_storyboard_without_a_chat_is_linked_to_the_recreated_one(
+        self, service, registry
+    ):
+        # Opened with chat s1 while the storyboard names none: the bulk move
+        # cannot match it, so it is linked explicitly, as before.
+        self._chat(service, registry)
+        service.project_service.get_storyboard.return_value = (
+            StoryboardResponse(id=14, user_id=USER.id, workspace_id=10)
+        )
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1", storyboard_id=14
+        )
+
+        service.storyboard_repo.reassign_session.assert_awaited_once_with(
+            "s1", "s-new", USER.id
+        )
+        service.storyboard_repo.update.assert_awaited_once_with(
+            14, {"session_id": "s-new"}
+        )
+        assert res.storyboard.session_id == "s-new"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "query", [{"session_id": "s1"}, {"storyboard_id": 14}]
+    )
+    async def test_another_users_chat_is_refused_before_any_session_read(
+        self, service, registry, query
+    ):
+        # Expired, or any chat in local mode (its user-scoped read finds
+        # nothing): it was re-created and registered for the caller.
+        self._chat(service, registry, row=_row("s1", user_id=99))
+        service.project_service.list_storyboards.return_value = []
+
+        with pytest.raises(HTTPException) as exc:
+            await service.get_session_detail(USER, 10, _request(), **query)
+
+        assert exc.value.status_code == 403
+        service._sessions_get.assert_not_called()
+        self._assert_nothing_recreated(service, registry)
+
+    @pytest.mark.anyio
+    async def test_a_chat_of_another_workspace_is_refused(
+        self, service, registry
+    ):
+        # Like chat() and restore_session: read, or re-created, only in the
+        # chat's own workspace.
+        self._chat(service, registry)
+        service.project_service.list_storyboards.return_value = []
+
+        with pytest.raises(HTTPException) as exc:
+            await service.get_session_detail(
+                USER, 11, _request(), session_id="s1"
+            )
+
+        assert (exc.value.status_code, exc.value.detail) == (
+            400,
+            module.CHAT_IN_OTHER_WORKSPACE_DETAIL,
+        )
+        service._sessions_get.assert_not_called()
+        self._assert_nothing_recreated(service, registry)
+
+    @pytest.mark.anyio
+    async def test_the_chat_is_read_and_recreated_in_its_own_agent(
+        self, service, registry
+    ):
+        # Read under the request's appName (ads_x by default), another
+        # agent's chat looked missing and was re-created in the wrong agent.
+        self._chat(service, registry, row=_row("s1", app_name="other_app"))
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        service._get_validated_agent_name.assert_called_with("other_app")
+        service._sessions_get.assert_awaited_once_with(
+            "agent", "other_app", "7", "s1"
+        )
+        assert service._sessions_create.await_args.args[1] == "other_app"
+        assert res.session.appName == "other_app"
 
 
 class TestUpdateSessionMetadata:

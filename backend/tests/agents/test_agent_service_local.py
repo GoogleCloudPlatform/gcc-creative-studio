@@ -202,9 +202,10 @@ async def test_get_session_detail_local_recreates_missing_session(local_mode):
         current_user=user, workspace_id=1, request=request, storyboard_id=123
     )
     local_client.get_session.assert_awaited_once_with("ads_x", "999", "old")
-    storyboard_repo.update.assert_awaited_once_with(
-        123, {"session_id": "new_id"}
+    storyboard_repo.reassign_session.assert_awaited_once_with(
+        "old", "new_id", 999
     )
+    storyboard_repo.update.assert_not_called()
     assert res.session.id == "new_id"
     # Events come straight from the (new) session payload, no extra fetch.
     assert local_client.get_session.await_count == 1
