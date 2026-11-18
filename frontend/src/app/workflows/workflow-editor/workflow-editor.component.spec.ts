@@ -2394,14 +2394,6 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       })),
     });
 
-    const buildRun = (): WorkflowRunModel => ({
-      id: 'run-1',
-      userId: 'user-1',
-      workspaceId: RUN_WORKSPACE_ID,
-      status: WorkflowRunStatusEnum.RUNNING,
-      workflowSnapshot: {name: 'wf', description: '', steps: []},
-    });
-
     /** Opens the sidebar on `entry` and lets the folder id watcher react. */
     const inspect = (entry: StepEntry): void => {
       component.executionEntries.set([entry]);
@@ -2428,11 +2420,31 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       );
     };
 
+    const selectRun = (workspaceId: number | null): void => {
+      component.workflowId = 'wf-1';
+      (
+        TestBed.inject(WorkflowService).getRunDetails as jasmine.Spy
+      ).and.returnValue(
+        of({
+          id: 'run-1',
+          workflow_id: 'wf-1',
+          workspace_id: workspaceId,
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_entries: [],
+        }),
+      );
+      component.onExecutionSelected('run-1');
+    };
+
     beforeEach(() => {
-      component.workflowRun = buildRun();
+      component.workflowRun = null;
+      workspaceStateStub.getActiveWorkspaceId.and.returnValue(
+        ACTIVE_WORKSPACE_ID,
+      );
+      selectRun(RUN_WORKSPACE_ID);
     });
 
-    it('resolves sorted unique folder ids in the run workspace', () => {
+    it('resolves sorted unique folder ids in the loaded run workspace', () => {
       const resolved: FolderPathMap = new Map([
         [3, 'Shoes'],
         [9, 'Shoes / Summer'],
@@ -2514,6 +2526,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
 
     it('falls back to the active workspace without an opened run', () => {
+      selectRun(null);
       component.workflowRun = null;
       workspaceStateStub.getActiveWorkspaceId.and.returnValue(
         ACTIVE_WORKSPACE_ID,

@@ -75,6 +75,7 @@ from src.workflows.workflow_yaml_builder import (
     build_prior_outputs,
     compute_definition_hash,
     missing_required_args,
+    required_args,
     reconcile_step_states_for_resume,
 )
 from src.workflows_executor.step_errors import StepError
@@ -752,11 +753,25 @@ class RunStateService:
             if missing:
                 raise MissingResumeInputsError(missing)
 
+            all_folder_args = folder_arg_names(steps)
+            linked_folder_args = all_folder_args & set(required_args(steps))
+            unlinked_folder_args = all_folder_args - linked_folder_args
+            for name in unlinked_folder_args:
+                if name in effective_args and effective_args[name] is None:
+                    effective_args.pop(name, None)
+
             invalid_folder_args = sorted(
                 name
-                for name in folder_arg_names(steps)
-                if name in cleaned_override
-                and not _is_valid_folder_id(cleaned_override[name])
+                for name in all_folder_args
+                if (
+                    name in linked_folder_args
+                    and not _is_valid_folder_id(effective_args.get(name))
+                )
+                or (
+                    name in unlinked_folder_args
+                    and name in effective_args
+                    and not _is_valid_folder_id(effective_args[name])
+                )
             )
             if invalid_folder_args:
                 raise StepError(

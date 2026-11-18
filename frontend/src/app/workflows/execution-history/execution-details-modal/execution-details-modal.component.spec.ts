@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {Injector, NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {ReactiveFormsModule} from '@angular/forms';
 import {
@@ -26,6 +26,8 @@ import {
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
+import {AppInjector, setAppInjector} from '../../../app-injector';
+import {NotificationService} from '../../../common/services/notification.service';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {By} from '@angular/platform-browser';
 import {FolderSelectionResult} from '../../../common/models/folder.model';
@@ -724,6 +726,37 @@ describe('ExecutionDetailsModalComponent', () => {
       const pickedField = targetField();
       expect(pickedField?.errorMessage).toBeNull();
       expect(pickedField?.folderLabel).toBe('Campaign / Bags');
+    });
+
+    it('shows an error snackbar when resumeRun fails with HTTP 422 without missing_inputs', () => {
+      loadFolderRun(SHOES_PATHS);
+      if (!AppInjector) {
+        setAppInjector(TestBed.inject(Injector));
+      }
+      const showSpy = jasmine.createSpy('show');
+      const getSpy = spyOn(AppInjector, 'get').and.callThrough();
+      getSpy.withArgs(NotificationService).and.returnValue({show: showSpy});
+      workflowServiceSpy.resumeRun.and.returnValue(
+        throwError(() => ({
+          status: 422,
+          error: {
+            detail: 'Folder inputs must be positive integer ids: Target',
+          },
+        })),
+      );
+
+      component.submitResume();
+
+      expect(component.isSubmitting()).toBeFalse();
+      expect(component.missingInputs()).toEqual([]);
+      expect(component.fieldErrors()).toEqual({});
+      expect(showSpy).toHaveBeenCalledWith(
+        'Folder inputs must be positive integer ids: Target',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        5000,
+      );
     });
   });
 });

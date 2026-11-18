@@ -262,6 +262,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private mainSubscription!: Subscription;
   private pollingSubscription?: Subscription;
   currentExecutionId: string | null = null;
+  private currentExecutionWorkspaceId: number | null = null;
   initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
   executionStepEntries: StepEntry[] = [];
@@ -477,6 +478,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   /** Workspace of the opened run, else the active workspace. */
   private historySidebarWorkspaceId(): number | null {
     return (
+      this.currentExecutionWorkspaceId ??
       this.workflowRun?.workspaceId ??
       this.workspaceStateService.getActiveWorkspaceId()
     );
@@ -543,6 +545,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         } else {
           this.initialExecutionId = null;
           this.currentExecutionId = null;
+          this.currentExecutionWorkspaceId = null;
           this.currentExecutionState = null;
           this.executionStepEntries = [];
           this.executionEntries.set([]);
@@ -2335,6 +2338,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
               res.executionId ??
               '';
             this.currentExecutionId = createdRunId;
+            this.currentExecutionWorkspaceId = null;
             this.currentExecutionState =
               res.status || WorkflowRunStatusEnum.RUNNING;
             this.isLoading = false;
@@ -2362,6 +2366,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (!this.workflowId) return;
 
     this.currentExecutionId = runOrExecutionId;
+    this.currentExecutionWorkspaceId = null;
     this.isLoading = true;
 
     this.workflowService
@@ -2410,6 +2415,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private handleExecutionUpdate(details: WorkflowRunDetail): void {
     const runStatus = details.status ?? details.state ?? '';
     this.currentExecutionState = runStatus;
+    this.currentExecutionWorkspaceId =
+      details.workspace_id ?? details.workspaceId ?? null;
     this.executionStepEntries = this.buildStepEntriesFromRunDetails(details);
     this.executionEntries.set(this.executionStepEntries);
     this.updateStepStatuses(this.executionStepEntries);

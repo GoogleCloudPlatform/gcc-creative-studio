@@ -606,8 +606,11 @@ export class ExecutionDetailsModalComponent implements OnInit {
         error: err => {
           this.isSubmitting.set(false);
           if (err?.status === 422) {
-            this.handleMissingInputsError(err);
-            return;
+            const missing = this.extractMissingInputs(err);
+            if (missing.length > 0) {
+              this.handleMissingInputsError(missing);
+              return;
+            }
           }
           handleErrorSnackbar(this.snackBar, err, 'Resume workflow run');
         },
@@ -740,17 +743,23 @@ export class ExecutionDetailsModalComponent implements OnInit {
     return override;
   }
 
-  private handleMissingInputsError(err: {
+  private extractMissingInputs(err: {
     error?: {
-      missing_inputs?: string[];
-      detail?: {missing_inputs?: string[]; message?: string} | string;
+      missing_inputs?: unknown;
+      detail?: {missing_inputs?: unknown; message?: string} | string;
     };
-  }): void {
+  }): string[] {
     const detailObj =
-      typeof err?.error?.detail === 'object' ? err.error.detail : null;
-    const missing =
-      err?.error?.missing_inputs ?? detailObj?.missing_inputs ?? [];
+      typeof err?.error?.detail === 'object' && err?.error?.detail !== null
+        ? err.error.detail
+        : null;
+    const raw = err?.error?.missing_inputs ?? detailObj?.missing_inputs;
+    return Array.isArray(raw)
+      ? raw.filter((item): item is string => typeof item === 'string')
+      : [];
+  }
 
+  private handleMissingInputsError(missing: string[]): void {
     this.showResumeForm.set(true);
     this.missingInputs.set(missing);
 
