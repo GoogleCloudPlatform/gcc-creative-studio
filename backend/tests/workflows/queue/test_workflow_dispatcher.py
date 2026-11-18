@@ -62,7 +62,7 @@ def _snapshot_two_steps() -> dict[str, Any]:
                 "type": NodeTypes.GENERATE_TEXT.value,
                 "status": StepStatusEnum.PENDING.value,
                 "inputs": {"prompt": {"step": "user_input", "output": "topic"}},
-                "settings": {"model": "gemini-2.5-flash", "temperature": 0.7},
+                "settings": {"model": "gemini-4-hydrogen", "temperature": 0.7},
             },
             {
                 "step_id": "step_b",
