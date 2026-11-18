@@ -135,7 +135,7 @@ describe('WorkflowFormService', () => {
             },
           },
           outputs: {generated_text: {type: 'text'}},
-          settings: {model: 'gemini-2.5-flash'},
+          settings: {model: 'gemini-4-hydrogen'},
         },
         {
           stepId: 'outfit_step',
@@ -672,6 +672,96 @@ describe('WorkflowFormService', () => {
           .withContext(step.stepId)
           .toBe(EXPECTED_TEMPLATE_GOOGLE_SEARCH[step.stepId]);
       });
+    });
+  });
+
+  describe('Retired Gemini 2.5 text model normalization', () => {
+    const buildTextStep = (settings: DynamicStepRecord): WorkflowStep => ({
+      stepId: 'text_step_1',
+      type: NodeTypes.GENERATE_TEXT,
+      status: StepStatusEnum.IDLE,
+      position: {x: 0, y: 0},
+      collapsed: false,
+      inputs: {prompt: 'Hello'},
+      outputs: {generated_text: {type: 'text'}},
+      settings,
+    });
+
+    it('normalizes legacy text models in addStep without mutating caller objects', () => {
+      const proInput = buildTextStep({
+        model: 'gemini-2.5-pro',
+        temperature: 0.7,
+      });
+      const flashInput = buildTextStep({
+        model: 'gemini-2.5-flash',
+        temperature: 0.5,
+      });
+
+      service.addStep(NodeTypes.GENERATE_TEXT, proInput);
+      service.addStep(NodeTypes.GENERATE_TEXT, flashInput);
+
+      expect(service.stepsArray.at(0).get('settings.model')?.value).toBe(
+        'gemini-4-argon',
+      );
+      expect(service.stepsArray.at(1).get('settings.model')?.value).toBe(
+        'gemini-4-hydrogen',
+      );
+      expect(proInput.settings['model']).toBe('gemini-2.5-pro');
+      expect(flashInput.settings['model']).toBe('gemini-2.5-flash');
+    });
+
+    it('normalizes legacy text models in patchData without mutating caller objects', () => {
+      const stepInput = buildTextStep({
+        model: 'gemini-2.5-pro',
+        temperature: 0.7,
+      });
+      const flashStepInput = {
+        ...buildTextStep({model: 'gemini-2.5-flash', temperature: 0.4}),
+        stepId: 'text_step_2',
+      };
+
+      service.patchData({
+        name: 'Legacy workflow',
+        description: '',
+        steps: [stepInput, flashStepInput],
+      });
+
+      expect(service.stepsArray.at(0).get('settings.model')?.value).toBe(
+        'gemini-4-argon',
+      );
+      expect(service.stepsArray.at(1).get('settings.model')?.value).toBe(
+        'gemini-4-hydrogen',
+      );
+      expect(stepInput.settings['model']).toBe('gemini-2.5-pro');
+      expect(flashStepInput.settings['model']).toBe('gemini-2.5-flash');
+    });
+
+    it('normalizes legacy text models in insertTemplateData without mutating caller objects', () => {
+      const legacyTemplate: WorkflowTemplate = {
+        id: 'tmpl-legacy-text',
+        name: 'Legacy Text Template',
+        description: 'Legacy models',
+        steps: [
+          buildTextStep({model: 'gemini-2.5-pro', temperature: 0.7}),
+          {
+            ...buildTextStep({model: 'gemini-2.5-flash', temperature: 0.3}),
+            stepId: 'text_step_2',
+          },
+        ],
+      };
+
+      service.insertTemplateData(legacyTemplate, new Set(['user_input']));
+
+      expect(service.stepsArray.at(0).get('settings.model')?.value).toBe(
+        'gemini-4-argon',
+      );
+      expect(service.stepsArray.at(1).get('settings.model')?.value).toBe(
+        'gemini-4-hydrogen',
+      );
+      expect(legacyTemplate.steps[0].settings['model']).toBe('gemini-2.5-pro');
+      expect(legacyTemplate.steps[1].settings['model']).toBe(
+        'gemini-2.5-flash',
+      );
     });
   });
 });

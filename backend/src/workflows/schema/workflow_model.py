@@ -34,7 +34,11 @@ from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.common.base_dto import BaseDto
+from src.common.base_dto import (
+    RETIRED_TEXT_MODEL_REPLACEMENTS,
+    BaseDto,
+    normalize_retired_text_model,
+)
 from src.common.base_repository import BaseStringDocument
 from src.database import Base
 from src.workflows.step_state_keys import validate_step_id_chars
@@ -182,6 +186,13 @@ class GenerateTextSettings(BaseModel):
     model: str
     temperature: float
     google_search: bool = False
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def normalize_model(cls, value: Any) -> Any:
+        if isinstance(value, (str, Enum)):
+            return normalize_retired_text_model(value)
+        return value
 
 
 class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):
@@ -376,6 +387,29 @@ def translate_legacy_step(raw_step: dict | Any) -> dict | Any:
             "outputs": new_outputs,
         }
         return translated
+
+    if step_type == NodeTypes.GENERATE_TEXT.value:
+        raw_settings = raw_step.get("settings")
+        if isinstance(raw_settings, BaseModel):
+            settings_dict = raw_settings.model_dump(by_alias=True)
+        elif isinstance(raw_settings, dict):
+            settings_dict = raw_settings
+        else:
+            return raw_step
+        model_val = settings_dict.get("model")
+        model_key = (
+            model_val.value
+            if isinstance(model_val, Enum)
+            else model_val if isinstance(model_val, str) else None
+        )
+        if model_key in RETIRED_TEXT_MODEL_REPLACEMENTS:
+            return {
+                **raw_step,
+                "settings": {
+                    **settings_dict,
+                    "model": normalize_retired_text_model(model_key),
+                },
+            }
 
     return raw_step
 

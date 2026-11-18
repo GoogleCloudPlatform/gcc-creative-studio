@@ -25,6 +25,7 @@ import {
 } from '@angular/forms';
 import {BehaviorSubject, Observable, Subject} from 'rxjs';
 import {distinctUntilChanged, map, pairwise, startWith} from 'rxjs/operators';
+import {normalizeTextModelId} from '../../common/config/model-config';
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
 import {isPortTypeCompatible} from '../utils/workflow-magnetic.util';
 import {
@@ -173,11 +174,18 @@ export class WorkflowFormService {
     ) {
       delete rawInputs['input_audio'];
     }
+    const rawSettings = {...(stepData.settings || {})};
+    if (
+      (stepData.type || type) === NodeTypes.GENERATE_TEXT &&
+      typeof rawSettings['model'] === 'string'
+    ) {
+      rawSettings['model'] = normalizeTextModelId(rawSettings['model']);
+    }
     const safeStepData = {
       ...stepData,
       inputs: rawInputs,
       outputs: stepData.outputs || {},
-      settings: stepData.settings || {},
+      settings: rawSettings,
     };
 
     const stepGroup = this.fb.group({

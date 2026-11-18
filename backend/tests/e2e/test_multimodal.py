@@ -87,7 +87,7 @@ async def test_multimodal_generation_custom_model(
     payload = {
         "workspace_id": e2e_test_workspace,
         "prompt": "Write a short poem",
-        "model": "gemini-2.5-pro",
+        "model": "gemini-4-argon",
     }
     resp = e2e_client.post("/api/gemini/multimodal-generation", json=payload)
     assert resp.status_code == 200
