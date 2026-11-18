@@ -142,6 +142,8 @@ With rapid switches, only the latest entry applies (`entrySeq`).
   - Once loaded, the composer is swapped for the restored-chat banner, which offers "New chat". While a chat loads, the disabled composer stays in place so the panel does not jump.
   - `sendChatMessage` (which the storyboard's `generateVideoRequest$` also goes through) and `canRetry` refuse a restored chat; the backend answers 409 anyway.
   - Restored chats carry a `Restored` badge in the picker, and no welcome message ("How can I help you today?" would contradict the banner).
+- **A refused delete is shown, and the chat stays open.** `deleteChat()` passes a failed `deleteSession` to `handleErrorSnackbar`, which shows the backend `detail`: 409 `BUSY_CHAT_DELETE_DETAIL` while Izumi still runs in the chat, 502 when the chat could not be verified, 403/404. It used to log to the console only, so a delete confirmed mid-run did nothing visible.
+  - Delete stays enabled while `isBusy()`, on purpose. That signal is per tab and can stay true after the run is over: a poll loop that `checkAndResumePolling` re-attached to a run that died without `[DONE]` (process restart, cancelled task) polls an empty queue, and every reopen re-attaches it until the 20-minute `lastUpdateTime` guard. Delete is then the only way to get rid of that chat. The backend run guard decides, and it also catches runs this tab does not track (another tab).
 
 **Entering the Workbench must load the project's chat.** A chat counts as loaded only while BOTH `currentSessionId` and the shared `selectedSessionId` name it. When this breaks, the right project is selected but the chat, the storyboard and the timeline stay empty until the user switches to another project and back. The rules:
 

@@ -22,6 +22,7 @@ import {
 } from '@angular/core/testing';
 import {ChatInterfaceComponent} from './chat-interface.component';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {HttpErrorResponse} from '@angular/common/http';
 import {RouterTestingModule} from '@angular/router/testing';
 import {ActivatedRoute, Router} from '@angular/router';
 import {FormsModule} from '@angular/forms';
@@ -38,6 +39,8 @@ import {TimelineStateService} from '../../services/timeline-state.service';
 import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {ProjectStateService} from '../../services/project-state.service';
+import {NotificationService} from '../../../common/services/notification.service';
+import {useTestBedAppInjector} from '../../../testing/app-injector.testing';
 import {
   ChatSession,
   TimelineClip,
@@ -1182,6 +1185,43 @@ describe('ChatInterfaceComponent', () => {
 
     expect(console.error).toHaveBeenCalled();
   });
+
+  // DELETE /api/agent/sessions/{id} answers 409 while Izumi still runs in the
+  // chat and 502 when the chat could not be verified.
+  for (const {status, detail} of [
+    {
+      status: 409,
+      detail:
+        'Izumi is still working in this chat. Wait for it to finish before deleting the chat.',
+    },
+    {status: 502, detail: 'Could not verify the chat. Try again.'},
+  ]) {
+    it(`shows a ${status} delete refusal and keeps the chat open`, () => {
+      useTestBedAppInjector();
+      const showSpy = spyOn(TestBed.inject(NotificationService), 'show');
+      spyOn(console, 'error');
+      spyOn(component['dialog'], 'open').and.returnValue({
+        afterClosed: () => of(true),
+      } as ReturnType<MatDialog['open']>);
+      agentChatService.deleteSession.and.returnValue(
+        throwError(() => new HttpErrorResponse({status, error: {detail}})),
+      );
+      component.currentSessionId = 's1';
+      component.sessions.set([{id: 's1'}, {id: 's2'}]);
+      component.topics.set({s1: 'Kept'});
+
+      component.deleteChat();
+
+      expect(showSpy).toHaveBeenCalledTimes(1);
+      const [message, type] = showSpy.calls.mostRecent().args;
+      expect(message).toBe(detail);
+      expect(type).toBe('error');
+      expect(component.currentSessionId).toBe('s1');
+      expect(component.sessions().map(s => s.id)).toEqual(['s1', 's2']);
+      expect(component.topics()).toEqual({s1: 'Kept'});
+      expect(agentChatService.forgetLegacyTitle).not.toHaveBeenCalled();
+    });
+  }
 
   it('should handle error when createSession fails', () => {
     spyOn(console, 'error');

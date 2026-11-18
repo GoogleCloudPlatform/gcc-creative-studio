@@ -1491,7 +1491,10 @@ export class ChatInterfaceComponent
                 this.startNewChat();
               }
             },
-            error: err => console.error('Error deleting session:', err),
+            // The chat stays open: say why (409 while Izumi still runs in
+            // it, 502 when it could not be verified, 403/404).
+            error: err =>
+              handleErrorSnackbar(this.snackBar, err, 'Delete Chat'),
           });
       }
     });
