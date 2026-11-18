@@ -1570,6 +1570,57 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
   });
 
+  describe('Retired Gemini 2.5 text model hydration', () => {
+    let fb: FormBuilder;
+
+    const buildLegacyTextStepForm = (model: string): FormGroup =>
+      fb.group({
+        stepId: ['text_step_legacy'],
+        type: [NodeTypes.GENERATE_TEXT],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['Summarize the notes'],
+          input_images: [null],
+          input_videos: [null],
+        }),
+        settings: fb.group({
+          model: [model],
+          temperature: [0.7],
+          google_search: [false],
+        }),
+        outputs: fb.group({
+          generated_text: [{type: 'text'}],
+        }),
+      });
+
+    beforeEach(() => {
+      fb = TestBed.inject(FormBuilder);
+    });
+
+    it('normalizes legacy Gemini 2.5 text models on standalone hydration without dirtying the form', () => {
+      [
+        ['gemini-2.5-pro', 'gemini-4-argon'],
+        ['gemini-2.5-flash', 'gemini-4-hydrogen'],
+      ].forEach(([legacyModel, expectedModel]) => {
+        const stepForm = buildLegacyTextStepForm(legacyModel);
+        const parentForm = fb.group({steps: fb.array([stepForm])});
+        stepForm.markAsPristine();
+        parentForm.markAsPristine();
+
+        const stepFixture = TestBed.createComponent(GenericStepComponent);
+        const stepComponent = stepFixture.componentInstance;
+        stepComponent.stepForm = stepForm;
+        stepComponent.config = GENERATE_TEXT_STEP_CONFIG;
+        stepComponent.stepIndex = 0;
+        stepFixture.detectChanges();
+
+        expect(stepForm.get('settings.model')?.value).toBe(expectedModel);
+        expect(stepForm.pristine).toBeTrue();
+        expect(parentForm.pristine).toBeTrue();
+      });
+    });
+  });
+
   describe('Image node resolution and aspect ratio features', () => {
     it('should include auto in aspect ratio options, disabled in generate_image and enabled in edit_image mode', () => {
       const aspectRatioSetting = component.localConfig.settings.find(

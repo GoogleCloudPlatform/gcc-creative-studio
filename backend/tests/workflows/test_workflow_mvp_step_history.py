@@ -262,7 +262,7 @@ def test_legacy_record_reconstructs_inputs():
                 prompt=_ref("user_input", "topic"), extra="x"
             ),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
         ImageStep(
@@ -296,7 +296,7 @@ def test_persisted_inputs_win_over_reconstruction():
             step_id="text",
             inputs=GenerateTextInputs(prompt="Hi <name>"),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
     ]
@@ -327,7 +327,7 @@ def test_non_completed_records_have_empty_history(status):
             step_id="text",
             inputs=GenerateTextInputs(prompt="x"),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
     ]

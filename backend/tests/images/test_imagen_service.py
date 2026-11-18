@@ -1322,6 +1322,93 @@ def test_process_upload_upscale_in_background_sync(
 @patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
 @patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
 @patch("src.database.WorkerDatabase")
+def test_process_upload_upscale_in_background_metadata_uses_configured_model(
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+    from src.config.config_service import config_service
+
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+
+    with (
+        patch(
+            "src.images.imagen_service.MediaRepository",
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.SourceAssetRepository",
+        ) as mock_source_asset_repo_class,
+        patch(
+            "src.images.imagen_service.ImagenService",
+        ) as mock_imagen_service_class,
+        patch(
+            "src.images.imagen_service.GcsService",
+        ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.IamSignerCredentials",
+        ),
+        patch(
+            "src.images.imagen_service.GeminiService",
+        ) as mock_gemini_service_class,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_sa_repo = AsyncMock()
+        mock_source_asset_repo_class.return_value = mock_sa_repo
+
+        mock_imagen_service = AsyncMock()
+        mock_imagen_service_class.return_value = mock_imagen_service
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/upscaled.png"
+        mock_imagen_service.upscale_image.return_value = mock_result
+
+        mock_gcs = AsyncMock()
+        mock_gcs_class.return_value = mock_gcs
+
+        existing_asset = MagicMock()
+        existing_asset.id = 301
+        existing_asset.gcs_uri = "gs://bucket/original.png"
+        existing_asset.titles = None
+        existing_asset.descriptions = None
+        existing_asset.original_filename = None
+        mock_sa_repo.get_by_id.return_value = existing_asset
+
+        mock_gemini_service = MagicMock()
+        mock_gemini_service.generate_media_metadata.return_value = {
+            "titles": ["Upscaled Title"],
+            "descriptions": ["Upscaled Description"],
+        }
+        mock_gemini_service_class.return_value = mock_gemini_service
+
+        _process_upload_upscale_in_background(
+            media_item_id=334,
+            workspace_id=1,
+            user=sample_user,
+            gcs_uri="gs://bucket/original.png",
+            file_bytes=None,
+            filename=None,
+            upscale_factor="x4",
+            aspect_ratio=None,
+            source_asset_id=301,
+        )
+
+        mock_gemini_service.generate_media_metadata.assert_called_once()
+        metadata_kwargs = (
+            mock_gemini_service.generate_media_metadata.call_args.kwargs
+        )
+        assert metadata_kwargs["model_name"] == config_service.GEMINI_MODEL_ID
+        assert metadata_kwargs["model_name"] == "gemini-4-argon"
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
 def test_process_upload_upscale_in_background_sync_new_file(
     mock_worker_db_class,
     mock_thumb_mu,
