@@ -1165,8 +1165,6 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_name = self._get_validated_agent_name(appName)
-
             # Chats are owner-only: the registry knows who created this one.
             registry_row = await self.agent_session_repo.get(session_id)
             if (
@@ -1178,11 +1176,20 @@ class AgentService:
                     detail="You do not have permission to delete this chat.",
                 )
 
+            # The agent the chat was created with, like restore_session. Read
+            # under the request's appName (ads_x by default), another agent's
+            # chat looked gone: only its row was deleted, past the run guard,
+            # and the live session came back untitled in the default project.
+            chat_app = (
+                registry_row.app_name if registry_row is not None else None
+            ) or appName
+            agent_name = self._get_validated_agent_name(chat_app)
+
             # The session itself is checked too, and nothing is deleted after
             # a failed read: Agent Engine addresses sessions by id alone, so a
             # chat the registry does not know yet has no other owner check.
             session = await self._get_session_or_none(
-                agent_name, appName, user_id, session_id
+                agent_name, chat_app, user_id, session_id
             )
             if session is None:
                 if registry_row is None:
@@ -1230,7 +1237,7 @@ class AgentService:
                         detail=BUSY_CHAT_DELETE_DETAIL,
                     )
                 await self._sessions_delete(
-                    agent_name, appName, user_id, session_id
+                    agent_name, chat_app, user_id, session_id
                 )
             # A chat already gone from the agent backend only loses its row.
             if registry_row is not None:

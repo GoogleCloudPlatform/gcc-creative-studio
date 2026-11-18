@@ -47,6 +47,7 @@ There are deliberately no ORM relationships on `Project`. Deletes rely on the fo
 - Chats are owner-only on **every session-by-id path**, not just through the registry. `_ensure_session_owner` compares the fetched session's own `user_id` on the messages, detail, `_load_session_state` (characters, storyboard sync) and delete paths. The best-effort detail path re-raises its `ForeignSessionError`, a 403 `HTTPException` subclass.
 - `delete_session`:
   - checks the registry and refuses an unregistered foreign chat;
+  - reads, guards and deletes the session in the chat's own agent (the registry row's `app_name`, like `restore_session` and the detail path); only an unregistered chat uses the `appName` query parameter. Under the request's `appName` (`ads_x` by default, or whichever agent the UI has active), another agent's chat read as gone: only its row was deleted, past the run guard, and the live session was re-adopted, untitled, into the default project;
   - never deletes after a failed read (`_get_session_or_none` answers 502);
   - does not swallow a refused workspace;
   - authorizes a live chat's workspace from its session state, falling back to the registry row's `workspace_id` when the state names none, so a registered chat never skips the workspace check;

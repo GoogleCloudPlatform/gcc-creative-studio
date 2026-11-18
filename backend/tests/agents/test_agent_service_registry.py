@@ -748,6 +748,83 @@ class TestDeleteSession:
         assert exc.value.status_code == 403
         service._sessions_delete.assert_not_called()
 
+    @pytest.mark.anyio
+    async def test_the_chat_is_read_and_deleted_in_its_own_agent(
+        self, service, registry
+    ):
+        # Like restore_session and the detail: the registry names the agent,
+        # not the request's appName (ads_x by default).
+        registry.get.return_value = _row("s1", app_name="other_app")
+        service._sessions_get = AsyncMock(return_value=_session())
+        service._sessions_delete = AsyncMock()
+
+        result = await service.delete_session(USER, "s1", "7", _request())
+
+        assert result == {"status": "success"}
+        service._get_validated_agent_name.assert_called_once_with("other_app")
+        service._sessions_get.assert_awaited_once_with(
+            "agent", "other_app", "7", "s1"
+        )
+        service._sessions_delete.assert_awaited_once_with(
+            "agent", "other_app", "7", "s1"
+        )
+        registry.delete.assert_awaited_once_with("s1")
+
+    @pytest.mark.anyio
+    async def test_a_running_chat_of_another_agent_is_not_deleted(
+        self, service, registry
+    ):
+        # Read under the request's appName, this chat looked gone: its row
+        # was deleted past the run guard, and the live session survived.
+        registry.get.return_value = _row("s1", app_name="other_app")
+
+        async def app_scoped_get(
+            unused_agent_name, app_name, unused_user_id, unused_session_id
+        ):
+            # Like the local ADK API: a session is found in its own app only.
+            return _session() if app_name == "other_app" else None
+
+        service._sessions_get = AsyncMock(side_effect=app_scoped_get)
+        service._sessions_delete = AsyncMock()
+
+        module._mark_run_started("s1")
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await service.delete_session(
+                    USER, "s1", "7", _request(), appName="ads_x"
+                )
+        finally:
+            module._mark_run_finished("s1")
+
+        assert (exc.value.status_code, exc.value.detail) == (
+            409,
+            module.BUSY_CHAT_DELETE_DETAIL,
+        )
+        service._sessions_delete.assert_not_called()
+        registry.delete.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "row",
+        [None, _row("s1", app_name=None)],
+        ids=["unregistered", "row-without-app"],
+    )
+    async def test_without_a_registered_agent_the_requests_is_used(
+        self, service, registry, row
+    ):
+        registry.get.return_value = row
+        service._sessions_get = AsyncMock(return_value=_session())
+        service._sessions_delete = AsyncMock()
+
+        await service.delete_session(
+            USER, "s1", "7", _request(), appName="other_app"
+        )
+
+        service._get_validated_agent_name.assert_called_once_with("other_app")
+        service._sessions_delete.assert_awaited_once_with(
+            "agent", "other_app", "7", "s1"
+        )
+
 
 class TestOwnerOnlySessions:
     """Another user's session is refused even when Agent Engine returns it."""
