@@ -36,7 +36,9 @@ from google.genai import types
 from google.protobuf import json_format, struct_pb2
 
 from src.audios.audio_constants import LanguageEnum, VoiceEnum
+from src.audios.audio_waveform import extract_audio_waveform_and_duration
 from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.audios.lyria3_text import _extract_lyria3_text, _get_attr_or_key
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
     AspectRatioEnum,
@@ -120,13 +122,6 @@ def _simplify_lyria3_prompt(prompt: str) -> str:
     if not head:
         return ""
     return f"{head}. {_LYRIA_3_SIMPLIFIED_SUFFIX}"
-
-
-def _get_attr_or_key(obj: Any, name: str) -> Any:
-    """Reads ``name`` from a pydantic model / object or a plain dict."""
-    if isinstance(obj, dict):
-        return obj.get(name)
-    return getattr(obj, name, None)
 
 
 def _decode_audio_payload(data: Any) -> bytes | None:
@@ -224,17 +219,70 @@ def _process_audio_in_background(
                         )
                         start_time = time.monotonic()
 
-                        permanent_gcs_uris = []
+                        permanent_gcs_uris: list[str] = []
+                        track_analyses: list[dict[str, Any] | None] = []
                         uid_short = str(user_id)[:4]
                         # Media items are created as WAV; Lyria 3 returns MP3.
                         output_mime_type = MimeTypeEnum.AUDIO_WAV
                         # Set when a reworded prompt (not the user's) rendered.
                         effective_prompt: str | None = None
 
+                        async def _store_and_analyze_take(
+                            *,
+                            folder: str,
+                            file_name: str,
+                            mime_type: MimeTypeEnum | str,
+                            audio_bytes: bytes,
+                            base_meta: dict[str, Any] | None = None,
+                        ) -> tuple[str, dict[str, Any] | None] | None:
+                            gcs_uri = gcs_service.store_to_gcs(
+                                folder=folder,
+                                file_name=file_name,
+                                mime_type=mime_type,
+                                contents=audio_bytes,
+                                decode=False,
+                            )
+                            if not gcs_uri:
+                                return None
+                            mime_str = (
+                                mime_type.value
+                                if isinstance(mime_type, MimeTypeEnum)
+                                else str(mime_type)
+                            )
+                            waveform, duration_sec = await asyncio.to_thread(
+                                extract_audio_waveform_and_duration,
+                                audio_bytes,
+                                mime_str,
+                            )
+                            meta: dict[str, Any] = (
+                                dict(base_meta)
+                                if isinstance(base_meta, dict)
+                                else {}
+                            )
+                            if waveform:
+                                meta["waveform"] = waveform
+                            if duration_sec and duration_sec > 0:
+                                meta["duration_seconds"] = duration_sec
+                            return gcs_uri, (meta or None)
+
+                        async def _gather_valid_takes(
+                            gen_fn: Any,
+                        ) -> tuple[list[str], list[dict[str, Any] | None]]:
+                            results = await asyncio.gather(
+                                *(
+                                    gen_fn(i)
+                                    for i in range(request_dto.sample_count)
+                                )
+                            )
+                            valid = [r for r in results if r is not None]
+                            return [u for u, _ in valid], [a for _, a in valid]
+
                         if request_dto.model in AudioService.GEMINI_MODELS:
                             client = GenAIModelSetup.init()
 
-                            async def generate_gemini(index: int) -> str | None:
+                            async def generate_gemini(
+                                index: int,
+                            ) -> tuple[str, dict[str, Any] | None] | None:
                                 try:
                                     voice_name = (
                                         request_dto.voice_name.value
@@ -294,12 +342,11 @@ def _process_audio_in_background(
                                         wav_file.writeframes(pcm_bytes)
                                     final_wav_bytes = wav_buffer.getvalue()
                                     file_name = f"gemini_audio_{request_dto.model.value}_{media_item_id}_{uid_short}_{index}.wav"
-                                    return gcs_service.store_to_gcs(
+                                    return await _store_and_analyze_take(
                                         folder="gemini_audio",
                                         file_name=file_name,
                                         mime_type=MimeTypeEnum.AUDIO_WAV,
-                                        contents=final_wav_bytes,
-                                        decode=False,
+                                        audio_bytes=final_wav_bytes,
                                     )
                                 except Exception as e:
                                     worker_logger.error(
@@ -307,17 +354,17 @@ def _process_audio_in_background(
                                     )
                                     return None
 
-                            tasks = [
-                                generate_gemini(i)
-                                for i in range(request_dto.sample_count)
-                            ]
-                            results = await asyncio.gather(*tasks)
-                            permanent_gcs_uris = [u for u in results if u]
+                            (
+                                permanent_gcs_uris,
+                                track_analyses,
+                            ) = await _gather_valid_takes(generate_gemini)
 
                         elif request_dto.model in AudioService.TTS_MODELS:
                             tts_client = texttospeech.TextToSpeechClient()
 
-                            async def generate_tts(index: int) -> str | None:
+                            async def generate_tts(
+                                index: int,
+                            ) -> tuple[str, dict[str, Any] | None] | None:
                                 try:
                                     synthesis_input = (
                                         texttospeech.SynthesisInput(
@@ -357,12 +404,11 @@ def _process_audio_in_background(
                                         audio_config=audio_config,
                                     )
                                     file_name = f"tts_{request_dto.model.value}_{media_item_id}_{uid_short}_{index}.wav"
-                                    return gcs_service.store_to_gcs(
+                                    return await _store_and_analyze_take(
                                         folder="tts_audio",
                                         file_name=file_name,
                                         mime_type=MimeTypeEnum.AUDIO_WAV,
-                                        contents=response.audio_content,
-                                        decode=False,
+                                        audio_bytes=response.audio_content,
                                     )
                                 except Exception as e:
                                     worker_logger.error(
@@ -370,12 +416,10 @@ def _process_audio_in_background(
                                     )
                                     return None
 
-                            tasks = [
-                                generate_tts(i)
-                                for i in range(request_dto.sample_count)
-                            ]
-                            results = await asyncio.gather(*tasks)
-                            permanent_gcs_uris = [u for u in results if u]
+                            (
+                                permanent_gcs_uris,
+                                track_analyses,
+                            ) = await _gather_valid_takes(generate_tts)
 
                         elif request_dto.model in AudioService.LYRIA_3_MODELS:
                             # Lyria 3 is only exposed through the Interactions
@@ -397,7 +441,9 @@ def _process_audio_in_background(
                                     timeout=AudioService.LYRIA_3_TIMEOUT_SECONDS,
                                 )
 
-                            async def generate_lyria3(index: int) -> str | None:
+                            async def generate_lyria3(
+                                index: int,
+                            ) -> tuple[str, dict[str, Any] | None] | None:
                                 prompt = lyria3_state["prompt"]
                                 try:
                                     try:
@@ -443,12 +489,14 @@ def _process_audio_in_background(
                                         else "mp3"
                                     )
                                     file_name = f"lyria3_music_{media_item_id}_{uid_short}_{index}.{extension}"
-                                    return gcs_service.store_to_gcs(
+                                    return await _store_and_analyze_take(
                                         folder="lyria_audio",
                                         file_name=file_name,
                                         mime_type=mime_type,
-                                        contents=audio_bytes,
-                                        decode=False,
+                                        audio_bytes=audio_bytes,
+                                        base_meta=_extract_lyria3_text(
+                                            interaction
+                                        ),
                                     )
                                 except Exception as e:
                                     if _is_lyria3_content_blocked(e):
@@ -458,12 +506,10 @@ def _process_audio_in_background(
                                     )
                                     return None
 
-                            tasks = [
-                                generate_lyria3(i)
-                                for i in range(request_dto.sample_count)
-                            ]
-                            results = await asyncio.gather(*tasks)
-                            permanent_gcs_uris = [u for u in results if u]
+                            (
+                                permanent_gcs_uris,
+                                track_analyses,
+                            ) = await _gather_valid_takes(generate_lyria3)
                             output_mime_type = MimeTypeEnum.AUDIO_MPEG
                             if (
                                 not permanent_gcs_uris
@@ -489,7 +535,9 @@ def _process_audio_in_background(
                                 )
                             )
 
-                            async def generate_music(index: int) -> str | None:
+                            async def generate_music(
+                                index: int,
+                            ) -> tuple[str, dict[str, Any] | None] | None:
                                 try:
                                     parameters_dict = {"sample_count": 1}
                                     parameters_value = struct_pb2.Value()
@@ -529,12 +577,11 @@ def _process_audio_in_background(
                                         return None
 
                                     file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.wav"
-                                    return gcs_service.store_to_gcs(
+                                    return await _store_and_analyze_take(
                                         folder="lyria_audio",
                                         file_name=file_name,
                                         mime_type=MimeTypeEnum.AUDIO_WAV,
-                                        contents=base64.b64decode(audio_b64),
-                                        decode=False,
+                                        audio_bytes=base64.b64decode(audio_b64),
                                     )
                                 except Exception as e:
                                     worker_logger.error(
@@ -542,12 +589,10 @@ def _process_audio_in_background(
                                     )
                                     return None
 
-                            tasks = [
-                                generate_music(i)
-                                for i in range(request_dto.sample_count)
-                            ]
-                            results = await asyncio.gather(*tasks)
-                            permanent_gcs_uris = [u for u in results if u]
+                            (
+                                permanent_gcs_uris,
+                                track_analyses,
+                            ) = await _gather_valid_takes(generate_music)
 
                         else:
                             raise ValueError(
@@ -561,7 +606,7 @@ def _process_audio_in_background(
 
                         generation_time = time.monotonic() - start_time
 
-                        update_data = {
+                        update_data: dict[str, Any] = {
                             "status": JobStatusEnum.COMPLETED,
                             "gcs_uris": permanent_gcs_uris,
                             "generation_time": generation_time,
@@ -572,6 +617,10 @@ def _process_audio_in_background(
                             update_data["mime_type"] = output_mime_type
                         if effective_prompt:
                             update_data["prompt"] = effective_prompt
+                        if any(t is not None for t in track_analyses):
+                            update_data["audio_analysis"] = {
+                                "tracks": track_analyses
+                            }
                         if (
                             getattr(
                                 request_dto, "metadata_generation_model", None

@@ -32,13 +32,29 @@
   justify-content: center;
   align-items: center;
   background-color: #000;
-  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem;
   overflow: hidden;
   position: relative;
   min-height: 50vh; // Ensure it doesn't collapse
 
   &.zoomable {
     cursor: zoom-in;
+  }
+
+  &.audio-stage-container {
+    background:
+      radial-gradient(
+        ellipse 75% 65% at 50% 38%,
+        rgba(160, 196, 255, 0.08) 0%,
+        rgba(16, 18, 23, 0) 70%
+      ),
+      rgba(16, 18, 23, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow:
+      0 16px 40px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    padding: 2rem 1.5rem;
   }
 
   .main-media {
@@ -267,15 +283,15 @@
 
 
 
-// --- AUDIO PLAYER STYLES (Imported from AudioComponent) ---
+// --- AUDIO PLAYER STYLES ---
 .custom-audio-player {
     display: flex;
     align-items: center;
-    gap: 15px;
-    padding: 12px 30px;
+    gap: 14px;
+    padding: 12px 24px;
     border-radius: 50px; // Pill shape
     width: 600px;
-    max-width: 90vw;
+    max-width: 100%;
 
     // Glassmorphism
     background: rgba(255, 255, 255, 0.1);
@@ -286,6 +302,7 @@
 
     .play-btn {
         color: white;
+        flex-shrink: 0;
         transform: scale(1.1);
         transition: transform 0.2s, color 0.2s;
         padding: 0;
@@ -302,9 +319,11 @@
     .time-text {
         color: rgba(255, 255, 255, 0.9);
         font-family: 'Roboto Mono', monospace;
-        font-size: 0.9rem;
-        min-width: 45px;
+        font-size: 0.85rem;
+        min-width: 40px;
         text-align: center;
+        flex-shrink: 0;
+        font-variant-numeric: tabular-nums;
     }
 
     .custom-slider {
@@ -314,6 +333,97 @@
             .mdc-slider__track--inactive { background-color: rgba(255, 255, 255, 0.3) !important; }
             .mdc-slider__thumb-knob { background-color: white !important; border-color: white !important; }
         }
+    }
+
+    .waveform-scrubber {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+        touch-action: none;
+        outline: none;
+        border-radius: 10px;
+        padding: 3px 0;
+
+        &:focus-visible {
+            box-shadow: 0 0 0 2px rgba(160, 196, 255, 0.75);
+        }
+
+        .waveform-bars {
+            display: flex;
+            align-items: center;
+            gap: 1px;
+            width: 100%;
+            min-width: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .waveform-bar {
+            flex: 1 1 0;
+            min-width: 0;
+            min-height: 3px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.26);
+            transition:
+                height 180ms ease,
+                background-color 110ms ease,
+                box-shadow 150ms ease;
+
+            &.hovered {
+                background: rgba(160, 196, 255, 0.58);
+            }
+
+            &.played {
+                background: linear-gradient(180deg, #e0edff 0%, #8ab4f8 100%);
+                box-shadow: 0 0 8px rgba(138, 180, 248, 0.35);
+            }
+        }
+
+        .waveform-playhead {
+            position: absolute;
+            top: 2px;
+            bottom: 2px;
+            width: 2px;
+            border-radius: 999px;
+            background: #ffffff;
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.85);
+            transform: translateX(-50%);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 150ms ease;
+        }
+
+        &:hover .waveform-playhead,
+        &.waveform-scrubbing .waveform-playhead {
+            opacity: 0.95;
+        }
+
+        .waveform-hover-time {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            transform: translateX(-50%);
+            padding: 2px 7px;
+            border-radius: 6px;
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.72rem;
+            line-height: 1.3;
+            color: #ffffff;
+            background: rgba(15, 23, 42, 0.92);
+            border: 1px solid rgba(160, 196, 255, 0.35);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+            pointer-events: none;
+            white-space: nowrap;
+            z-index: 5;
+        }
+    }
+
+    &.is-playing .waveform-scrubber .waveform-playhead {
+        opacity: 0.95;
     }
 }
 
@@ -325,9 +435,30 @@
     justify-content: center;
     gap: 2rem;
     width: 600px;
-    max-width: 90%;
+    max-width: 100%;
     margin-bottom: 2rem;
     animation: fadeInStage 0.6s ease-out;
+
+    &.has-lyrics {
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+
+        .audio-icon-container {
+            width: 80px;
+            height: 80px;
+            border-radius: 24px;
+
+            .stage-icon {
+                font-size: 44px;
+                width: 44px;
+                height: 44px;
+            }
+        }
+
+        .audio-metadata .audio-prompt {
+            font-size: 1.35rem;
+        }
+    }
 
     .audio-icon-container {
         width: 140px;
@@ -376,6 +507,119 @@
             text-transform: uppercase;
             letter-spacing: 2px;
             margin: 0;
+        }
+    }
+
+    .audio-lyrics-panel {
+        width: 100%;
+        border-radius: 16px;
+        background: rgba(20, 24, 34, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(12px);
+        overflow: hidden;
+        text-align: left;
+
+        .audio-lyrics-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0.75rem 0.5rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+
+            .audio-lyrics-title {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4rem;
+                font-size: 0.8rem;
+                font-weight: 600;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: #a0c4ff;
+
+                .lyrics-icon {
+                    font-size: 18px;
+                    width: 18px;
+                    height: 18px;
+                }
+            }
+
+            .copy-lyrics-btn {
+                color: rgba(255, 255, 255, 0.75);
+                width: 32px;
+                height: 32px;
+                padding: 4px;
+
+                mat-icon {
+                    font-size: 18px;
+                    width: 18px;
+                    height: 18px;
+                }
+
+                &:hover {
+                    color: #fff;
+                }
+            }
+        }
+
+        .audio-lyrics-body {
+            max-height: 210px;
+            overflow-y: auto;
+            padding: 0.85rem 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+
+            .structure-grid {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.4rem;
+            }
+
+            .structure-chip {
+                display: inline-flex;
+                align-items: baseline;
+                gap: 0.35rem;
+                padding: 0.25rem 0.6rem;
+                border-radius: 999px;
+                background: rgba(160, 196, 255, 0.1);
+                border: 1px solid rgba(160, 196, 255, 0.22);
+                font-size: 0.78rem;
+
+                .structure-label {
+                    font-weight: 600;
+                    color: #a0c4ff;
+                }
+
+                .structure-value {
+                    color: rgba(255, 255, 255, 0.88);
+                }
+            }
+
+            .lyrics-text {
+                margin: 0;
+                font-family: inherit;
+                font-size: 0.9rem;
+                line-height: 1.55;
+                color: rgba(255, 255, 255, 0.9);
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+
+            .structure-caption {
+                margin: 0;
+                padding-top: 0.6rem;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+                font-size: 0.8rem;
+                line-height: 1.5;
+                color: rgba(255, 255, 255, 0.72);
+
+                .structure-caption-label {
+                    font-weight: 600;
+                    color: #a0c4ff;
+                    margin-right: 0.25rem;
+                }
+            }
         }
     }
 }

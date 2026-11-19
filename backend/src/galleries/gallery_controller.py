@@ -105,6 +105,19 @@ async def get_single_gallery_item(
     return item
 
 
+@router.get("/item/{item_id}/audio-analysis")
+async def get_gallery_item_audio_analysis(
+    item_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    service: GalleryService = Depends(),
+):
+    """Returns ``audioAnalysis`` for a single media item without signing URLs."""
+    audio_analysis = await service.get_media_audio_analysis(
+        item_id=item_id, current_user=current_user
+    )
+    return {"audioAnalysis": audio_analysis}
+
+
 @router.post("/bulk-delete")
 async def bulk_delete_items(
     bulk_delete_dto: BulkDeleteDto,

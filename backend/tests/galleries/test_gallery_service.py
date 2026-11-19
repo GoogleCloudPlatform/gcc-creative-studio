@@ -1401,3 +1401,55 @@ async def test_bulk_move_reraises_http_exception(service):
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Forbidden"
+
+
+@pytest.mark.anyio
+async def test_get_media_audio_analysis_success_and_not_found(service):
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    service.mock_media_repo.get_by_id.return_value = None
+    with pytest.raises(HTTPException) as exc_missing:
+        await service.get_media_audio_analysis(77, current_user)
+    assert exc_missing.value.status_code == 404
+
+    mock_item = MagicMock()
+    mock_item.id = 77
+    mock_item.workspace_id = 1
+    mock_item.audio_analysis = {"tracks": [{"waveform": [0.2, 0.6, 0.9]}]}
+    service.mock_media_repo.get_by_id.return_value = mock_item
+
+    # Missing parent workspace -> 404 before workspace_auth
+    service.mock_workspace_repo.get_by_id.return_value = None
+    with pytest.raises(HTTPException) as exc_no_ws:
+        await service.get_media_audio_analysis(77, current_user)
+    assert exc_no_ws.value.status_code == 404
+    service.mock_workspace_auth.authorize.assert_not_awaited()
+
+    # Unauthorized workspace -> propagates 403
+    service.mock_workspace_repo.get_by_id.return_value = MagicMock(id=1)
+    service.mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+    with pytest.raises(HTTPException) as exc_forbidden:
+        await service.get_media_audio_analysis(77, current_user)
+    assert exc_forbidden.value.status_code == 403
+    service.mock_workspace_auth.authorize.assert_awaited_once_with(
+        workspace_id=1,
+        user=current_user,
+    )
+
+    # Authorized -> returns audio_analysis without URL signing
+    service.mock_workspace_auth.authorize.reset_mock(side_effect=True)
+    result = await service.get_media_audio_analysis(77, current_user)
+
+    service.mock_workspace_auth.authorize.assert_awaited_once_with(
+        workspace_id=1,
+        user=current_user,
+    )
+    assert result == {"tracks": [{"waveform": [0.2, 0.6, 0.9]}]}
+    service.mock_iam_signer.generate_presigned_url.assert_not_called()
