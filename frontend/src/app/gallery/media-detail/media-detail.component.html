@@ -226,13 +226,13 @@
                 >{{ isPromptExpanded ? 'Show less' : 'Show more' }}</button>
               </div>
 
-              <div *ngIf="synthesizedPrompt" data-testid="synthesized-prompt-box">
+              <div *ngIf="synthesizedPrompt() as synthPrompt" data-testid="synthesized-prompt-box">
                 <div class="flex items-center justify-between mb-1">
                   <strong class="font-semibold text-gray-400">Synthesized Prompt:</strong>
                   <button
                     mat-icon-button
                     type="button"
-                    (click)="copyPromptText(synthesizedPrompt)"
+                    (click)="copyPromptText(synthPrompt)"
                     matTooltip="Copy synthesized prompt"
                     aria-label="Copy synthesized prompt"
                     class="!w-7 !h-7 text-gray-400 hover:text-white"
@@ -243,9 +243,9 @@
                 <p
                   class="p-3 rounded-md bg-gray-800/80 border border-gray-700/70 text-gray-300 text-xs whitespace-pre-line break-words leading-relaxed"
                   [class.line-clamp-4]="!isSynthesizedPromptExpanded"
-                >{{ synthesizedPrompt }}</p>
+                >{{ synthPrompt }}</p>
                 <button
-                  *ngIf="isExpandablePrompt(synthesizedPrompt)"
+                  *ngIf="isExpandablePrompt(synthPrompt)"
                   type="button"
                   (click)="toggleSynthesizedPromptExpansion()"
                   class="text-blue-400 hover:text-blue-300 text-sm mt-1"
@@ -783,23 +783,3 @@
     </div>
   </div>
   </div>
-  
-  <!-- Lightbox Overlay for Source Assets -->
-  <div *ngIf="selectedAssetForLightbox" class="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-4"
-    (click)="closeLightbox()">
-    <div (click)="$event.stopPropagation()" class="relative w-full h-full max-w-7xl max-h-[90vh] flex">
-      <app-media-lightbox
-      class="w-full h-full"
-      [mediaItem]="selectedAssetForLightbox"
-      [initialIndex]="lightboxInitialIndex"
-      [showSeeMoreInfoButton]="false"
-      [showShareButton]="false"
-      [showDownloadButton]="true"
-    ></app-media-lightbox>
-  </div>
-  <button (click)="closeLightbox()"
-    class="absolute top-4 right-4 z-[101] text-white bg-black/40 rounded-full p-2 hover:bg-black/60 transition-colors"
-    aria-label="Close lightbox">
-    <mat-icon>close</mat-icon>
-  </button>
-</div>

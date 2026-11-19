@@ -544,5 +544,3 @@ Example of a General Prompt for you to replace with the information received:
 The User Prompt to rewrite with the corresponding JSON format:
 '{}'
 """
-
-REWRITE_AUDIO_JSON_PROMPT_TEMPLATE = """ """

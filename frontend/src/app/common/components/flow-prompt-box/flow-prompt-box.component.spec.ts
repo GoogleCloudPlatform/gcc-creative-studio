@@ -810,6 +810,24 @@ describe('FlowPromptBoxComponent', () => {
       expect(windowKeydown).not.toHaveBeenCalled();
     });
 
+    it('emits generateClicked on Cmd+Enter (metaKey: true) as well', () => {
+      const emitSpy = spyOn(component.generateClicked, 'emit');
+      const textarea = fixture.debugElement.query(By.css('textarea'))
+        .nativeElement as HTMLTextAreaElement;
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      textarea.dispatchEvent(event);
+
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBeTrue();
+      expect(windowKeydown).not.toHaveBeenCalled();
+    });
+
     it('does not emit while loading and still stops propagation', () => {
       component.isLoading = true;
       fixture.detectChanges();

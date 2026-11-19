@@ -86,6 +86,16 @@ export class MediaLightboxComponent
   get showVtoButton(): boolean {
     return this.isImage;
   }
+
+  get canIterateAudio(): boolean {
+    const model = (this.mediaItem as any)?.model;
+    return (
+      this.isAudio &&
+      this.showIterateAudio &&
+      this.iterateAudioClicked.observers.length > 0 &&
+      (!model || String(model).toLowerCase().startsWith('lyria'))
+    );
+  }
   @Output() editClicked = new EventEmitter<number>();
   @Output() generateVideoClicked = new EventEmitter<{
     role: 'start' | 'end';
@@ -124,6 +134,7 @@ export class MediaLightboxComponent
   public isShareMenuOpen = false;
   public isDownloading = false;
   private lightbox: PhotoSwipeLightbox | undefined;
+  private selectMediaAudioTimer: ReturnType<typeof setTimeout> | null = null;
 
   @ViewChild('audioPlayer') audioPlayerRef!: ElementRef<HTMLAudioElement>;
   @ViewChild('videoPlayer') videoPlayerRef!: ElementRef<HTMLVideoElement>;
@@ -149,8 +160,16 @@ export class MediaLightboxComponent
   }
 
   ngOnDestroy(): void {
+    this.clearSelectMediaAudioTimer();
     this.lightbox?.destroy();
     this.lightbox = undefined;
+  }
+
+  private clearSelectMediaAudioTimer(): void {
+    if (this.selectMediaAudioTimer !== null) {
+      clearTimeout(this.selectMediaAudioTimer);
+      this.selectMediaAudioTimer = null;
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -436,7 +455,8 @@ export class MediaLightboxComponent
       if (this.isAudio) {
         this.resetAudioState();
         // Allow DOM to update src, then load
-        setTimeout(() => {
+        this.selectMediaAudioTimer = setTimeout(() => {
+          this.selectMediaAudioTimer = null;
           if (this.audioPlayerRef) {
             this.audioPlayerRef.nativeElement.load();
             this.togglePlay(); // Auto-play on switch
@@ -562,8 +582,10 @@ export class MediaLightboxComponent
     if (!audio) return;
 
     if (audio.paused) {
-      void audio.play();
       this.isPlaying = true;
+      audio.play()?.catch(() => {
+        this.isPlaying = false;
+      });
     } else {
       audio.pause();
       this.isPlaying = false;
@@ -604,6 +626,7 @@ export class MediaLightboxComponent
   }
 
   private resetAudioState() {
+    this.clearSelectMediaAudioTimer();
     this.isPlaying = false;
     this.progressValue = 0;
     this.currentTime = '0:00';

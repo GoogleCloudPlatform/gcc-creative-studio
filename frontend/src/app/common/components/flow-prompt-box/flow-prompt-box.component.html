@@ -43,7 +43,9 @@
         #settingsTrigger
         class="flex flex-wrap items-center justify-end gap-2 text-sm"
       >
-        <div
+        <button
+          type="button"
+          aria-label="Select generation model"
           (click)="toggleSettingsMenu(); $event.stopPropagation()"
           class="flex items-center gap-1.5 rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
         >
@@ -67,7 +69,7 @@
             ></mat-icon>
           </ng-container>
           {{ selectedGenerationModel }}
-        </div>
+        </button>
         <div class="contents">
           <ng-content select="[flowExtraChips]"></ng-content>
         </div>
@@ -115,14 +117,13 @@
       <textarea
         (input)="onPromptInput($event)"
         (keydown.control.enter)="onPromptCtrlEnter($event)"
+        (keydown.meta.enter)="onPromptCtrlEnter($event)"
         [ngModel]="prompt"
         [disabled]="isConcatenateVideo()"
         class="w-full h-24 bg-transparent text-xl text-neutral-400 placeholder:text-neutral-600 focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed"
         [placeholder]="effectivePlaceholder()"
       ></textarea>
     </div>
-
-    <ng-content select="[flowExtraPromptContent]"></ng-content>
 
     <!-- Bottom Row: Images & Submit -->
     <div class="flex flex-wrap items-end justify-between gap-y-4">
@@ -244,7 +245,9 @@
         <!-- Unified Ingredients Mode Inputs -->
         <ng-container *ngIf="canShowReferenceImages()">
           <ng-container *ngIf="getSelectedModelObject() as model">
-            <div
+            <button
+              type="button"
+              aria-label="Add reference images"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
               [class.opacity-50]="
                 referenceImages.length >= model.capabilities.maxReferenceImages
@@ -259,14 +262,23 @@
                 $event.preventDefault(); onReferenceImageDrop.emit($event)
               "
             >
-              <mat-icon class="text-neutral-500">add</mat-icon>
+              <span
+                *ngIf="isUploadingReferenceImage"
+                aria-label="Uploading reference image"
+                class="ref-upload-spinner h-6 w-6 rounded-full border-2 border-neutral-500 border-t-blue-400 animate-spin"
+              ></span>
+              <mat-icon
+                *ngIf="!isUploadingReferenceImage"
+                class="text-neutral-500"
+                >add</mat-icon
+              >
               <span
                 class="absolute bottom-0 text-[10px] text-neutral-500 tabular-nums"
                 >{{ referenceImages.length }}/{{
                   model.capabilities.maxReferenceImages
                 }}</span
               >
-            </div>
+            </button>
             <!-- Show small previews of reference images -->
             <div class="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
               <div
@@ -287,6 +299,8 @@
                   ></ng-container>
                 </ng-container>
                 <button
+                  type="button"
+                  aria-label="Remove reference image"
                   (click)="
                     $event.stopPropagation();
                     clearReferenceImage.emit({index: i, event: $event})
@@ -382,19 +396,34 @@
         <!-- Audio Reference Slot (for iterative Lyria music generation when allowReferenceAudio is enabled) -->
         <div
           *ngIf="canShowReferenceAudio()"
+          role="button"
+          tabindex="0"
+          aria-label="Attach reference audio"
           class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
           (click)="!referenceAudio && openAudioSelectorForReference.emit()"
+          (keydown.enter)="
+            !referenceAudio && openAudioSelectorForReference.emit()
+          "
+          (keydown.space)="
+            $event.preventDefault();
+            !referenceAudio && openAudioSelectorForReference.emit()
+          "
           (dragover)="$event.preventDefault()"
           (drop)="$event.preventDefault(); onReferenceAudioDrop.emit($event)"
           [matTooltip]="referenceAudio?.name || ''"
         >
-          <ng-container *ngIf="!referenceAudio">
+          <span
+            *ngIf="isUploadingReferenceAudio"
+            aria-label="Uploading reference audio"
+            class="ref-upload-spinner h-6 w-6 rounded-full border-2 border-neutral-500 border-t-blue-400 animate-spin"
+          ></span>
+          <ng-container *ngIf="!isUploadingReferenceAudio && !referenceAudio">
             <mat-icon class="text-neutral-500">audiotrack</mat-icon>
             <span class="absolute bottom-1 text-[8px] text-neutral-500"
               >Audio Ref</span
             >
           </ng-container>
-          <ng-container *ngIf="referenceAudio">
+          <ng-container *ngIf="!isUploadingReferenceAudio && referenceAudio">
             <mat-icon
               class="text-blue-400 !text-3xl !h-8 !w-8 flex items-center justify-center"
               >music_note</mat-icon

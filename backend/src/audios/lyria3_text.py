@@ -58,6 +58,12 @@ def _coerce_lyria3_scalar(value: str) -> int | float | str:
         return stripped
 
 
+_LYRIA_3_UNBRACKETED_SECTION_RE = re.compile(
+    r"^(?:verse|chorus|pre[- ]?chorus|post[- ]?chorus|bridge|intro|outro|hook|refrain|interlude|coda)\b[^:]{0,20}:",
+    re.IGNORECASE,
+)
+
+
 def _parse_lyria3_plain_block(block: str) -> tuple[str | None, dict[str, Any]]:
     """Splits a plain-text Lyria 3 block into ``(lyrics, structure)``."""
     lyrics_lines: list[str] = []
@@ -84,7 +90,9 @@ def _parse_lyria3_plain_block(block: str) -> tuple[str | None, dict[str, Any]]:
             if not stripped:
                 in_multiline_caption = False
                 continue
-            if not stripped.startswith("["):
+            if not stripped.startswith(
+                "["
+            ) and not _LYRIA_3_UNBRACKETED_SECTION_RE.match(stripped):
                 prev = structure.get("caption", "")
                 structure["caption"] = f"{prev} {stripped}".strip()
                 continue
@@ -94,6 +102,26 @@ def _parse_lyria3_plain_block(block: str) -> tuple[str | None, dict[str, Any]]:
 
     cleaned_lyrics = "\n".join(lyrics_lines).strip()
     return (cleaned_lyrics or None), structure
+
+
+def _extract_section_lyrics(sections: Sequence[Any]) -> str | None:
+    """Extracts formatted ``[Label]\\nLyrics`` text from a sequence of section dicts."""
+    section_lyrics = [
+        (
+            f"[{label.strip()}]\n{sec_text.strip()}"
+            if isinstance(
+                (label := sec.get("name") or sec.get("section")),
+                str,
+            )
+            and label.strip()
+            else sec_text.strip()
+        )
+        for sec in sections
+        if isinstance(sec, dict)
+        and isinstance((sec_text := sec.get("lyrics")), str)
+        and sec_text.strip()
+    ]
+    return "\n\n".join(section_lyrics) if section_lyrics else None
 
 
 def _collect_text_items(items: Any) -> list[str]:
@@ -145,30 +173,31 @@ def _extract_lyria3_text(interaction: Any) -> dict[str, Any] | None:
                 parsed_json = None
 
         if isinstance(parsed_json, dict):
-            entry["structure"] = parsed_json
+            existing_structure = entry.get("structure")
+            if isinstance(existing_structure, dict):
+                entry["structure"] = {**existing_structure, **parsed_json}
+            elif isinstance(existing_structure, list):
+                merged = {"sections": existing_structure, **parsed_json}
+                entry["structure"] = merged
+            else:
+                entry["structure"] = dict(parsed_json)
+
             inline_lyrics = parsed_json.get("lyrics")
             if isinstance(inline_lyrics, str) and inline_lyrics.strip():
                 lyrics_parts.append(inline_lyrics.strip())
             elif isinstance(parsed_json.get("sections"), list):
-                section_lyrics = [
-                    (
-                        f"[{label.strip()}]\n{sec_text.strip()}"
-                        if isinstance(
-                            (label := sec.get("name") or sec.get("section")),
-                            str,
-                        )
-                        and label.strip()
-                        else sec_text.strip()
-                    )
-                    for sec in parsed_json["sections"]
-                    if isinstance(sec, dict)
-                    and isinstance((sec_text := sec.get("lyrics")), str)
-                    and sec_text.strip()
-                ]
-                if section_lyrics:
-                    lyrics_parts.append("\n\n".join(section_lyrics))
+                sec_lyrics = _extract_section_lyrics(parsed_json["sections"])
+                if sec_lyrics:
+                    lyrics_parts.append(sec_lyrics)
         elif isinstance(parsed_json, list):
-            entry["structure"] = parsed_json
+            sec_lyrics = _extract_section_lyrics(parsed_json)
+            if sec_lyrics:
+                lyrics_parts.append(sec_lyrics)
+            existing_structure = entry.get("structure")
+            if isinstance(existing_structure, dict):
+                existing_structure.setdefault("sections", parsed_json)
+            else:
+                entry["structure"] = parsed_json
         else:
             plain_lyrics, plain_structure = _parse_lyria3_plain_block(block)
             if plain_lyrics:
@@ -178,6 +207,11 @@ def _extract_lyria3_text(interaction: Any) -> dict[str, Any] | None:
                 if isinstance(existing_structure, dict):
                     for key, val in plain_structure.items():
                         existing_structure.setdefault(key, val)
+                elif isinstance(existing_structure, list):
+                    entry["structure"] = {
+                        **plain_structure,
+                        "sections": existing_structure,
+                    }
                 elif existing_structure is None:
                     entry["structure"] = plain_structure
 

@@ -16,13 +16,16 @@
 
 import {
   Component,
+  DestroyRef,
   ElementRef,
   Inject,
   OnInit,
   ViewChild,
   computed,
+  inject,
   signal,
 } from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {Router} from '@angular/router';
 import {
   CreateAudioDto,
@@ -127,6 +130,8 @@ export class AudioComponent implements OnInit {
   isLoading = false;
   isRewritingPrompt = false;
   uploadingReferenceCount = 0;
+  uploadingReferenceImageCount = 0;
+  uploadingReferenceAudioCount = 0;
 
   activeAudioJob$: Observable<MediaItem | null>;
   public readonly JobStatus = JobStatus;
@@ -294,6 +299,8 @@ export class AudioComponent implements OnInit {
 
   @ViewChild('promptBoxHost', {read: ElementRef})
   promptBoxHost?: ElementRef<HTMLElement>;
+
+  private readonly destroyRef = inject(DestroyRef);
 
   private pendingRemixState?: {
     lyriaModel?: string;
@@ -521,16 +528,21 @@ export class AudioComponent implements OnInit {
       if (!file.type.startsWith('image/')) continue;
       availableSlots--;
       this.uploadingReferenceCount++;
+      this.uploadingReferenceImageCount++;
       this.sourceAssetService
         .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
         .pipe(
-          finalize(
-            () =>
-              (this.uploadingReferenceCount = Math.max(
-                0,
-                this.uploadingReferenceCount - 1,
-              )),
-          ),
+          finalize(() => {
+            this.uploadingReferenceCount = Math.max(
+              0,
+              this.uploadingReferenceCount - 1,
+            );
+            this.uploadingReferenceImageCount = Math.max(
+              0,
+              this.uploadingReferenceImageCount - 1,
+            );
+          }),
+          takeUntilDestroyed(this.destroyRef),
         )
         .subscribe({
           next: (asset: SourceAssetResponseDto) => {
@@ -661,16 +673,21 @@ export class AudioComponent implements OnInit {
     }
 
     this.uploadingReferenceCount++;
+    this.uploadingReferenceAudioCount++;
     this.sourceAssetService
       .uploadAsset(normalizedFile)
       .pipe(
-        finalize(
-          () =>
-            (this.uploadingReferenceCount = Math.max(
-              0,
-              this.uploadingReferenceCount - 1,
-            )),
-        ),
+        finalize(() => {
+          this.uploadingReferenceCount = Math.max(
+            0,
+            this.uploadingReferenceCount - 1,
+          );
+          this.uploadingReferenceAudioCount = Math.max(
+            0,
+            this.uploadingReferenceAudioCount - 1,
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
@@ -701,9 +718,7 @@ export class AudioComponent implements OnInit {
     const rawType = (file.type || '').trim().toLowerCase();
     const ext =
       /\.([a-z0-9]+)$/i.exec(file.name || '')?.[1].toLowerCase() ?? '';
-    const mime = rawType
-      ? SUPPORTED_AUDIO_MIMES[rawType]
-      : AUDIO_EXT_MIMES[ext];
+    const mime = SUPPORTED_AUDIO_MIMES[rawType] ?? AUDIO_EXT_MIMES[ext];
     if (!mime) return null;
     return mime === file.type
       ? file
@@ -817,7 +832,10 @@ export class AudioComponent implements OnInit {
 
     this.searchService
       .startAudioGeneration(request)
-      .pipe(finalize(() => (this.isLoading = false)))
+      .pipe(
+        finalize(() => (this.isLoading = false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         error: (error: any) => {
           handleErrorSnackbar(this.snackBar, error, 'Generation');
@@ -848,7 +866,10 @@ export class AudioComponent implements OnInit {
     this.isRewritingPrompt = true;
     this.searchService
       .rewritePrompt({targetType: 'audio', userPrompt: promptToSend})
-      .pipe(finalize(() => (this.isRewritingPrompt = false)))
+      .pipe(
+        finalize(() => (this.isRewritingPrompt = false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: ({prompt}) => {
           if (this.selectedModel === 'lyria') {
@@ -891,6 +912,7 @@ export class AudioComponent implements OnInit {
       this.onLyriaModelChange(lyriaModel);
     }
     this.referenceAudio = referenceAudio;
+    this.referenceImages = [];
     this.prompt = '';
     this.seed = undefined;
     this.saveState();

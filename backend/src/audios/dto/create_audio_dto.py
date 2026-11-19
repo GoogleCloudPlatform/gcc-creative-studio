@@ -40,6 +40,20 @@ GEMINI_TTS_MODELS = {
     GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW,
 }
 ALLOWED_AUDIO_MODELS = LYRIA_MUSIC_MODELS | CHIRP_TTS_MODELS | GEMINI_TTS_MODELS
+ALLOWED_METADATA_GENERATION_MODELS = {
+    GenerationModelEnum.GEMINI_4_ARGON,
+    GenerationModelEnum.GEMINI_4_HYDROGEN,
+    GenerationModelEnum.GEMINI_3_8_FLASH,
+    GenerationModelEnum.GEMINI_3_7_FLASH,
+    GenerationModelEnum.GEMINI_3_6_FLASH,
+    GenerationModelEnum.GEMINI_3_5_FLASH,
+    GenerationModelEnum.GEMINI_3_5_FLASH_LITE,
+    GenerationModelEnum.GEMINI_3_FLASH_PREVIEW,
+    GenerationModelEnum.GEMINI_3_1_PRO_PREVIEW,
+    GenerationModelEnum.GEMINI_3_1_FLASH_LITE,
+    GenerationModelEnum.GEMINI_2_5_FLASH,
+    GenerationModelEnum.GEMINI_2_5_PRO,
+}
 MAX_LYRIA_3_REFERENCE_IMAGES = 10
 LYRIA_MAX_SEED = 2_147_483_647
 
@@ -61,10 +75,11 @@ class CreateAudioDto(BaseDto):
     )
 
     workspace_id: int = Field(
+        ge=1,
         description="The ID of the workspace for this generation.",
     )
 
-    metadata_generation_model: GenerationModelEnum | str | None = Field(
+    metadata_generation_model: GenerationModelEnum | None = Field(
         default=GenerationModelEnum.GEMINI_3_5_FLASH,
         description="The Gemini model to use for synchronous metadata generation.",
     )
@@ -85,6 +100,7 @@ class CreateAudioDto(BaseDto):
 
     negative_prompt: str | None = Field(
         default=None,
+        max_length=10000,
         description="[Lyria Only] What to avoid in the music generation.",
     )
 
@@ -152,6 +168,24 @@ class CreateAudioDto(BaseDto):
             raise ValueError(
                 f"Model '{value}' is not a valid audio model. "
                 f"Allowed models: {[m.value for m in ALLOWED_AUDIO_MODELS]}",
+            )
+        return value
+
+    @field_validator("metadata_generation_model")
+    @classmethod
+    def validate_metadata_generation_model(
+        cls, value: GenerationModelEnum | None
+    ) -> GenerationModelEnum | None:
+        if (
+            value is not None
+            and value not in ALLOWED_METADATA_GENERATION_MODELS
+        ):
+            allowed = sorted(
+                m.value for m in ALLOWED_METADATA_GENERATION_MODELS
+            )
+            raise ValueError(
+                f"Model '{value}' is not a valid metadata generation model. "
+                f"Allowed models: {allowed}"
             )
         return value
 

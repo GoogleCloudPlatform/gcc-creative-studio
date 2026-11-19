@@ -70,7 +70,7 @@
 
         <!-- Audio Result Lightbox -->
         <div
-          style="min-height: 45vh;"
+          style="min-height: 45vh"
           *ngIf="job.status === JobStatus.COMPLETED"
         >
           <app-media-lightbox
@@ -165,6 +165,7 @@
           class="cursor-pointer w-32 inline-flex flex-col justify-start items-center"
         >
           <mat-slide-toggle
+            aria-label="Enhance Prompt"
             [(ngModel)]="enhancePrompt"
             (ngModelChange)="saveState()"
             class="!w-16 !h-16 !shadow-none text-center !flex justify-center items-center text-stone-300"
@@ -297,13 +298,17 @@
           [canEditReferenceImages]="false"
           [referenceImages]="referenceImages"
           [referenceAudio]="referenceAudio"
+          [isUploadingReferenceImage]="uploadingReferenceImageCount > 0"
+          [isUploadingReferenceAudio]="uploadingReferenceAudioCount > 0"
           (promptChanged)="onPromptChanged($event)"
           (outputsChanged)="onOutputsChanged($event)"
           (modeChanged)="onModeChanged($event)"
           (modelSelected)="onAudioModelSelected($event)"
           (openImageSelectorForReference)="openImageSelector()"
           (onReferenceImageDrop)="onReferenceImageDrop($event)"
-          (clearReferenceImage)="clearReferenceImage($event.index, $event.event)"
+          (clearReferenceImage)="
+            clearReferenceImage($event.index, $event.event)
+          "
           (openAudioSelectorForReference)="openAudioSelectorForReference()"
           (onReferenceAudioDrop)="onReferenceAudioDrop($event)"
           (clearReferenceAudio)="clearReferenceAudio($event)"
@@ -317,12 +322,17 @@
               seed !== undefined &&
               seed !== null
             ) {
-              <span
+              <button
+                type="button"
+                aria-label="Configure seed"
+                (click)="
+                  promptBoxHost.toggleSettingsMenu(); $event.stopPropagation()
+                "
                 class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
                 matTooltip="Seed"
               >
                 #{{ seed }}
-              </span>
+              </button>
             }
           </ng-container>
 
@@ -341,6 +351,9 @@
                   <input
                     id="lyria-seed-input"
                     type="number"
+                    min="0"
+                    max="2147483647"
+                    step="1"
                     [(ngModel)]="seed"
                     (ngModelChange)="saveState()"
                     placeholder="Random"
@@ -372,4 +385,3 @@
     </div>
   </div>
 </div>
-

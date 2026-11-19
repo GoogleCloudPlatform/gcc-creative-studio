@@ -100,9 +100,19 @@ class GeminiService:
         self.client: Client = GeminiModelSetup.init()
         self.cfg = config_service
         self.rewriter_model = self.cfg.GEMINI_MODEL_ID
+        self.audio_rewriter_model = self.cfg.GEMINI_AUDIO_REWRITER_MODEL_ID
         self.brand_guideline_repo = brand_guideline_repo
         self.media_item_repo = media_item_repo
         self.source_asset_repo = source_asset_repo
+
+    @classmethod
+    def create_stateless(cls) -> "GeminiService":
+        """Instantiates GeminiService without opening DB sessions for stateless routes."""
+        return cls(
+            brand_guideline_repo=None,  # type: ignore[arg-type]
+            media_item_repo=None,  # type: ignore[arg-type]
+            source_asset_repo=None,  # type: ignore[arg-type]
+        )
 
     def _get_response_schema(self, target: PromptTargetEnum) -> type[BaseModel]:
         """Dynamically gets the Pydantic schema based on the target type."""
@@ -155,8 +165,13 @@ class GeminiService:
                 if mime_val == ResponseMimeTypeEnum.JSON.value
                 else None
             )
+            target_model = normalize_retired_text_model(
+                self.audio_rewriter_model
+                if target_type == PromptTargetEnum.AUDIO
+                else self.rewriter_model
+            )
             response = self.client.models.generate_content(
-                model=self.rewriter_model,
+                model=target_model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type=mime_val,
@@ -488,7 +503,8 @@ class GeminiService:
         )
         prompt_string = self._convert_dto_to_string(dto)
 
-        return self.generate_structured_prompt(
+        return await asyncio.to_thread(
+            self.generate_structured_prompt,
             original_prompt=prompt_string,
             target_type=target_type,
             prompt_template=prompt_template,
@@ -589,6 +605,7 @@ class GeminiService:
         ".mp4": "video/mp4",
         ".wav": "audio/wav",
         ".ogg": "audio/ogg",
+        ".webm": "audio/webm",
         ".mp3": "audio/mpeg",
     }
 
@@ -922,5 +939,5 @@ class GeminiService:
             logger.error("Failed to generate multimodal content: %s", e)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to generate multimodal content: {e}",
-            )
+                detail="Failed to generate multimodal content.",
+            ) from e

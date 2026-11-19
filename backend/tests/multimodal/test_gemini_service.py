@@ -425,6 +425,7 @@ async def test_generate_multimodal_failure(gemini_service):
     with pytest.raises(HTTPException) as exc_info:
         await gemini_service.generate_multimodal(request)
     assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Failed to generate multimodal content."
 
 
 @pytest.mark.anyio
@@ -1020,6 +1021,26 @@ def test_generate_random_and_rewrite_audio_prompt(gemini_service):
     assert gemini_service.client.models.generate_content.call_count == 2
 
 
+def test_audio_target_uses_audio_rewriter_model(gemini_service):
+    gemini_service.rewriter_model = "default-model"
+    gemini_service.audio_rewriter_model = "audio-model"
+    gemini_service.client.models.generate_content.return_value = MagicMock(
+        text="ok"
+    )
+
+    gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.AUDIO)
+    assert (
+        gemini_service.client.models.generate_content.call_args.kwargs["model"]
+        == "audio-model"
+    )
+
+    gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.IMAGE)
+    assert (
+        gemini_service.client.models.generate_content.call_args.kwargs["model"]
+        == "default-model"
+    )
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     (
@@ -1195,11 +1216,15 @@ def test_generate_media_metadata_with_audio_profile_compacts_and_infers_audio_mi
 
     with patch(
         "src.multimodal.gemini_service.types.Part.from_uri",
-        side_effect=[MagicMock(), MagicMock()],
+        side_effect=[MagicMock(), MagicMock(), MagicMock()],
     ) as mock_from_uri:
         res = gemini_service.generate_media_metadata(
             prompt="Jazz keys",
-            media_uris=["gs://bucket/take1.wav", "gs://bucket/take2.ogg"],
+            media_uris=[
+                "gs://bucket/take1.wav",
+                "gs://bucket/take2.ogg",
+                "gs://bucket/take3.webm",
+            ],
             model_name="gemini-3.5-flash",
             include_audio_profile=True,
         )
@@ -1207,6 +1232,7 @@ def test_generate_media_metadata_with_audio_profile_compacts_and_infers_audio_mi
     assert [c.kwargs for c in mock_from_uri.call_args_list] == [
         {"file_uri": "gs://bucket/take1.wav", "mime_type": "audio/wav"},
         {"file_uri": "gs://bucket/take2.ogg", "mime_type": "audio/ogg"},
+        {"file_uri": "gs://bucket/take3.webm", "mime_type": "audio/webm"},
     ]
     assert res == {
         "titles": ["Take 1", "Take 2"],

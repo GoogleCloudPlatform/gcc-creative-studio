@@ -15,6 +15,7 @@
 
 import asyncio
 import base64
+import datetime
 import io
 import logging
 import os
@@ -24,7 +25,7 @@ import sys
 import time
 import wave
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, NamedTuple
 
 import vertexai
 from fastapi import Depends
@@ -112,6 +113,67 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+_AUDIO_MIME_TO_CONTAINER: dict[str, tuple[MimeTypeEnum, str]] = {
+    "audio/wav": (MimeTypeEnum.AUDIO_WAV, "wav"),
+    "audio/x-wav": (MimeTypeEnum.AUDIO_WAV, "wav"),
+    "audio/wave": (MimeTypeEnum.AUDIO_WAV, "wav"),
+    "audio/ogg": (MimeTypeEnum.AUDIO_OGG, "ogg"),
+    "application/ogg": (MimeTypeEnum.AUDIO_OGG, "ogg"),
+    "audio/webm": (MimeTypeEnum.AUDIO_WEBM, "webm"),
+    "audio/mpeg": (MimeTypeEnum.AUDIO_MPEG, "mp3"),
+    "audio/mp3": (MimeTypeEnum.AUDIO_MPEG, "mp3"),
+}
+
+_AUDIO_EXT_TO_MIME: dict[str, MimeTypeEnum] = {
+    ".wav": MimeTypeEnum.AUDIO_WAV,
+    ".mp3": MimeTypeEnum.AUDIO_MPEG,
+    ".ogg": MimeTypeEnum.AUDIO_OGG,
+    ".webm": MimeTypeEnum.AUDIO_WEBM,
+}
+
+
+def _normalize_audio_container(
+    mime_type: str | None,
+) -> tuple[MimeTypeEnum, str]:
+    """Maps an audio MIME type to its canonical ``(MimeTypeEnum, file_ext)``."""
+    base = (mime_type or "").split(";", 1)[0].strip().lower()
+    return _AUDIO_MIME_TO_CONTAINER.get(base, (MimeTypeEnum.AUDIO_MPEG, "mp3"))
+
+
+def _resolve_audio_uri_mime(gcs_uri: str, fallback_mime: str) -> str:
+    """Resolves canonical audio MIME from ``gcs_uri`` extension or ``fallback_mime``."""
+    uri_lower = (gcs_uri or "").lower()
+    for ext, mime_enum in _AUDIO_EXT_TO_MIME.items():
+        if uri_lower.endswith(ext):
+            return mime_enum.value
+    if fallback_mime == MimeTypeEnum.AUDIO_MP3.value:
+        return MimeTypeEnum.AUDIO_MPEG.value
+    return fallback_mime
+
+
+def _is_asset_deleted(asset: object) -> bool:
+    return isinstance(getattr(asset, "deleted_at", None), datetime.datetime)
+
+
+def _is_media_item_completed(item: object) -> bool:
+    status = getattr(item, "status", None)
+    if status is None or isinstance(status, (JobStatusEnum, str)):
+        return status == JobStatusEnum.COMPLETED
+    return True
+
+
+class AudioGenerationError(ValueError):
+    """A failure whose message is safe to persist and show to the user."""
+
+
+class _Lyria3TakeOutcome(NamedTuple):
+    stored: tuple[str, dict[str, Any] | None] | None
+    take_mime: MimeTypeEnum
+    used_prompt: str
+    blocked: bool
+    retried: bool
+
+
 async def _resolve_workspace_source_asset(
     source_asset_repo: SourceAssetRepository,
     asset_id: int,
@@ -119,16 +181,20 @@ async def _resolve_workspace_source_asset(
     kind: str,
 ) -> tuple[str, str]:
     asset = await source_asset_repo.get_by_id(asset_id)
-    if not asset or (
-        asset.workspace_id != workspace_id
-        and asset.scope != AssetScopeEnum.SYSTEM
+    if (
+        not asset
+        or _is_asset_deleted(asset)
+        or (
+            asset.workspace_id != workspace_id
+            and asset.scope != AssetScopeEnum.SYSTEM
+        )
     ):
-        raise ValueError(
+        raise AudioGenerationError(
             f"Source asset {asset_id} was not found in this workspace."
         )
     mime_val = _mime_value(asset.mime_type)
     if not asset.gcs_uri or not mime_val.startswith(f"{kind}/"):
-        raise ValueError(
+        raise AudioGenerationError(
             f"Source asset {asset_id} is not a valid {kind} asset."
         )
     return asset.gcs_uri, mime_val
@@ -142,17 +208,23 @@ async def _resolve_workspace_media_item(
     kind: str,
 ) -> tuple[Any, str, str]:
     item = await media_repo.get_by_id(media_item_id)
-    if not item or item.workspace_id != workspace_id:
-        raise ValueError(
+    if not item or _is_asset_deleted(item) or item.workspace_id != workspace_id:
+        raise AudioGenerationError(
             f"Media item {media_item_id} was not found in this workspace."
         )
+    if not _is_media_item_completed(item):
+        raise AudioGenerationError(
+            f"Media item {media_item_id} is not completed."
+        )
     if not item.gcs_uris or not (0 <= media_index < len(item.gcs_uris)):
-        raise ValueError(
+        raise AudioGenerationError(
             f"Media item {media_item_id} index {media_index} is out of bounds."
         )
     mime_val = _mime_value(item.mime_type)
     if not mime_val.startswith(f"{kind}/"):
-        raise ValueError(f"Media item {media_item_id} is not an {kind} item.")
+        raise AudioGenerationError(
+            f"Media item {media_item_id} is not an {kind} item."
+        )
     return item, item.gcs_uris[media_index], mime_val
 
 
@@ -227,14 +299,13 @@ async def _resolve_reference_audio(
     """Validates and resolves an uploaded or gallery reference audio for Lyria."""
     ref = request_dto.reference_audio
     if ref is None:
-        raise ValueError("reference_audio is required.")
+        raise AudioGenerationError("reference_audio is required.")
 
     if ref.type == "source_asset":
         gcs_uri, mime_val = await _resolve_workspace_source_asset(
             source_asset_repo, ref.id, request_dto.workspace_id, "audio"
         )
-        if mime_val == MimeTypeEnum.AUDIO_MP3.value:
-            mime_val = MimeTypeEnum.AUDIO_MPEG.value
+        mime_val = _resolve_audio_uri_mime(gcs_uri, mime_val)
         return (
             {"uri": gcs_uri, "mime_type": mime_val},
             SourceAssetLink(
@@ -248,11 +319,7 @@ async def _resolve_reference_audio(
         parent_item, gcs_uri, mime_val = await _resolve_workspace_media_item(
             media_repo, ref.id, media_index, request_dto.workspace_id, "audio"
         )
-        if (
-            gcs_uri.lower().endswith(".mp3")
-            or mime_val == MimeTypeEnum.AUDIO_MP3.value
-        ):
-            mime_val = MimeTypeEnum.AUDIO_MPEG.value
+        mime_val = _resolve_audio_uri_mime(gcs_uri, mime_val)
 
         context: dict[str, Any] = {"uri": gcs_uri, "mime_type": mime_val}
         raw_prompt = getattr(parent_item, "prompt", None)
@@ -318,7 +385,7 @@ async def _resolve_reference_audio(
             ),
         )
 
-    raise ValueError(
+    raise AudioGenerationError(
         "reference_audio.type must be 'source_asset' or 'media_item'."
     )
 
@@ -504,6 +571,9 @@ def _process_audio_in_background(
     worker_logger = logging.getLogger(f"audio_worker.{media_item_id}")
     worker_logger.setLevel(logging.INFO)
 
+    loop: asyncio.AbstractEventLoop | None = None
+    job_marked_terminal = False
+
     try:
         if worker_logger.hasHandlers():
             worker_logger.handlers.clear()
@@ -527,17 +597,22 @@ def _process_audio_in_background(
         asyncio.set_event_loop(loop)
 
         async def _async_worker():
+            nonlocal job_marked_terminal
             async with WorkerDatabase() as db_factory:
                 async with db_factory() as db:
                     media_repo = MediaRepository(db)
-                    brand_repo = BrandGuidelineRepository(db)
-                    gemini_service = GeminiService(
-                        brand_guideline_repo=brand_repo
-                    )
-                    gcs_service = GcsService()
-                    cfg = config_service
 
                     try:
+                        brand_repo = BrandGuidelineRepository(db)
+                        source_asset_repo = SourceAssetRepository(db)
+                        gemini_service = GeminiService(
+                            brand_guideline_repo=brand_repo,
+                            media_item_repo=media_repo,
+                            source_asset_repo=source_asset_repo,
+                        )
+                        gcs_service = GcsService()
+                        cfg = config_service
+
                         vertexai.init(
                             project=cfg.PROJECT_ID, location=cfg.LOCATION
                         )
@@ -554,7 +629,6 @@ def _process_audio_in_background(
                         track_analyses: list[dict[str, Any] | None] = []
                         persisted_seed: int | None = None
                         reference_audio_context: dict[str, Any] | None = None
-                        source_asset_repo: SourceAssetRepository | None = None
                         is_music_model = (
                             request_dto.model in AudioService.MUSIC_MODELS
                         )
@@ -566,7 +640,6 @@ def _process_audio_in_background(
                                 or request_dto.source_media_items
                             )
                         ):
-                            source_asset_repo = SourceAssetRepository(db)
                             (
                                 lyria3_image_inputs,
                                 source_assets,
@@ -581,9 +654,6 @@ def _process_audio_in_background(
                             is_music_model
                             and request_dto.reference_audio is not None
                         ):
-                            source_asset_repo = (
-                                source_asset_repo or SourceAssetRepository(db)
-                            )
                             (
                                 reference_audio_context,
                                 ref_audio_asset_link,
@@ -808,11 +878,6 @@ def _process_audio_in_background(
                             lyria3_initial_prompt = _build_lyria3_prompt(
                                 request_dto, prompt_override=music_prompt
                             )
-                            lyria3_state: dict[str, Any] = {
-                                "prompt": lyria3_initial_prompt,
-                                "blocked": False,
-                                "retried": False,
-                            }
                             can_simplify_retry = (
                                 reference_audio_context is None
                                 and not _has_lyria3_vocal_intent(
@@ -857,18 +922,22 @@ def _process_audio_in_background(
 
                             async def generate_lyria3(
                                 index: int,
-                            ) -> tuple[str, dict[str, Any] | None] | None:
-                                prompt = lyria3_state["prompt"]
+                            ) -> _Lyria3TakeOutcome:
+                                used_prompt = lyria3_initial_prompt
+                                was_retried = False
                                 try:
                                     try:
-                                        interaction = await run_lyria3(prompt)
+                                        interaction = await run_lyria3(
+                                            lyria3_initial_prompt
+                                        )
                                     except Exception as first_error:
                                         if not (
                                             _is_lyria3_content_blocked(
                                                 first_error
                                             )
                                             and lyria3_retry_prompt
-                                            and lyria3_retry_prompt != prompt
+                                            and lyria3_retry_prompt
+                                            != lyria3_initial_prompt
                                         ):
                                             raise
                                         worker_logger.warning(
@@ -878,14 +947,12 @@ def _process_audio_in_background(
                                             "%r",
                                             lyria3_retry_prompt,
                                         )
-                                        lyria3_state["retried"] = True
+                                        was_retried = True
                                         interaction = await run_lyria3(
                                             lyria3_retry_prompt,
                                             include_images=False,
                                         )
-                                        lyria3_state["prompt"] = (
-                                            lyria3_retry_prompt
-                                        )
+                                        used_prompt = lyria3_retry_prompt
                                     audio_bytes, mime_type = (
                                         _extract_lyria3_audio(interaction)
                                     )
@@ -894,48 +961,92 @@ def _process_audio_in_background(
                                             "Lyria 3 interaction %s returned no audio output.",
                                             getattr(interaction, "id", None),
                                         )
-                                        return None
-                                    ext = (
-                                        "wav"
-                                        if mime_type == "audio/wav"
-                                        else "mp3"
+                                        return _Lyria3TakeOutcome(
+                                            stored=None,
+                                            take_mime=MimeTypeEnum.AUDIO_MPEG,
+                                            used_prompt=used_prompt,
+                                            blocked=False,
+                                            retried=was_retried,
+                                        )
+                                    take_mime, ext = _normalize_audio_container(
+                                        mime_type
                                     )
-                                    return await _store_and_analyze_take(
+                                    stored = await _store_and_analyze_take(
                                         folder="lyria_audio",
                                         file_name=(
                                             f"lyria3_music_{media_item_id}"
                                             f"_{uid_short}_{index}.{ext}"
                                         ),
-                                        mime_type=mime_type,
+                                        mime_type=take_mime.value,
                                         audio_bytes=audio_bytes,
                                         base_meta=_extract_lyria3_text(
                                             interaction
                                         ),
                                     )
+                                    return _Lyria3TakeOutcome(
+                                        stored=stored,
+                                        take_mime=take_mime,
+                                        used_prompt=used_prompt,
+                                        blocked=False,
+                                        retried=was_retried,
+                                    )
                                 except Exception as e:
-                                    if _is_lyria3_content_blocked(e):
-                                        lyria3_state["blocked"] = True
+                                    was_blocked = _is_lyria3_content_blocked(e)
                                     worker_logger.error(
                                         f"Lyria 3 generation error: {e}"
                                     )
-                                    return None
+                                    return _Lyria3TakeOutcome(
+                                        stored=None,
+                                        take_mime=MimeTypeEnum.AUDIO_MPEG,
+                                        used_prompt=used_prompt,
+                                        blocked=was_blocked,
+                                        retried=was_retried,
+                                    )
 
-                            (
-                                permanent_gcs_uris,
-                                track_analyses,
-                            ) = await _gather_valid_takes(generate_lyria3)
-                            output_mime_type = MimeTypeEnum.AUDIO_MPEG
-                            if (
-                                not permanent_gcs_uris
-                                and lyria3_state["blocked"]
+                            lyria3_outcomes = await asyncio.gather(
+                                *(
+                                    generate_lyria3(i)
+                                    for i in range(request_dto.sample_count)
+                                )
+                            )
+                            surviving_outcomes = [
+                                o
+                                for o in lyria3_outcomes
+                                if o.stored is not None
+                            ]
+                            permanent_gcs_uris = [
+                                o.stored[0]
+                                for o in surviving_outcomes
+                                if o.stored is not None
+                            ]
+                            track_analyses = [
+                                o.stored[1]
+                                for o in surviving_outcomes
+                                if o.stored is not None
+                            ]
+                            output_mime_type = (
+                                surviving_outcomes[0].take_mime
+                                if surviving_outcomes
+                                else MimeTypeEnum.AUDIO_MPEG
+                            )
+                            if not permanent_gcs_uris and any(
+                                o.blocked for o in lyria3_outcomes
                             ):
-                                raise ValueError(
+                                raise AudioGenerationError(
                                     LYRIA_3_CONTENT_BLOCKED_MESSAGE
-                                    if lyria3_state["retried"]
+                                    if any(o.retried for o in lyria3_outcomes)
                                     else LYRIA_3_CONTENT_BLOCKED_NO_RETRY_MESSAGE
                                 )
-                            if lyria3_state["prompt"] != lyria3_initial_prompt:
-                                effective_prompt = lyria3_state["prompt"]
+                            if (
+                                surviving_outcomes
+                                and lyria3_retry_prompt
+                                and lyria3_retry_prompt != lyria3_initial_prompt
+                                and all(
+                                    o.used_prompt == lyria3_retry_prompt
+                                    for o in surviving_outcomes
+                                )
+                            ):
+                                effective_prompt = lyria3_retry_prompt
 
                         elif request_dto.model in AudioService.LYRIA_2_MODELS:
                             ai_client = aiplatform.gapic.PredictionServiceClient(
@@ -1020,12 +1131,12 @@ def _process_audio_in_background(
                                 persisted_seed = track_analyses[0]["seed"]
 
                         else:
-                            raise ValueError(
+                            raise AudioGenerationError(
                                 f"Model {request_dto.model} is not supported."
                             )
 
                         if not permanent_gcs_uris:
-                            raise ValueError(
+                            raise AudioGenerationError(
                                 "Failed to generate any audio samples."
                             )
 
@@ -1036,7 +1147,12 @@ def _process_audio_in_background(
                             "gcs_uris": permanent_gcs_uris,
                             "generation_time": generation_time,
                         }
-                        if output_mime_type != MimeTypeEnum.AUDIO_WAV:
+                        if len(permanent_gcs_uris) != request_dto.sample_count:
+                            update_data["num_media"] = len(permanent_gcs_uris)
+                        if (
+                            output_mime_type != MimeTypeEnum.AUDIO_WAV
+                            or request_dto.model in AudioService.LYRIA_3_MODELS
+                        ):
                             update_data["mime_type"] = output_mime_type
                         if effective_prompt:
                             update_data["prompt"] = effective_prompt
@@ -1054,12 +1170,17 @@ def _process_audio_in_background(
                         musical_profiles: list[dict[str, Any] | None] | None = (
                             None
                         )
-                        if (
-                            getattr(
-                                request_dto, "metadata_generation_model", None
+                        metadata_model = getattr(
+                            request_dto, "metadata_generation_model", None
+                        )
+                        if metadata_model and permanent_gcs_uris:
+                            metadata_model_name = (
+                                metadata_model.value
+                                if isinstance(
+                                    metadata_model, GenerationModelEnum
+                                )
+                                else str(metadata_model)
                             )
-                            and permanent_gcs_uris
-                        ):
                             try:
                                 metadata = await asyncio.to_thread(
                                     gemini_service.generate_media_metadata,
@@ -1069,8 +1190,8 @@ def _process_audio_in_background(
                                         f"{effective_prompt or request_dto.prompt}"
                                     ),
                                     media_uris=permanent_gcs_uris,
-                                    model_name=request_dto.metadata_generation_model,
-                                    mime_type=output_mime_type.value,
+                                    model_name=metadata_model_name,
+                                    mime_type=None,
                                     include_audio_profile=is_music_model,
                                 )
                                 for key in ("titles", "descriptions"):
@@ -1096,6 +1217,7 @@ def _process_audio_in_background(
                             update_data["audio_analysis"] = audio_analysis
 
                         await media_repo.update(media_item_id, update_data)
+                        job_marked_terminal = True
                         worker_logger.info(
                             f"Audio job {media_item_id} completed successfully."
                         )
@@ -1104,19 +1226,61 @@ def _process_audio_in_background(
                         worker_logger.error(
                             f"Audio processing failed: {e}", exc_info=True
                         )
+                        safe_error = (
+                            str(e)
+                            if isinstance(e, AudioGenerationError)
+                            else "Audio generation failed due to an internal error."
+                        )
                         await media_repo.update(
                             media_item_id,
                             {
                                 "status": JobStatusEnum.FAILED,
-                                "error_message": str(e),
+                                "error_message": safe_error,
                             },
                         )
+                        job_marked_terminal = True
 
         loop.run_until_complete(_async_worker())
     except Exception as outer_e:
         worker_logger.error(
             f"Fatal error in worker thread: {outer_e}", exc_info=True
         )
+        if (
+            not job_marked_terminal
+            and loop is not None
+            and not loop.is_closed()
+        ):
+            try:
+
+                async def _mark_failed_fallback() -> None:
+                    async with WorkerDatabase() as db_factory:
+                        async with db_factory() as db:
+                            await MediaRepository(db).update(
+                                media_item_id,
+                                {
+                                    "status": JobStatusEnum.FAILED,
+                                    "error_message": (
+                                        "Audio generation failed due to an internal error."
+                                    ),
+                                },
+                            )
+
+                loop.run_until_complete(_mark_failed_fallback())
+            except Exception as fallback_e:
+                worker_logger.error(
+                    f"Failed to mark audio job {media_item_id} FAILED after fatal error: {fallback_e}"
+                )
+    finally:
+        if loop is not None:
+            try:
+                if not loop.is_closed():
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            finally:
+                asyncio.set_event_loop(None)
+                if not loop.is_closed():
+                    loop.close()
 
 
 class AudioService:

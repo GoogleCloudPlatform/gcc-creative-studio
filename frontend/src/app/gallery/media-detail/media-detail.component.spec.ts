@@ -724,5 +724,27 @@ describe('MediaDetailComponent', () => {
       expect(host.textContent).not.toContain('Google Search:');
       expect(host.textContent).not.toContain('Watermark:');
     });
+
+    it('recomputes promptJsonSignal and synthesizedPrompt reactively when mediaItem changes', () => {
+      loadItem({
+        id: 707,
+        originalPrompt: 'Short brief',
+        prompt: JSON.stringify({metadata: {prompt_name: 'Structured Video'}}),
+      });
+      expect(component.promptJsonSignal()).toEqual({
+        metadata: {prompt_name: 'Structured Video'},
+      });
+      expect(component.synthesizedPrompt()).toBeNull();
+
+      loadItem({
+        id: 708,
+        originalPrompt: 'Add sub-bass',
+        prompt: '110 BPM deep house groove with warm sub-bass.',
+      });
+      expect(component.promptJsonSignal()).toBeUndefined();
+      expect(component.synthesizedPrompt()).toBe(
+        '110 BPM deep house groove with warm sub-bass.',
+      );
+    });
   });
 });

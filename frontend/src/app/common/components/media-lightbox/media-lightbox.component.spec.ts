@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
 import {provideRouter} from '@angular/router';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
@@ -245,5 +250,72 @@ describe('MediaLightboxComponent', () => {
         'Maximalist Symphonic Metal wall of sound.',
       );
     });
+
+    it('should hide Iterate button for Chirp and Gemini TTS audio items', () => {
+      const sub = component.iterateAudioClicked.subscribe();
+      const host = fixture.nativeElement as HTMLElement;
+
+      for (const ttsModel of [
+        'chirp_3',
+        'gemini-2.5-flash-tts',
+        'gemini-3.1-flash-tts-preview',
+      ]) {
+        component.mediaItem = {
+          ...(component.mediaItem as any),
+          model: ttsModel,
+        };
+        fixture.detectChanges();
+        expect(component.canIterateAudio).toBeFalse();
+        expect(host.querySelector('.iterate-audio-btn')).toBeNull();
+      }
+
+      component.mediaItem = {
+        ...(component.mediaItem as any),
+        model: 'lyria-3-clip-preview',
+      };
+      fixture.detectChanges();
+      expect(component.canIterateAudio).toBeTrue();
+      expect(host.querySelector('.iterate-audio-btn')).not.toBeNull();
+
+      sub.unsubscribe();
+    });
+
+    it('should hide Iterate button when iterateAudioClicked output has no subscribers', () => {
+      component.mediaItem = {
+        ...(component.mediaItem as any),
+        model: 'lyria-3-pro-preview',
+      };
+      fixture.detectChanges();
+
+      const host = fixture.nativeElement as HTMLElement;
+      expect(component.iterateAudioClicked.observers.length).toBe(0);
+      expect(component.canIterateAudio).toBeFalse();
+      expect(host.querySelector('.iterate-audio-btn')).toBeNull();
+    });
+
+    it('clears pending selectMedia audio timer on ngOnDestroy and resets isPlaying if audio.play() rejects', fakeAsync(() => {
+      component.selectedUrl = 'https://example.com/a.mp3';
+      fixture.detectChanges();
+      const audioEl = component.audioPlayerRef.nativeElement;
+      const loadSpy = spyOn(audioEl, 'load');
+      const playSpy = spyOn(audioEl, 'play').and.returnValue(
+        Promise.reject(new DOMException('Interrupted', 'AbortError')),
+      );
+
+      component.togglePlay();
+      expect(component.isPlaying).toBeTrue();
+      tick();
+      expect(component.isPlaying).toBeFalse();
+
+      loadSpy.calls.reset();
+      playSpy.calls.reset();
+
+      component.selectMedia(1);
+      component.ngOnDestroy();
+      tick(60);
+
+      expect(loadSpy).not.toHaveBeenCalled();
+      expect(playSpy).not.toHaveBeenCalled();
+    }));
   });
 });

@@ -40,6 +40,7 @@ class RewritePromptRequestDto(BaseDto):
         Field(
             description="The simple, user-provided prompt to be rewritten and enhanced.",
             min_length=2,
+            max_length=10000,
         ),
     ]
 
@@ -67,6 +68,7 @@ class GenerateTitleRequestDto(BaseDto):
         Field(
             description="The text to generate a title for.",
             min_length=1,
+            max_length=10000,
         ),
     ]
 

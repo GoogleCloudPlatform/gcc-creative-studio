@@ -62,6 +62,7 @@ class ConfigService(BaseSettings):
     # --- Gemini ---
     GEMINI_MODEL_ID: str = "gemini-4-argon"
     GEMINI_AUDIO_ANALYSIS_MODEL_ID: str = "gemini-4-argon"
+    GEMINI_AUDIO_REWRITER_MODEL_ID: str = "gemini-3.1-pro-preview"
 
     # --- Database Configuration ---
     INSTANCE_CONNECTION_NAME: str = ""

@@ -672,4 +672,124 @@ describe('AudioComponent', () => {
       history.replaceState(originalState, '');
     }
   });
+
+  it("should normalize legacy localStorage model IDs ('lyria-002', 'chirp_3', 'gemini-3.1-flash-tts-preview') to UI families on restoreState", () => {
+    const realStateService = new AudioStateService();
+    (component as any).audioStateService = realStateService;
+
+    try {
+      localStorage.setItem(
+        'audio_generation_state',
+        JSON.stringify({model: 'lyria-002', prompt: 'Warm analog synth'}),
+      );
+      (component as any).restoreState();
+      expect(component.selectedModel).toBe('lyria');
+      expect(component.lyriaModel).toBe('lyria-002');
+      expect(component.currentAudioMode()).toBe('Music');
+
+      localStorage.setItem(
+        'audio_generation_state',
+        JSON.stringify({model: 'chirp_3', prompt: 'Hello from Chirp'}),
+      );
+      (component as any).restoreState();
+      expect(component.selectedModel).toBe('chirp');
+      expect(component.currentAudioMode()).toBe('Text to Speech');
+      expect(component.selectedGenerationModelName()).toBe('Chirp');
+
+      localStorage.setItem(
+        'audio_generation_state',
+        JSON.stringify({
+          model: 'gemini-3.1-flash-tts-preview',
+          prompt: 'Hello from Gemini TTS',
+        }),
+      );
+      (component as any).restoreState();
+      expect(component.selectedModel).toBe('gemini-tts');
+      expect(component.ttsModel()).toBe('gemini-3.1-flash-tts-preview');
+      expect(component.currentAudioMode()).toBe('Text to Speech');
+    } finally {
+      localStorage.removeItem('audio_generation_state');
+    }
+  });
+
+  it('should wire #seed chip to toggle Settings, constrain #lyria-seed-input bounds, and show upload spinner on audio drop', () => {
+    component.onLyriaModelChange(GenerationModelEnum.LYRIA_002);
+    component.seed = 777;
+    fixture.detectChanges();
+
+    const flowBox = getFlowBox();
+    expect(flowBox.isSettingsMenuOpen()).toBeFalse();
+
+    const seedBtn = fixture.nativeElement.querySelector(
+      'button[aria-label="Configure seed"]',
+    ) as HTMLButtonElement | null;
+    expect(seedBtn).not.toBeNull();
+    seedBtn!.click();
+    fixture.detectChanges();
+    expect(flowBox.isSettingsMenuOpen()).toBeTrue();
+
+    const seedInput = fixture.nativeElement.querySelector(
+      '#lyria-seed-input',
+    ) as HTMLInputElement | null;
+    expect(seedInput).not.toBeNull();
+    expect(seedInput!.getAttribute('min')).toBe('0');
+    expect(seedInput!.getAttribute('max')).toBe('2147483647');
+    expect(seedInput!.getAttribute('step')).toBe('1');
+
+    const pending$ = new Subject<any>();
+    sourceAssetServiceSpy.uploadAsset.and.returnValue(pending$.asObservable());
+    component.onReferenceAudioDrop(
+      makeDropEvent(new File(['wav'], 'stem.wav', {type: 'audio/wav'})),
+    );
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('.ref-upload-spinner'),
+    ).not.toBeNull();
+
+    pending$.next({
+      id: 12,
+      gcsUri: 'gs://b/stem.wav',
+      originalFilename: 'stem.wav',
+    });
+    pending$.complete();
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('.ref-upload-spinner'),
+    ).toBeNull();
+  });
+
+  it('should clear stale referenceImages on handleIterateAudio and fall back to extension MIME for generic dropped audio types', () => {
+    component.referenceImages = [
+      {previewUrl: 'https://signed/moodboard.png', sourceAssetId: 77},
+    ];
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 615,
+        model: GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        mimeType: 'audio/mpeg',
+        titles: ['Synth Hook'],
+      }),
+      selectedIndex: 0,
+    });
+    expect(component.referenceImages).toEqual([]);
+    expect(component.referenceAudio?.id).toBe(615);
+
+    sourceAssetServiceSpy.uploadAsset.and.returnValue(
+      of({id: 401, gcsUri: 'gs://b/loop.ogg'} as any),
+    );
+    for (const [filename, rawType, expectedMime] of [
+      ['loop.ogg', 'application/ogg', 'audio/ogg'],
+      ['clip.webm', 'video/webm', 'audio/webm'],
+      ['riff.mp3', 'application/octet-stream', 'audio/mpeg'],
+    ] as const) {
+      sourceAssetServiceSpy.uploadAsset.calls.reset();
+      component.onReferenceAudioDrop(
+        makeDropEvent(new File(['audio-bytes'], filename, {type: rawType})),
+      );
+      expect(sourceAssetServiceSpy.uploadAsset).toHaveBeenCalledTimes(1);
+      const normalized = sourceAssetServiceSpy.uploadAsset.calls.mostRecent()
+        .args[0] as File;
+      expect(normalized.type).toBe(expectedMime);
+    }
+  });
 });

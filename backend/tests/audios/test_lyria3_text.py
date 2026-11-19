@@ -159,3 +159,72 @@ class TestMediaItemResponseAudioAnalysis:
 
     def test_gallery_item_response_without_audio_analysis(self):
         assert self._response(None).audio_analysis is None
+
+
+class TestExtractLyria3TextEdgeCases:
+    """Mixed block orders and unbracketed lyric section headers."""
+
+    def test_extract_lyria3_text_merges_plain_metadata_before_json_dict_and_json_list_sections(
+        self,
+    ):
+        plain_meta = "BPM: 122\nKey: F# minor\nCaption: Atmospheric synth pop."
+        json_dict_block = (
+            '{"sections": [{"name": "Verse 1", "lyrics": "City lights fade"}]}'
+        )
+        merged_dict = lyria3_text._extract_lyria3_text(
+            {
+                "outputs": [
+                    {"type": "text", "text": plain_meta},
+                    {"type": "text", "text": json_dict_block},
+                ]
+            }
+        )
+        assert merged_dict is not None
+        assert merged_dict["structure"]["bpm"] == 122
+        assert merged_dict["structure"]["key"] == "F# minor"
+        assert merged_dict["structure"]["caption"] == "Atmospheric synth pop."
+        assert merged_dict["structure"]["sections"] == [
+            {"name": "Verse 1", "lyrics": "City lights fade"}
+        ]
+        assert merged_dict["lyrics"] == "[Verse 1]\nCity lights fade"
+
+        json_list_block = (
+            '[{"section": "Chorus", "lyrics": "Hold on to the night"}]'
+        )
+        merged_list = lyria3_text._extract_lyria3_text(
+            {
+                "outputs": [
+                    {"type": "text", "text": json_list_block},
+                    {"type": "text", "text": plain_meta},
+                ]
+            }
+        )
+        assert merged_list is not None
+        assert merged_list["structure"] == {
+            "bpm": 122,
+            "key": "F# minor",
+            "caption": "Atmospheric synth pop.",
+            "sections": [
+                {"section": "Chorus", "lyrics": "Hold on to the night"}
+            ],
+        }
+        assert merged_list["lyrics"] == "[Chorus]\nHold on to the night"
+
+    def test_parse_lyria3_plain_block_stops_multiline_caption_at_unbracketed_section_headers(
+        self,
+    ):
+        block = (
+            "Caption: Upbeat indie rock anthem\n"
+            "with bright jangly guitars.\n"
+            "Verse 1:\n"
+            "Running down the boulevard\n"
+            "Chorus:\n"
+            "Never looking back"
+        )
+        lyrics, structure = lyria3_text._parse_lyria3_plain_block(block)
+        assert structure == {
+            "caption": "Upbeat indie rock anthem with bright jangly guitars."
+        }
+        assert lyrics == (
+            "Verse 1:\nRunning down the boulevard\nChorus:\nNever looking back"
+        )

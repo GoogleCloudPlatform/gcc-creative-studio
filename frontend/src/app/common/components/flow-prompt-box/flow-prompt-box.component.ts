@@ -210,6 +210,8 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
     name: string;
     index?: number;
   } | null = null;
+  @Input() isUploadingReferenceImage = false;
+  @Input() isUploadingReferenceAudio = false;
   private _externalUrl: string | null = null;
   private externalUrlSignal = signal<string | null>(null);
   @Input() set externalUrl(val: string | null) {

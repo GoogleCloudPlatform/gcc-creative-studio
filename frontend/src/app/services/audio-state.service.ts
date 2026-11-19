@@ -68,8 +68,21 @@ export class AudioStateService {
           m => m.type === 'AUDIO' && m.value === loadedModel,
         );
 
-        if (!isValidUiFamily && !isValidAudioModel) {
-          loadedModel = this.defaultState.model;
+        if (!isValidUiFamily) {
+          if (isValidAudioModel) {
+            if (loadedModel.startsWith('lyria')) {
+              parsedState.lyriaModel ??= loadedModel;
+              loadedModel = 'lyria';
+            } else if (loadedModel === 'chirp_3') {
+              parsedState.ttsModel = 'chirp_3';
+              loadedModel = 'chirp';
+            } else {
+              parsedState.ttsModel ??= loadedModel;
+              loadedModel = 'gemini-tts';
+            }
+          } else {
+            loadedModel = this.defaultState.model;
+          }
         }
 
         parsedState.model = loadedModel;

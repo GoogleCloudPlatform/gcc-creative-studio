@@ -24,7 +24,6 @@ import {first, Subscription} from 'rxjs';
 import {
   AudioMusicalProfile,
   AudioTrackAnalysis,
-  EnrichedSourceAsset,
   MediaItem,
   SongStructureEntry,
   buildAudioIterationRemixState,
@@ -38,7 +37,6 @@ import {CreatePromptMediaDto} from '../../common/models/prompt.model';
 import {SourceMediaItemLink} from '../../common/models/search.model';
 import {AuthService} from '../../common/services/auth.service';
 import {LoadingService} from '../../common/services/loading.service';
-import {MimeTypeEnum} from '../../fun-templates/media-template.model';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -106,12 +104,34 @@ export class MediaDetailComponent implements OnDestroy {
   public set currentImageIndex(val: number) {
     this.currentImageIndexSignal.set(val);
   }
-  promptJson: any | undefined;
+  readonly promptJsonSignal = computed<
+    CreatePromptMediaDto | Record<string, any> | undefined
+  >(() => {
+    const item = this.mediaItemSignal();
+    const rawToParse = item?.prompt || item?.originalPrompt;
+    if (!rawToParse) {
+      return undefined;
+    }
+    try {
+      if (typeof rawToParse === 'string') {
+        const parsed = JSON.parse(rawToParse);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      } else if (typeof rawToParse === 'object') {
+        return rawToParse as CreatePromptMediaDto;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  });
+  get promptJson(): any | undefined {
+    return this.promptJsonSignal();
+  }
   isPromptExpanded = false;
   isSynthesizedPromptExpanded = false;
   public isIdentityExpanded = false;
-  public selectedAssetForLightbox: GalleryItem | null = null;
-  public lightboxInitialIndex = 0;
 
   /**
    * Root→leaf ancestors of the folder that holds this item ([] = All Media).
@@ -214,13 +234,13 @@ export class MediaDetailComponent implements OnDestroy {
     return (item?.originalPrompt ?? '').trim() || (item?.prompt ?? '').trim();
   });
 
-  get synthesizedPrompt(): string | null {
-    if (this.promptJson) return null;
+  readonly synthesizedPrompt = computed<string | null>(() => {
+    if (this.promptJsonSignal()) return null;
     const item = this.mediaItemSignal();
     const orig = (item?.originalPrompt ?? '').trim();
     const full = (item?.prompt ?? '').trim();
     return orig && full && orig !== full ? full : null;
-  }
+  });
 
   trackByIndex(index: number): number {
     return index;
@@ -420,7 +440,6 @@ export class MediaDetailComponent implements OnDestroy {
         this.isSynthesizedPromptExpanded = false;
         this.loadingService.hide();
         this.readInitialIndexFromUrl();
-        this.parsePrompt();
         this.loadFolderBreadcrumbs();
       },
       error: err => {
@@ -469,28 +488,6 @@ export class MediaDetailComponent implements OnDestroy {
   navigateToFolder(crumb: LocationCrumb | null): void {
     if (crumb && crumb.id === null) return; // collapsed "…" segment
     void this.router.navigate(crumb ? ['/folders', crumb.id] : ['/gallery']);
-  }
-
-  private parsePrompt(): void {
-    const rawToParse = this.mediaItem?.prompt || this.mediaItem?.originalPrompt;
-    if (!rawToParse) {
-      this.promptJson = undefined;
-      return;
-    }
-    try {
-      if (typeof rawToParse === 'string') {
-        const parsed = JSON.parse(rawToParse);
-        if (parsed && typeof parsed === 'object') {
-          this.promptJson = parsed;
-        }
-      } else if (typeof rawToParse === 'object') {
-        // It's already an object, just cast it.
-        this.promptJson = rawToParse as CreatePromptMediaDto;
-      }
-    } catch (e) {
-      // Not a valid JSON string.
-      this.promptJson = undefined;
-    }
   }
 
   private readInitialIndexFromUrl(): void {
@@ -785,48 +782,6 @@ export class MediaDetailComponent implements OnDestroy {
     };
 
     void this.router.navigate(['/video'], {state: {remixState}});
-  }
-
-  public openSourceAssetInLightbox(
-    sourceAsset: EnrichedSourceAsset,
-    event: MouseEvent,
-  ): void {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const isVideo =
-      sourceAsset.mimeType?.startsWith('video/') === true ||
-      sourceAsset.presignedUrl.includes('.mp4');
-
-    if (isVideo) {
-      // PhotoSwipe lightbox doesn't support videos, so open in a new tab.
-      window.open(sourceAsset.presignedUrl, '_blank');
-      return;
-    }
-
-    // Existing logic for images
-    // Construct a MediaItem-like object for the lightbox
-    // Construct a GalleryItem-like object for the lightbox
-    const mediaItem: GalleryItem = {
-      id: Number(sourceAsset.sourceAssetId),
-      workspaceId: 0,
-      createdAt: new Date().toISOString(),
-      itemType: 'media_item',
-      status: 'COMPLETED',
-      mimeType: MimeTypeEnum.IMAGE,
-      prompt: `Input: ${sourceAsset.role}`,
-      gcsUris: [sourceAsset.gcsUri],
-      thumbnailUris: [sourceAsset.presignedThumbnailUrl],
-      presignedUrls: [sourceAsset.presignedUrl],
-      presignedThumbnailUrls: [sourceAsset.presignedThumbnailUrl],
-      metadata: {},
-    };
-    this.selectedAssetForLightbox = mediaItem;
-    this.lightboxInitialIndex = 0;
-  }
-
-  public closeLightbox(): void {
-    this.selectedAssetForLightbox = null;
   }
 
   public getSafeHtml(html: string): SafeHtml {

@@ -123,7 +123,13 @@
                    hidden>
             </audio>
 
-            <button mat-icon-button class="play-btn" (click)="togglePlay()">
+            <button
+              type="button"
+              mat-icon-button
+              class="play-btn"
+              [attr.aria-label]="isPlaying ? 'Pause audio' : 'Play audio'"
+              (click)="togglePlay()"
+            >
                 <mat-icon class="!w-10 !h-10 !text-[40px] leading-[40px]">
                     {{ isPlaying ? 'pause_circle' : 'play_circle' }}
                 </mat-icon>
@@ -132,7 +138,12 @@
             <span class="time-text">{{ currentTime }}</span>
 
             <mat-slider class="custom-slider" min="0" max="100" step="0.1">
-                <input matSliderThumb [value]="progressValue" (valueChange)="seek($event)">
+                <input
+                  matSliderThumb
+                  aria-label="Seek audio"
+                  [value]="progressValue"
+                  (valueChange)="seek($event)"
+                >
             </mat-slider>
 
             <span class="time-text">{{ duration }}</span>
@@ -147,7 +158,8 @@
   >
     <!-- Thumbnails on the left -->
     <div class="thumbnails-container">
-      <div
+      <button
+        type="button"
         *ngFor="
           let url of mediaItem.presignedThumbnailUrls?.length
             ? mediaItem.presignedThumbnailUrls
@@ -157,6 +169,9 @@
         class="thumbnail"
         [class.active]="i === selectedIndex"
         [class.audio-thumb]="isAudio"
+        [attr.aria-label]="
+          isAudio ? 'Select Track ' + (i + 1) : 'Select item ' + (i + 1)
+        "
         (click)="selectMedia(i)"
         [matTooltip]="isAudio ? 'Track ' + (i + 1) : ''"
       >
@@ -166,7 +181,7 @@
             <mat-icon>graphic_eq</mat-icon>
             <span class="track-num">{{ i + 1 }}</span>
         </div>
-      </div>
+      </button>
     </div>
 
     <!-- Actions Toolbar on the right -->
@@ -286,7 +301,7 @@
         <mat-icon>delete</mat-icon>
       </studio-button>
       <studio-button
-        *ngIf="isAudio && showIterateAudio"
+        *ngIf="canIterateAudio"
         variant="primary"
         size="medium"
         class="iterate-audio-btn"

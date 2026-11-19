@@ -1420,6 +1420,7 @@ class TestLyria3LyricsAndStructure:
                         "gs://bucket/track_2.mp3",
                     ],
                     "generation_time": pytest.approx(0, abs=10.0),
+                    "num_media": 2,
                     "mime_type": MimeTypeEnum.AUDIO_MPEG,
                     "audio_analysis": {
                         "tracks": [
@@ -1919,7 +1920,7 @@ class TestReferenceAudioIteration:
                     "gs://foo/t2.wav",
                 ],
                 model_name=GenerationModelEnum.GEMINI_3_5_FLASH,
-                mime_type="audio/wav",
+                mime_type=None,
                 include_audio_profile=True,
             )
 
@@ -2110,3 +2111,363 @@ class TestReferenceAudioIteration:
                 LYRIA_MAX_SEED,
                 0,
             ]
+
+    @pytest.mark.parametrize(
+        "bad_metadata_model",
+        [
+            "../../publishers/google/models/expensive-model",
+            "arbitrary-unapproved-model",
+            GenerationModelEnum.LYRIA_002,
+            GenerationModelEnum.VEO_3_1_GENERATE_001,
+            GenerationModelEnum.CHIRP_3,
+        ],
+    )
+    def test_create_audio_dto_rejects_unallowed_metadata_generation_model(
+        self, bad_metadata_model
+    ):
+        with pytest.raises(ValidationError):
+            CreateAudioDto(
+                workspace_id=1,
+                prompt="Synthwave pulse",
+                metadata_generation_model=bad_metadata_model,
+            )
+
+        for bad_ws in (0, -1):
+            with pytest.raises(ValidationError):
+                CreateAudioDto(workspace_id=bad_ws, prompt="Synthwave pulse")
+
+        dto_none = CreateAudioDto(
+            workspace_id=1,
+            prompt="Synthwave pulse",
+            metadata_generation_model=None,
+        )
+        assert dto_none.metadata_generation_model is None
+        dto_pro = CreateAudioDto(
+            workspace_id=1,
+            prompt="Synthwave pulse",
+            metadata_generation_model=GenerationModelEnum.GEMINI_3_1_PRO_PREVIEW,
+        )
+        assert (
+            dto_pro.metadata_generation_model
+            == GenerationModelEnum.GEMINI_3_1_PRO_PREVIEW
+        )
+
+    @pytest.mark.parametrize(
+        ("raw_mime", "expected_ext", "expected_enum", "stored_uri"),
+        [
+            (
+                "audio/wav",
+                ".wav",
+                MimeTypeEnum.AUDIO_WAV,
+                "gs://foo/lyria3_take0.wav",
+            ),
+            (
+                "audio/ogg",
+                ".ogg",
+                MimeTypeEnum.AUDIO_OGG,
+                "gs://foo/lyria3_take0.ogg",
+            ),
+            (
+                "audio/webm",
+                ".webm",
+                MimeTypeEnum.AUDIO_WEBM,
+                "gs://foo/lyria3_take0.webm",
+            ),
+        ],
+    )
+    def test_process_lyria3_wav_output_persists_audio_wav_mime_and_metadata(
+        self, raw_mime, expected_ext, expected_enum, stored_uri, sample_user
+    ):
+        with _audio_worker_env(
+            gcs_uris=stored_uri,
+            metadata_return={
+                "titles": ["Crystal Keys"],
+                "descriptions": ["Warm WAV take"],
+                "musical_profiles": [{"bpm": 110, "key_signature": "C Major"}],
+            },
+        ) as env:
+            env.omni_client.interactions.create.return_value = MagicMock(
+                id="inter_wav",
+                output_audio=MagicMock(
+                    type="audio", mime_type=raw_mime, data="SGVsbG8="
+                ),
+                steps=[],
+                outputs=[],
+            )
+            dto = CreateAudioDto(
+                workspace_id=1,
+                prompt="Crystal ambient keys",
+                model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+                metadata_generation_model=GenerationModelEnum.GEMINI_2_5_FLASH,
+            )
+            env.run(620, dto, sample_user)
+
+            store_kwargs = env.gcs.store_to_gcs.call_args.kwargs
+            assert store_kwargs["file_name"].endswith(expected_ext)
+            assert store_kwargs["mime_type"] == expected_enum.value
+
+            env.gemini.generate_media_metadata.assert_called_once_with(
+                prompt=(
+                    "Describe this generated audio based on prompt: "
+                    "Crystal ambient keys"
+                ),
+                media_uris=[stored_uri],
+                model_name="gemini-2.5-flash",
+                mime_type=None,
+                include_audio_profile=True,
+            )
+
+            updated = env.media_repo.update.call_args.args[1]
+            assert updated["status"] == JobStatusEnum.COMPLETED
+            assert updated["mime_type"] == expected_enum
+            assert updated["titles"] == ["Crystal Keys"]
+            assert updated["audio_analysis"] == {
+                "tracks": [
+                    {
+                        "musical_profile": {
+                            "bpm": 110,
+                            "key_signature": "C Major",
+                        }
+                    }
+                ],
+                "iteration_steps": ["Crystal ambient keys"],
+            }
+
+    def test_process_lyria3_multi_sample_partial_content_blocked_preserves_initial_prompt_for_unretried_takes(
+        self, sample_user
+    ):
+        ok_interaction = MagicMock(
+            id="inter_ok",
+            output_audio=MagicMock(
+                type="audio", mime_type="audio/mpeg", data="SGVsbG8="
+            ),
+            steps=[],
+            outputs=[],
+        )
+        retry_interaction = MagicMock(
+            id="inter_retried",
+            output_audio=MagicMock(
+                type="audio", mime_type="audio/mpeg", data="SGVsbG8="
+            ),
+            steps=[],
+            outputs=[],
+        )
+        blocked_err = Exception("400 {'code': 'content_blocked'}")
+
+        call_count = 0
+
+        def _create_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 4:
+                raise blocked_err
+            if call_count == 5:
+                return retry_interaction
+            return ok_interaction
+
+        enhanced = (
+            "Driving cinematic synthwave score with pulsing arpeggios, "
+            "evoking a midnight coastal highway chase."
+        )
+        with _audio_worker_env(
+            gcs_uris=[
+                "gs://foo/t0.mp3",
+                "gs://foo/t1.mp3",
+                "gs://foo/t2.mp3",
+                "gs://foo/t3.mp3",
+            ],
+            enhance_return=enhanced,
+        ) as env:
+            env.omni_client.interactions.create.side_effect = (
+                _create_side_effect
+            )
+            dto = CreateAudioDto(
+                workspace_id=1,
+                prompt=(
+                    "Driving synthwave score with pulsing arpeggios "
+                    "evoking a midnight highway chase."
+                ),
+                model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+                sample_count=4,
+                enhance_prompt=True,
+            )
+            env.run(630, dto, sample_user)
+
+            updated = env.media_repo.update.call_args.args[1]
+            assert updated["status"] == JobStatusEnum.COMPLETED
+            assert len(updated["gcs_uris"]) == 4
+            # Takes 0-2 succeeded with the enhanced prompt, so MediaItem.prompt
+            # must NOT be overwritten by Take 3's simplified retry brief.
+            assert updated["prompt"] == enhanced
+
+    def test_process_lyria2_partial_take_failure_updates_seed_and_num_media(
+        self, sample_user
+    ):
+        call_idx = 0
+
+        def _predict_side_effect(**_kwargs):
+            nonlocal call_idx
+            current = call_idx
+            call_idx += 1
+            if current == 0:
+                raise RuntimeError("transient take 0 failure")
+            return MagicMock(predictions=[{"bytesBase64Encoded": "SGVsbG8="}])
+
+        with _audio_worker_env(
+            gcs_uris=[
+                "gs://foo/take1.wav",
+                "gs://foo/take2.wav",
+                "gs://foo/take3.wav",
+            ]
+        ) as env:
+            env.ai_client.predict.side_effect = _predict_side_effect
+            dto = CreateAudioDto(
+                workspace_id=1,
+                prompt="Warm electric piano chords",
+                model=GenerationModelEnum.LYRIA_002,
+                sample_count=4,
+                seed=500,
+            )
+            env.run(631, dto, sample_user)
+
+            updated = env.media_repo.update.call_args.args[1]
+            assert updated["status"] == JobStatusEnum.COMPLETED
+            assert updated["num_media"] == 3
+            assert len(updated["gcs_uris"]) == 3
+            assert updated["seed"] in {501, 502, 503}
+
+    @pytest.mark.anyio
+    async def test_resolve_reference_rejects_soft_deleted_and_non_completed_media_items(
+        self,
+    ):
+        import datetime as dt
+
+        media_repo = AsyncMock()
+        asset_repo = AsyncMock()
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Add strings",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            reference_audio=AssetReferenceDto(
+                id=77, type="media_item", index=0
+            ),
+        )
+
+        media_repo.get_by_id.return_value = SimpleNamespace(
+            id=77,
+            workspace_id=1,
+            status=JobStatusEnum.COMPLETED,
+            deleted_at=dt.datetime.now(dt.timezone.utc),
+            mime_type=MimeTypeEnum.AUDIO_MPEG,
+            gcs_uris=["gs://bucket/a.mp3"],
+        )
+        with pytest.raises(
+            ValueError, match="Media item 77 was not found in this workspace"
+        ):
+            await _resolve_reference_audio(dto, media_repo, asset_repo)
+
+        for non_completed in (
+            JobStatusEnum.PROCESSING,
+            JobStatusEnum.FAILED,
+            JobStatusEnum.STOPPED,
+        ):
+            media_repo.get_by_id.return_value = SimpleNamespace(
+                id=77,
+                workspace_id=1,
+                status=non_completed,
+                deleted_at=None,
+                mime_type=MimeTypeEnum.AUDIO_MPEG,
+                gcs_uris=["gs://bucket/a.mp3"],
+            )
+            with pytest.raises(
+                ValueError, match="Media item 77 is not completed"
+            ):
+                await _resolve_reference_audio(dto, media_repo, asset_repo)
+
+        asset_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Add strings",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            reference_audio=AssetReferenceDto(id=19, type="source_asset"),
+        )
+        asset_repo.get_by_id.return_value = SimpleNamespace(
+            id=19,
+            workspace_id=1,
+            scope=AssetScopeEnum.PRIVATE,
+            deleted_at=dt.datetime.now(dt.timezone.utc),
+            mime_type=MimeTypeEnum.AUDIO_WAV,
+            gcs_uri="gs://bucket/deleted.wav",
+        )
+        with pytest.raises(
+            ValueError, match="Source asset 19 was not found in this workspace"
+        ):
+            await _resolve_reference_audio(asset_dto, media_repo, asset_repo)
+
+    def test_process_audio_in_background_closes_event_loop_on_success_and_error(
+        self, sample_user
+    ):
+        import asyncio as aio
+
+        created_loops: list[aio.AbstractEventLoop] = []
+        real_new_loop = aio.new_event_loop
+
+        def _track_loop():
+            lp = real_new_loop()
+            created_loops.append(lp)
+            return lp
+
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Synth lead",
+            model=GenerationModelEnum.LYRIA_002,
+            seed=10,
+        )
+        with patch(
+            "src.audios.audio_service.asyncio.new_event_loop",
+            side_effect=_track_loop,
+        ):
+            with _audio_worker_env(gcs_uris="gs://foo/ok.wav") as env:
+                env.run(640, dto, sample_user)
+                assert created_loops[-1].is_closed()
+
+            with _audio_worker_env() as env:
+                env.gcs.store_to_gcs.side_effect = RuntimeError(
+                    "gs://secret-internal-bucket/path failed"
+                )
+                # Force outer/inner failure and ensure error_message is sanitized
+                env.ai_client.predict.return_value = MagicMock(
+                    predictions=[{"bytesBase64Encoded": "SGVsbG8="}]
+                )
+                env.run(641, dto, sample_user)
+                assert created_loops[-1].is_closed()
+                failed_payload = env.media_repo.update.call_args.args[1]
+                assert failed_payload["status"] == JobStatusEnum.FAILED
+                assert (
+                    "secret-internal-bucket"
+                    not in failed_payload["error_message"]
+                )
+
+    def test_process_audio_persists_only_audio_generation_error_messages(
+        self, sample_user
+    ):
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Ambient pads",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            enhance_prompt=True,
+        )
+        with _audio_worker_env() as env:
+            env.gemini.enhance_prompt_from_dto.side_effect = ValueError(
+                "validation failed for gs://secret-internal-bucket/path"
+            )
+            env.run(642, dto, sample_user)
+
+            env.media_repo.update.assert_called_once_with(
+                642,
+                {
+                    "status": JobStatusEnum.FAILED,
+                    "error_message": (
+                        "Audio generation failed due to an internal error."
+                    ),
+                },
+            )
