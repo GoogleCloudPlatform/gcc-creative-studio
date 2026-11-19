@@ -109,7 +109,7 @@
     "tar": "^7.5.18",
     "tmp": "^0.2.6",
     "undici": "^6.29.1",
-    "webpack": "^5.104.1",
+    "webpack": "5.104.1",
     "webpack-dev-middleware": "^7.4.6",
     "webpack-dev-server": "^5.2.6",
     "websocket-driver": "^0.7.5",
