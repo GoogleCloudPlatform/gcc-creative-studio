@@ -15,22 +15,23 @@
  */
 
 import {NodeTypes} from '../../../workflow.models';
-import {StepSetting} from '../generic-step/step.model';
+import {StepInput} from '../generic-step/step.model';
 import {FolderPreviewMimeType} from './folder-setting.util';
 
-/** Setting (and persisted settings key) of a media node's output folder. */
-export const OUTPUT_FOLDER_SETTING_NAME = 'output_folder_id';
+/** Input (and persisted inputs key) of a media node's output folder. */
+export const OUTPUT_FOLDER_INPUT_NAME = 'output_folder';
 
 /**
- * Media Gallery folder the node saves its generated media into. `null`
- * always means the root folder ("All Media").
+ * Media Gallery folder the node saves its generated media into: a fixed
+ * folder id or a linked folder output. `null` always means the root folder
+ * ("All Media"), so the input is never required.
  */
-export const OUTPUT_FOLDER_SETTING: StepSetting = {
-  name: OUTPUT_FOLDER_SETTING_NAME,
+export const OUTPUT_FOLDER_INPUT: StepInput = {
+  name: OUTPUT_FOLDER_INPUT_NAME,
   label: 'Output folder',
   type: 'folder',
   allowRoot: true,
-  defaultValue: null,
+  required: false,
 };
 
 /** Media previewed in the folder picker for each node with an output folder. */

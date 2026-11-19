@@ -23,6 +23,7 @@
     [stepTitle]="data.stepTitle"
     [stepMode]="data.stepMode"
     [mediaUrlMap]="data.mediaUrlMap"
+    [folderPaths]="folderPaths?.() ?? null"
     (closed)="close()"
   ></app-step-history-sidebar>
 }

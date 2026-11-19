@@ -1199,6 +1199,132 @@ class TestResume:
         assert resumed.step_states["step_b"].status == StepStatusEnum.PENDING
 
     @pytest.mark.anyio
+    async def test_resume_allows_unset_unlinked_folder_override_and_strips_none(
+        self, service, mock_repo
+    ):
+        snap = _snapshot_with_two_steps(with_user_input=True)
+        snap["steps"][0]["outputs"] = {
+            "topic": {"type": "text"},
+            "linked_folder": {"type": "folder"},
+            "unused_folder": {"type": "folder"},
+        }
+        snap["steps"][2]["inputs"]["output_folder"] = {
+            "step": "user_in",
+            "output": "linked_folder",
+        }
+        run = _make_run(
+            status=WorkflowRunStatusEnum.NEEDS_ATTENTION,
+            definition_hash=compute_definition_hash(snap["steps"]),
+            workflow_snapshot=snap,
+            workspace_id=42,
+            input_args={
+                "workspace_id": 42,
+                "topic": "dogs",
+                "linked_folder": 10,
+            },
+        )
+        mock_repo.lock_run.return_value = run
+
+        resumed = await service.resume(
+            "run-123",
+            user_id=7,
+            args_override={
+                "topic": "dogs",
+                "linked_folder": 10,
+                "unused_folder": None,
+            },
+            current_workflow_snapshot=snap,
+        )
+
+        assert resumed.status == WorkflowRunStatusEnum.QUEUED
+        assert resumed.input_args["linked_folder"] == 10
+        assert "unused_folder" not in resumed.input_args
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("bad_value", [0, True, "shoes"])
+    async def test_resume_rejects_invalid_unlinked_folder_override_before_invalidating(
+        self, service, mock_repo, bad_value
+    ):
+        snap = _snapshot_with_two_steps(with_user_input=True)
+        snap["steps"][0]["outputs"] = {
+            "topic": {"type": "text"},
+            "unused_folder": {"type": "folder"},
+        }
+        run = _make_run(
+            status=WorkflowRunStatusEnum.NEEDS_ATTENTION,
+            definition_hash=compute_definition_hash(snap["steps"]),
+            workflow_snapshot=snap,
+            workspace_id=42,
+            input_args={"workspace_id": 42, "topic": "dogs"},
+            step_states={
+                "step_a": StepState(
+                    status=StepStatusEnum.COMPLETED,
+                    outputs={"generated_text": "dogs haiku"},
+                    attempts=1,
+                ),
+                "step_b": StepState(status=StepStatusEnum.FAILED, attempts=1),
+            },
+        )
+        mock_repo.lock_run.return_value = run
+
+        with pytest.raises(StepError) as exc_info:
+            await service.resume(
+                "run-123",
+                user_id=7,
+                args_override={"topic": "dogs", "unused_folder": bad_value},
+                current_workflow_snapshot=snap,
+            )
+
+        assert exc_info.value.status_code == 422
+        assert run.step_states["step_a"].status == StepStatusEnum.COMPLETED
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("bad_value", [0, True, "shoes"])
+    async def test_resume_rejects_invalid_stored_linked_folder_when_args_override_none(
+        self, service, mock_repo, bad_value
+    ):
+        snap = _snapshot_with_two_steps(with_user_input=True)
+        snap["steps"][0]["outputs"] = {
+            "topic": {"type": "text"},
+            "linked_folder": {"type": "folder"},
+        }
+        snap["steps"][2]["inputs"]["output_folder"] = {
+            "step": "user_in",
+            "output": "linked_folder",
+        }
+        run = _make_run(
+            status=WorkflowRunStatusEnum.NEEDS_ATTENTION,
+            definition_hash=compute_definition_hash(snap["steps"]),
+            workflow_snapshot=snap,
+            workspace_id=42,
+            input_args={
+                "workspace_id": 42,
+                "topic": "dogs",
+                "linked_folder": bad_value,
+            },
+            step_states={
+                "step_a": StepState(
+                    status=StepStatusEnum.COMPLETED,
+                    outputs={"generated_text": "dogs haiku"},
+                    attempts=1,
+                ),
+                "step_b": StepState(status=StepStatusEnum.FAILED, attempts=1),
+            },
+        )
+        mock_repo.lock_run.return_value = run
+
+        with pytest.raises(StepError) as exc_info:
+            await service.resume(
+                "run-123",
+                user_id=7,
+                args_override=None,
+                current_workflow_snapshot=snap,
+            )
+
+        assert exc_info.value.status_code == 422
+        assert run.step_states["step_a"].status == StepStatusEnum.COMPLETED
+
+    @pytest.mark.anyio
     async def test_resume_404_and_409_guards(self, service, mock_repo):
         mock_repo.lock_run.return_value = None
         with pytest.raises(StepError) as exc_404:

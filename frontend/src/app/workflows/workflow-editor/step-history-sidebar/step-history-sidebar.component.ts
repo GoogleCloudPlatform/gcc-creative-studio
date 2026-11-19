@@ -23,6 +23,7 @@ import {
   computed,
   signal,
 } from '@angular/core';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {
   DynamicStepRecord,
   StepEntry,
@@ -80,6 +81,8 @@ export class StepHistorySidebarComponent {
   /** Active step mode (e.g. image generation mode) used to filter inputs. */
   @Input() stepMode: string | null = null;
   @Input() mediaUrlMap: Map<string, string> = new Map();
+  /** Resolved folder paths keyed by folder id; null shows raw folder ids. */
+  @Input() folderPaths: FolderPathMap | null = null;
 
   /**
    * When true the sidebar fills its container (e.g. a CDK overlay pane opened

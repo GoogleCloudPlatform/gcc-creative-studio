@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {Component, Input, NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {By} from '@angular/platform-browser';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {NodeTypes, StepEntry, StepHistoryEntry} from '../../workflow.models';
 import {StepHistorySidebarComponent} from './step-history-sidebar.component';
 
@@ -39,6 +41,14 @@ function iteration(id: number): StepHistoryEntry {
   };
 }
 
+/** Captures the inputs the sidebar forwards to each details section. */
+@Component({selector: 'app-step-execution-details', template: ''})
+class StepExecutionDetailsStubComponent {
+  @Input() showInputs = true;
+  @Input() showOutputs = true;
+  @Input() folderPaths: FolderPathMap | null = null;
+}
+
 describe('StepHistorySidebarComponent', () => {
   let component: StepHistorySidebarComponent;
   let fixture: ComponentFixture<StepHistorySidebarComponent>;
@@ -49,7 +59,10 @@ describe('StepHistorySidebarComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [StepHistorySidebarComponent],
+      declarations: [
+        StepHistorySidebarComponent,
+        StepExecutionDetailsStubComponent,
+      ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
@@ -169,6 +182,53 @@ describe('StepHistorySidebarComponent', () => {
     query('#step-history-close-gen_image')?.click();
 
     expect(closedSpy).toHaveBeenCalled();
+  });
+
+  describe('folder paths forwarding', () => {
+    const folderPaths: FolderPathMap = new Map([[7, 'Shoes / Summer']]);
+
+    const detailsSections = (): StepExecutionDetailsStubComponent[] =>
+      fixture.debugElement
+        .queryAll(By.directive(StepExecutionDetailsStubComponent))
+        .map(
+          debugEl =>
+            debugEl.componentInstance as StepExecutionDetailsStubComponent,
+        );
+
+    const inputsSection = (): StepExecutionDetailsStubComponent | null =>
+      detailsSections().find(s => s.showInputs && !s.showOutputs) ?? null;
+
+    const outputsSection = (): StepExecutionDetailsStubComponent | null =>
+      detailsSections().find(s => !s.showInputs && s.showOutputs) ?? null;
+
+    const expandInputs = (): void => {
+      query('#step-history-inputs-toggle-gen_image')?.click();
+      fixture.detectChanges();
+    };
+
+    it('forwards the folder paths to the inputs and outputs sections', () => {
+      component.entry = buildEntry([iteration(1)]);
+      component.folderPaths = folderPaths;
+      fixture.detectChanges();
+      expandInputs();
+
+      const inputs = inputsSection();
+      const outputs = outputsSection();
+      expect(inputs).not.toBeNull();
+      expect(outputs).not.toBeNull();
+      expect(inputs?.folderPaths).toBe(folderPaths);
+      expect(outputs?.folderPaths).toBe(folderPaths);
+    });
+
+    it('forwards null to the sections when no folder paths are set', () => {
+      component.entry = buildEntry([iteration(1)]);
+      fixture.detectChanges();
+      expandInputs();
+
+      expect(component.folderPaths).toBeNull();
+      expect(inputsSection()?.folderPaths).toBeNull();
+      expect(outputsSection()?.folderPaths).toBeNull();
+    });
   });
 
   describe('layout', () => {

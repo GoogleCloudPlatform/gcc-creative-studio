@@ -28,7 +28,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PositiveInt,
     field_validator,
 )
 from sqlalchemy import DateTime, ForeignKey, String, func
@@ -82,6 +81,10 @@ class StepOutputReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     step: str
     output: str
+
+
+# Media Gallery folder id: a positive JSON number only (no string coercion).
+FolderId = Annotated[int, Field(strict=True, gt=0)]
 
 
 # =========================================
@@ -219,6 +222,8 @@ class GenerateVideoInputs(BaseModel):
     start_frame: WorkflowInputItem | None = None
     end_frame: WorkflowInputItem | None = None
     source_video: WorkflowInputItem | None = None
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder: StepOutputReference | FolderId | None = None
 
 
 class GenerateVideoSettings(BaseModel):
@@ -229,8 +234,6 @@ class GenerateVideoSettings(BaseModel):
     duration_seconds: int = 8
     input_mode: str | None = None
     resolution: Literal["1K", "2K", "4K"] = "1K"
-    # Gallery folder for the generated media; None means the root folder.
-    output_folder_id: PositiveInt | None = None
 
 
 class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
@@ -243,6 +246,8 @@ class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
 class GenerateAudioInputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: StepOutputReference | str
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder: StepOutputReference | FolderId | None = None
 
 
 class GenerateAudioSettings(BaseModel):
@@ -252,8 +257,6 @@ class GenerateAudioSettings(BaseModel):
     language_code: str | None = None
     negative_prompt: str | None = None
     seed: int | None = None
-    # Gallery folder for the generated media; None means the root folder.
-    output_folder_id: PositiveInt | None = None
 
     @field_validator("seed", mode="before")
     @classmethod
@@ -286,6 +289,9 @@ class ImageInputs(BaseModel):
     dress_image: WorkflowInputItem | None = None
     shoes_image: WorkflowInputItem | None = None
 
+    # Gallery folder for the generated media (all modes); None means root.
+    output_folder: StepOutputReference | FolderId | None = None
+
 
 class ImageSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -297,8 +303,6 @@ class ImageSettings(BaseModel):
     upscale_factor: Literal["x2", "x3", "x4"] = "x2"
     enhance_input_image: bool = False
     image_preservation_factor: float | None = None
-    # Gallery folder for the generated media (all modes); None means root.
-    output_folder_id: PositiveInt | None = None
 
 
 class ImageStep(BaseStep[ImageInputs, ImageSettings]):
@@ -321,12 +325,14 @@ class LoopInputs(BaseModel):
     linked_items: WorkflowInputItem | None = None
     # Loop-closing back-edge from the last step of the loop body.
     loop_ending: StepOutputReference | None = None
+    # Folder mode: the Media Gallery folder (id) or a link to a Folder
+    # parameter. Never the root folder.
+    folder: StepOutputReference | FolderId | None = None
 
 
 class LoopSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: LoopMode = "folder"
-    folder_id: int | None = None
     item_type: LoopItemType = "image"
 
 
