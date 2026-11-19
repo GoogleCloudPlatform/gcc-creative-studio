@@ -13,11 +13,13 @@
 # limitations under the License.
 
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FinalizeUploadDto(BaseModel):
     """Request body to finalize an upload and start processing."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(
         min_length=3,

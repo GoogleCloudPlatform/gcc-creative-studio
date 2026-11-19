@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.workflows.schema.workflow_model import (
     GenerateAudioInputs,
@@ -52,6 +52,8 @@ class StepCallContext(BaseModel):
     checkpointed under ``"<step_id>#<iteration>"``.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     run_id: str | None = Field(
         default=None, max_length=_KEY_MAX_LENGTH, pattern=_KEY_PATTERN
     )
@@ -71,6 +73,7 @@ class StepCallContext(BaseModel):
 
 
 class GenerateTextRequest(StepCallContext):
+    workspace_id: int | None = None
     inputs: GenerateTextInputs
     config: GenerateTextSettings
 
@@ -96,6 +99,8 @@ class GenerateAudioRequest(StepCallContext):
 class ResolveLoopItemsInputs(BaseModel):
     """Resolved inputs of a ``Loop`` step (``loop_ending`` is a back-edge
     and never sent)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     items_text: str | None = Field(
         default=None, max_length=MAX_LOOP_ITEMS_TEXT_LENGTH

@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from src.common.dto.base_search_dto import BaseSearchDto
 
 
 class TagCreateDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., description="The name of the tag.")
     workspace_id: int = Field(
         ..., description="The ID of the workspace this tag belongs to."
@@ -27,6 +29,8 @@ class TagCreateDto(BaseModel):
 
 
 class TagUpdateDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(
         default=None, description="The new name of the tag."
     )
@@ -36,6 +40,8 @@ class TagUpdateDto(BaseModel):
 
 
 class BulkAssignTagsDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspace_id: int = Field(
         ..., description="The ID of the workspace these items belong to."
     )

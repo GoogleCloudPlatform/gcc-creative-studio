@@ -95,7 +95,7 @@ class TestWorkbenchController:
         mock_workbench_service.create_timeline.return_value = mock_res
 
         payload = {
-            "storyboardId": 5,
+            "storyboard_id": 5,
             "workspace_id": "ws1",
             "title": "New",
             "video_clips": [],
@@ -127,7 +127,7 @@ class TestWorkbenchController:
             timeline_id=9, storyboard_id=5, workspace_id="ws1", title="Cut"
         )
         payload = {
-            "storyboardId": 5,
+            "storyboard_id": 5,
             "workspace_id": "ws1",
             "title": "Cut",
             "video_clips": [],
