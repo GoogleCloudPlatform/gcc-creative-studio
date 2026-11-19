@@ -14,13 +14,15 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.common.base_dto import AspectRatioEnum, BaseDto
 
 
 class ConcatenationInput(BaseModel):
     """Defines a single item to be included in the concatenation, preserving order."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: int = Field(description="The ID of the asset or media item.")
     type: Literal["media_item", "source_asset"] = Field(

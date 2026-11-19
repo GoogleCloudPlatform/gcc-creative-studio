@@ -26,6 +26,7 @@ class BulkMoveItemDto(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         alias_generator=to_camel,
+        extra="forbid",
     )
 
 
@@ -37,4 +38,5 @@ class BulkMoveDto(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         alias_generator=to_camel,
+        extra="forbid",
     )

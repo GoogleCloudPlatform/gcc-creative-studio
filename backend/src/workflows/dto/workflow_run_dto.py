@@ -48,6 +48,8 @@ class ExecutionCallbackStatusEnum(str, Enum):
 class RunFinishedCallbackDto(BaseModel):
     """Payload posted by the generated YAML when an execution ends."""
 
+    model_config = ConfigDict(extra="forbid")
+
     execution_id: str = Field(
         min_length=1, max_length=KEY_MAX_LENGTH, pattern=RUN_KEY_PATTERN
     )

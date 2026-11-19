@@ -14,13 +14,15 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.common.base_dto import BaseDto
 
 
 class BatchExecutionItemDto(BaseModel):
     """Represents a single row of execution arguments."""
+
+    model_config = ConfigDict(extra="forbid")
 
     row_index: int = Field(
         ...,

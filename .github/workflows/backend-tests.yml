@@ -16,13 +16,10 @@ name: Backend Quality
 
 on:
   pull_request:
-    types: [opened, synchronize]
-    branches:
-      - main
-      - develop
-      - test
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'backend/**'
+      - '.github/workflows/backend-tests.yml'
 
 jobs:
   test:
@@ -46,6 +43,7 @@ jobs:
     env:
       PROJECT_ID: 'dummy-project-id'
       ENVIRONMENT: 'local'
+      REQUIRE_POSTGRES_TESTS: '1'
       DATABASE_URL: 'postgresql+asyncpg://studio_user:studio_password@localhost:5432/creative_studio'
       DB_HOST: 'localhost'
       DB_PORT: '5432'
