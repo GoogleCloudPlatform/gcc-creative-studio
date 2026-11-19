@@ -40,6 +40,7 @@ export interface ModelCapability {
   supportsVoice?: boolean;
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
+  supportsAudioReference?: boolean;
   supportsVideoReference?: boolean;
 }
 
@@ -454,6 +455,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: true,
       supportsNegativePrompt: true,
       supportsVoice: false,
@@ -467,10 +469,11 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     icon: 'music_note',
     capabilities: {
       supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
+      maxReferenceImages: 10,
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,
@@ -484,10 +487,11 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     icon: 'music_note',
     capabilities: {
       supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
+      maxReferenceImages: 10,
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,

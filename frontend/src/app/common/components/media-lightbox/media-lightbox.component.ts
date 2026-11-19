@@ -25,7 +25,16 @@ import {
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
-import {MediaItem} from '../../models/media-item.model';
+import {
+  AudioTrackAnalysis,
+  MediaItem,
+  SongStructureEntry,
+  formatSongStructureEntries,
+  formatTrackAnalysisForCopy,
+  getAudioTrackAnalysis,
+  getAudioTrackCaption,
+  getAudioTrackLyrics,
+} from '../../models/media-item.model';
 import {GalleryItem} from '../../models/gallery-item.model';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import {Clipboard} from '@angular/cdk/clipboard';
@@ -59,13 +68,11 @@ export class MediaLightboxComponent
   @Input() showDownloadButton = true;
   @Input() showDeleteButton = false;
   @Input() showMoveButton = false;
+  @Input() showOmni = true;
+  @Input() showIterateAudio = true;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
-  }
-
-  get showOmni(): boolean {
-    return true;
   }
 
   get showEditButton(): boolean {
@@ -79,6 +86,16 @@ export class MediaLightboxComponent
   get showVtoButton(): boolean {
     return this.isImage;
   }
+
+  get canIterateAudio(): boolean {
+    const model = (this.mediaItem as any)?.model;
+    return (
+      this.isAudio &&
+      this.showIterateAudio &&
+      this.iterateAudioClicked.observers.length > 0 &&
+      (!model || String(model).toLowerCase().startsWith('lyria'))
+    );
+  }
   @Output() editClicked = new EventEmitter<number>();
   @Output() generateVideoClicked = new EventEmitter<{
     role: 'start' | 'end';
@@ -86,6 +103,10 @@ export class MediaLightboxComponent
   }>();
   @Output() sendToVtoClicked = new EventEmitter<number>();
   @Output() editWithOmniClicked = new EventEmitter<{
+    mediaItem: MediaItem;
+    selectedIndex: number;
+  }>();
+  @Output() iterateAudioClicked = new EventEmitter<{
     mediaItem: MediaItem;
     selectedIndex: number;
   }>();
@@ -113,6 +134,7 @@ export class MediaLightboxComponent
   public isShareMenuOpen = false;
   public isDownloading = false;
   private lightbox: PhotoSwipeLightbox | undefined;
+  private selectMediaAudioTimer: ReturnType<typeof setTimeout> | null = null;
 
   @ViewChild('audioPlayer') audioPlayerRef!: ElementRef<HTMLAudioElement>;
   @ViewChild('videoPlayer') videoPlayerRef!: ElementRef<HTMLVideoElement>;
@@ -138,8 +160,16 @@ export class MediaLightboxComponent
   }
 
   ngOnDestroy(): void {
+    this.clearSelectMediaAudioTimer();
     this.lightbox?.destroy();
     this.lightbox = undefined;
+  }
+
+  private clearSelectMediaAudioTimer(): void {
+    if (this.selectMediaAudioTimer !== null) {
+      clearTimeout(this.selectMediaAudioTimer);
+      this.selectMediaAudioTimer = null;
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -425,7 +455,8 @@ export class MediaLightboxComponent
       if (this.isAudio) {
         this.resetAudioState();
         // Allow DOM to update src, then load
-        setTimeout(() => {
+        this.selectMediaAudioTimer = setTimeout(() => {
+          this.selectMediaAudioTimer = null;
           if (this.audioPlayerRef) {
             this.audioPlayerRef.nativeElement.load();
             this.togglePlay(); // Auto-play on switch
@@ -488,8 +519,10 @@ export class MediaLightboxComponent
   }
 
   get aspectRatioClass(): string {
-    // For Audio, we just want a nice container, aspect-video works well for the player shape
-    if (this.isAudio) return 'aspect-video h-auto';
+    // Let the audio stage grow naturally when lyrics/structure are displayed
+    if (this.isAudio) {
+      return this.hasCurrentTrackText ? 'h-auto' : 'aspect-video h-auto';
+    }
 
     // For Videos, we can still use the aspect ratio if available
     if (this.isVideo) {
@@ -507,14 +540,52 @@ export class MediaLightboxComponent
     return '';
   }
 
+  get currentTrackAnalysis(): AudioTrackAnalysis | null {
+    if (!this.isAudio) return null;
+    return getAudioTrackAnalysis(this.mediaItem, this.selectedIndex);
+  }
+
+  get currentTrackLyrics(): string | null {
+    return getAudioTrackLyrics(this.currentTrackAnalysis);
+  }
+
+  get currentTrackCaption(): string | null {
+    return getAudioTrackCaption(this.currentTrackAnalysis);
+  }
+
+  get currentTrackStructureEntries(): SongStructureEntry[] {
+    return formatSongStructureEntries(this.currentTrackAnalysis);
+  }
+
+  get hasCurrentTrackText(): boolean {
+    return (
+      Boolean(this.currentTrackLyrics) ||
+      Boolean(this.currentTrackCaption) ||
+      this.currentTrackStructureEntries.length > 0
+    );
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  copyCurrentTrackText(): void {
+    const text = formatTrackAnalysisForCopy(this.currentTrackAnalysis);
+    if (!text) return;
+    this.clipboard.copy(text);
+    handleSuccessSnackbar(this.snackBar, 'Copied to clipboard!');
+  }
+
   // --- AUDIO PLAYER LOGIC ---
   togglePlay() {
     const audio = this.audioPlayerRef?.nativeElement;
     if (!audio) return;
 
     if (audio.paused) {
-      void audio.play();
       this.isPlaying = true;
+      audio.play()?.catch(() => {
+        this.isPlaying = false;
+      });
     } else {
       audio.pause();
       this.isPlaying = false;
@@ -555,6 +626,7 @@ export class MediaLightboxComponent
   }
 
   private resetAudioState() {
+    this.clearSelectMediaAudioTimer();
     this.isPlaying = false;
     this.progressValue = 0;
     this.currentTime = '0:00';
@@ -583,6 +655,15 @@ export class MediaLightboxComponent
   onEditWithOmniClick(): void {
     if (this.mediaItem) {
       this.editWithOmniClicked.emit({
+        mediaItem: this.mediaItem as MediaItem,
+        selectedIndex: this.selectedIndex,
+      });
+    }
+  }
+
+  onIterateAudioClick(): void {
+    if (this.mediaItem) {
+      this.iterateAudioClicked.emit({
         mediaItem: this.mediaItem as MediaItem,
         selectedIndex: this.selectedIndex,
       });

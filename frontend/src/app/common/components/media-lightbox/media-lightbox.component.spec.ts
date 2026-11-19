@@ -14,14 +14,22 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
 import {provideRouter} from '@angular/router';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
 import {MatDialogModule} from '@angular/material/dialog';
+import {MatMenuModule} from '@angular/material/menu';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatTooltipModule} from '@angular/material/tooltip';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA} from '@angular/core';
+import {Clipboard} from '@angular/cdk/clipboard';
 
 import {MediaLightboxComponent} from './media-lightbox.component';
 import {TagsService} from '../../services/tags.service';
@@ -36,7 +44,13 @@ describe('MediaLightboxComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaLightboxComponent],
-      imports: [MatDialogModule, MatSnackBarModule, NoopAnimationsModule],
+      imports: [
+        MatDialogModule,
+        MatMenuModule,
+        MatSnackBarModule,
+        MatTooltipModule,
+        NoopAnimationsModule,
+      ],
       providers: [
         provideRouter([]),
         provideHttpClient(),
@@ -52,7 +66,7 @@ describe('MediaLightboxComponent', () => {
           },
         },
       ],
-      schemas: [CUSTOM_ELEMENTS_SCHEMA],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaLightboxComponent);
@@ -113,5 +127,195 @@ describe('MediaLightboxComponent', () => {
       expect(moveSpy).not.toHaveBeenCalled();
       expect(emitted).toEqual([]);
     });
+  });
+
+  describe('audio lyrics, song structure & iterate action', () => {
+    beforeEach(() => {
+      component.mediaItem = {
+        id: 44,
+        workspaceId: 1,
+        mimeType: 'audio/mpeg',
+        prompt: 'Synthwave anthem',
+        presignedUrls: [
+          'https://example.com/a.mp3',
+          'https://example.com/b.mp3',
+        ],
+        audioAnalysis: {
+          tracks: [
+            {
+              raw_text: '[Verse 1]\nNeon skyline',
+              lyrics: '[Verse 1]\nNeon skyline',
+              structure: {
+                tempo: '124 BPM',
+                sections: [{name: 'Verse 1', duration: '0:00-0:15'}],
+              },
+            },
+            null,
+          ],
+        },
+      } as any;
+      component.selectedIndex = 0;
+      fixture.detectChanges();
+    });
+
+    it('displays lyrics and structure for the selected track and updates on track switch', () => {
+      expect(component.hasCurrentTrackText).toBeTrue();
+      expect(component.currentTrackLyrics).toBe('[Verse 1]\nNeon skyline');
+      expect(component.currentTrackStructureEntries).toEqual([
+        {label: 'Tempo', value: '124 BPM'},
+        {label: 'Verse 1', value: '0:00-0:15'},
+      ]);
+
+      const host = fixture.nativeElement as HTMLElement;
+      expect(host.querySelector('.audio-lyrics-panel')?.textContent).toContain(
+        'Neon skyline',
+      );
+
+      component.selectedIndex = 1;
+      fixture.detectChanges();
+      expect(component.hasCurrentTrackText).toBeFalse();
+      expect(host.querySelector('.audio-lyrics-panel')).toBeNull();
+    });
+
+    it('copies formatted structure and lyrics to the clipboard', () => {
+      const copySpy = spyOn(TestBed.inject(Clipboard), 'copy');
+      component.copyCurrentTrackText();
+      expect(copySpy).toHaveBeenCalledWith(
+        'Tempo: 124 BPM\nVerse 1: 0:00-0:15\n\n[Verse 1]\nNeon skyline',
+      );
+    });
+
+    it('renders Iterate action for audio clips without rendering Omni video button', () => {
+      const emitted: Array<{mediaItem: any; selectedIndex: number}> = [];
+      component.iterateAudioClicked.subscribe(evt => emitted.push(evt));
+
+      component.selectedIndex = 1;
+      fixture.detectChanges();
+
+      const host = fixture.nativeElement as HTMLElement;
+      const iterateBtn = host.querySelector(
+        '.iterate-audio-btn',
+      ) as HTMLElement | null;
+      expect(iterateBtn).not.toBeNull();
+
+      const omniBtn = Array.from(host.querySelectorAll('studio-button')).find(
+        btn => btn.textContent?.includes('Omni'),
+      );
+      expect(omniBtn).toBeUndefined();
+
+      iterateBtn!.click();
+      expect(emitted).toEqual([
+        {mediaItem: component.mediaItem, selectedIndex: 1},
+      ]);
+
+      component.showIterateAudio = false;
+      fixture.detectChanges();
+      expect(host.querySelector('.iterate-audio-btn')).toBeNull();
+    });
+
+    it('renders backend-parsed Caption, Mosic and BPM separately from timestamped lyrics', () => {
+      component.mediaItem = {
+        id: 45,
+        workspaceId: 1,
+        mimeType: 'audio/mpeg',
+        prompt: 'Stormy symphonic metal',
+        presignedUrls: ['https://example.com/storm.mp3'],
+        audioAnalysis: {
+          tracks: [
+            {
+              raw_text:
+                '[0.0:5.3] Darkness descends\n\nCaption: Maximalist Symphonic Metal wall of sound.\nMosic: 4.5\nBPM: 90.0',
+              lyrics: '[0.0:5.3] Darkness descends',
+              structure: {
+                caption: 'Maximalist Symphonic Metal wall of sound.',
+                mosic: 4.5,
+                bpm: 90,
+              },
+            },
+          ],
+        },
+      } as any;
+      component.selectedIndex = 0;
+      fixture.detectChanges();
+
+      const host = fixture.nativeElement as HTMLElement;
+      expect(component.currentTrackCaption).toBe(
+        'Maximalist Symphonic Metal wall of sound.',
+      );
+      expect(component.currentTrackStructureEntries).toEqual([
+        {label: 'Mosic', value: '4.5'},
+        {label: 'BPM', value: '90'},
+      ]);
+      expect(host.querySelector('.structure-caption')?.textContent).toContain(
+        'Maximalist Symphonic Metal wall of sound.',
+      );
+    });
+
+    it('should hide Iterate button for Chirp and Gemini TTS audio items', () => {
+      const sub = component.iterateAudioClicked.subscribe();
+      const host = fixture.nativeElement as HTMLElement;
+
+      for (const ttsModel of [
+        'chirp_3',
+        'gemini-2.5-flash-tts',
+        'gemini-3.1-flash-tts-preview',
+      ]) {
+        component.mediaItem = {
+          ...(component.mediaItem as any),
+          model: ttsModel,
+        };
+        fixture.detectChanges();
+        expect(component.canIterateAudio).toBeFalse();
+        expect(host.querySelector('.iterate-audio-btn')).toBeNull();
+      }
+
+      component.mediaItem = {
+        ...(component.mediaItem as any),
+        model: 'lyria-3-clip-preview',
+      };
+      fixture.detectChanges();
+      expect(component.canIterateAudio).toBeTrue();
+      expect(host.querySelector('.iterate-audio-btn')).not.toBeNull();
+
+      sub.unsubscribe();
+    });
+
+    it('should hide Iterate button when iterateAudioClicked output has no subscribers', () => {
+      component.mediaItem = {
+        ...(component.mediaItem as any),
+        model: 'lyria-3-pro-preview',
+      };
+      fixture.detectChanges();
+
+      const host = fixture.nativeElement as HTMLElement;
+      expect(component.iterateAudioClicked.observers.length).toBe(0);
+      expect(component.canIterateAudio).toBeFalse();
+      expect(host.querySelector('.iterate-audio-btn')).toBeNull();
+    });
+
+    it('clears pending selectMedia audio timer on ngOnDestroy and resets isPlaying if audio.play() rejects', fakeAsync(() => {
+      component.selectedUrl = 'https://example.com/a.mp3';
+      fixture.detectChanges();
+      const audioEl = component.audioPlayerRef.nativeElement;
+      const loadSpy = spyOn(audioEl, 'load');
+      const playSpy = spyOn(audioEl, 'play').and.returnValue(
+        Promise.reject(new DOMException('Interrupted', 'AbortError')),
+      );
+
+      component.togglePlay();
+      expect(component.isPlaying).toBeTrue();
+      tick();
+      expect(component.isPlaying).toBeFalse();
+
+      loadSpy.calls.reset();
+      playSpy.calls.reset();
+
+      component.selectMedia(1);
+      component.ngOnDestroy();
+      tick(60);
+
+      expect(loadSpy).not.toHaveBeenCalled();
+      expect(playSpy).not.toHaveBeenCalled();
+    }));
   });
 });

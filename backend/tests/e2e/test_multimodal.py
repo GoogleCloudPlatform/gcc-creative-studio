@@ -280,7 +280,9 @@ async def test_multimodal_generation_exception_handling(
             "/api/gemini/multimodal-generation", json=payload
         )
         assert resp.status_code == 500
-        assert "Google API is down" in resp.json()["detail"]
+        detail = resp.json()["detail"]
+        assert detail == "Failed to generate multimodal content."
+        assert "Google API is down" not in detail
     finally:
         # Restore the original mock async_gen
         async def async_gen(model, contents, config=None, **kwargs):
