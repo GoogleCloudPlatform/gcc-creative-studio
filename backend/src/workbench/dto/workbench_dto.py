@@ -23,6 +23,7 @@ class Clip(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
+        extra="forbid",
     )
 
     asset_id: str
@@ -35,6 +36,8 @@ class Clip(BaseModel):
 
 
 class TimelineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     clips: list[Clip]
     output_format: str = "mp4"
     width: int | None = 1920
@@ -43,6 +46,8 @@ class TimelineRequest(BaseModel):
 
 
 class RenderTimelineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     timeline_id: int | None = None
     output_filename: str | None = None
 
@@ -65,28 +70,30 @@ class TransitionType(str, Enum):
 
 
 class AssetRef(BaseModel):
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(
+        from_attributes=True, populate_by_name=True, extra="forbid"
+    )
 
     id: int | str
     type: Literal["source_asset", "media_item"]
 
 
 class Trim(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     offset_seconds: float = 0.0
     duration_seconds: Optional[float] = None
 
 
 class Transition(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     type: TransitionType
     duration_seconds: float
 
 
 class VideoClip(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     asset_ref: Optional[AssetRef] = None
     trim: Optional[Trim] = None
@@ -100,14 +107,14 @@ class VideoClip(BaseModel):
 
 
 class AudioPlacement(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     video_clip_index: int
     offset_seconds: float = 0.0
 
 
 class AudioClip(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     start_at: AudioPlacement
     asset_ref: Optional[AssetRef] = None
@@ -121,7 +128,7 @@ class AudioClip(BaseModel):
 
 
 class VideoTimeline(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     timeline_id: Optional[str | int] = None
     storyboard_id: Optional[str | int] = None

@@ -126,7 +126,10 @@ async def lifespan(app: FastAPI):
     app.state.executor = ThreadPoolExecutor(max_workers=8)
 
     # Register workflow session store + dispatcher hooks.
-    from src.auth.auth_guard import register_post_auth_hook
+    from src.auth.auth_guard import (
+        clear_post_auth_hooks,
+        register_post_auth_hook,
+    )
     from src.workflows.queue.run_state_service import set_dispatch_hook
     from src.workflows.queue.workflow_dispatcher import (
         handle_post_auth_session,
@@ -136,7 +139,11 @@ async def lifespan(app: FastAPI):
     register_post_auth_hook(handle_post_auth_session)
     set_dispatch_hook(run_default_dispatch)
 
-    yield
+    try:
+        yield
+    finally:
+        clear_post_auth_hooks()
+        set_dispatch_hook(None)
 
     logger.info("Application shutdown terminating")
 
