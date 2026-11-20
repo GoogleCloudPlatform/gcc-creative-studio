@@ -22,6 +22,12 @@ Source files:
   - **Self-delete guard (`DELETE /api/users/{user_id}`):** Even admins cannot delete themselves — `user_id == current_user.id` raises `HTTP 400` (`You cannot delete yourself.`).
 - **Soft-deleted gallery item recovery (`GalleryService.restore_item`):** Restoring a soft-deleted `media_item` or `source_asset` requires `UserRoleEnum.ADMIN in current_user.roles` (`HTTP 403` otherwise).
 
+## System Version Check
+
+- **Admin-only endpoint (`GET /api/admin/version`):** Version checking is restricted to admins via `/api/admin` (`RoleChecker([UserRoleEnum.ADMIN])`); the legacy unauthenticated `/api/version` endpoint was removed so release metadata is never exposed publicly.
+- **CalVer validation & fallback (`VersionService` in `backend/src/admin/version_service.py`):** Compares `APP_VERSION` (`backend/src/version.py`) against bare CalVer tags from `GITHUB_RELEASE_REPO`, skips drafts/prereleases, constructs `release_url` from the validated repo and tag, enforces `3600s` TTL / `60s` error backoff / `5s` refresh cooldown, and returns `refreshFailed: true` when a forced refresh falls back to cached data.
+- **Browser admin state (`AdminVersionService`):** Fetches `/api/admin/version` on admin load and manual refresh only in the browser when `AuthService.isUserAdmin()`, `AuthService.getToken()`, and `UserService.getUserDetails()` identify an active admin user, resets cached state on user change or sign-out/401/403, suppresses `justChecked` when `refreshFailed` is `true`, and renders `"Couldn't refresh - showing last result"` without stacking with `"Update check unavailable"`.
+
 ## Frontend Route Guard
 
 - **`AdminAuthGuard` (`frontend/src/app/admin/admin-auth.guard.ts`):**

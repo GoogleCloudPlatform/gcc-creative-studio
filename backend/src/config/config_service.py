@@ -19,6 +19,8 @@ from google.auth.exceptions import DefaultCredentialsError
 from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.version import DEFAULT_GITHUB_RELEASE_REPO
+
 
 class ConfigService(BaseSettings):
     """Manages application configuration using Pydantic.
@@ -47,6 +49,8 @@ class ConfigService(BaseSettings):
     IZUMI_AGENT_URL: str = "http://izumi-agent:8080"
     LOG_LEVEL: str = "INFO"
     INIT_VERTEX: bool = True
+    GITHUB_RELEASE_REPO: str = DEFAULT_GITHUB_RELEASE_REPO
+    GITHUB_TOKEN: str = ""
 
     # --- Google Identity ---
     GOOGLE_TOKEN_AUDIENCE: str = ""
