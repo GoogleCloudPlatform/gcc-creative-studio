@@ -23,17 +23,19 @@ import {
   UrlTree,
 } from '@angular/router';
 import {AuthService} from './auth.service';
+import {canActivateWithSilentRenewal} from './auth-token.utils';
+import {LoadingService} from './loading.service';
 import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 import {isPlatformBrowser} from '@angular/common';
-import {Observable, of} from 'rxjs';
+import {Observable} from 'rxjs';
 
-const LOGIN_ROUTE = '/login';
 @Injectable({
   providedIn: 'root',
 })
 export class AuthGuardService implements CanActivate {
   private platformId = inject(PLATFORM_ID);
+  private loadingService = inject(LoadingService);
 
   constructor(
     private authService: AuthService,
@@ -56,12 +58,15 @@ export class AuthGuardService implements CanActivate {
       return true;
     }
 
-    // --- BROWSER SIDE ---
-    if (!this.authService.isLoggedIn()) {
-      void this.router.navigate([LOGIN_ROUTE]);
-      return false;
-    }
+    return canActivateWithSilentRenewal(
+      this.authService,
+      this.loadingService,
+      state?.url ?? '',
+      () => this.hasRequiredRoles(route),
+    );
+  }
 
+  private hasRequiredRoles(route: ActivatedRouteSnapshot): boolean {
     const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];
     if (requiredRoles && requiredRoles.length > 0) {
       const userDetails = this.userService.getUserDetails();

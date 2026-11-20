@@ -23,7 +23,9 @@ from src.admin.dto.admin_response_dto import (
     AdminActiveRole,
     AdminGenerationHealth,
     AdminMonthlyActiveUsers,
+    AdminVersionInfo,
 )
+from src.admin.version_service import VersionService, get_version_service
 
 router = APIRouter(
     prefix="/api/admin",
@@ -132,3 +134,12 @@ async def cleanup_stuck_jobs(admin_service: AdminService = Depends()):
     """
     count = await admin_service.cleanup_stuck_jobs()
     return {"message": f"Cleaned up {count} stuck jobs", "count": count}
+
+
+@router.get("/version", response_model=AdminVersionInfo)
+async def get_version_info(
+    refresh: bool = False,
+    version_service: VersionService = Depends(get_version_service),
+):
+    """Retrieves installed application version and GitHub release status."""
+    return await version_service.get_version_info(refresh=refresh)

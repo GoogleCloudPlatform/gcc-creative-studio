@@ -15,8 +15,10 @@
  */
 
 import {Component} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {Router, NavigationEnd, Event as NavigationEvent} from '@angular/router';
 import {trigger, transition, style, query, animate} from '@angular/animations';
+import {isLoginPath} from './common/services/auth-token.utils';
 import {LoadingService} from './common/services/loading.service';
 import {MediaUploadService} from './common/services/media-upload/media-upload.service';
 
@@ -53,28 +55,33 @@ import {MediaUploadService} from './common/services/media-upload/media-upload.se
 })
 export class AppComponent {
   title = 'creative-studio';
-  showHeader = true;
+  showHeader = false;
 
   constructor(
     private router: Router,
     public loadingService: LoadingService,
     public uploadService: MediaUploadService,
   ) {
-    this.router.events.subscribe((event: NavigationEvent) => {
-      if (event instanceof NavigationEnd) {
-        if (
-          event.url === '/login' ||
-          event.url === '/login/e2e' ||
-          (event.url.includes('login') && event.url.includes('email')) ||
-          (event.url.includes('login') && event.url.includes('tos')) ||
-          event.url.includes('reset-password') ||
-          event.url.includes('support-ticket')
-        ) {
-          this.showHeader = false;
-        } else {
-          this.showHeader = true;
+    this.router.events
+      .pipe(takeUntilDestroyed())
+      .subscribe((event: NavigationEvent) => {
+        if (event instanceof NavigationEnd) {
+          this.showHeader = this.shouldShowHeader(
+            event.urlAfterRedirects || event.url,
+          );
         }
-      }
-    });
+      });
+  }
+
+  private shouldShowHeader(url: string): boolean {
+    if (isLoginPath(url)) {
+      return false;
+    }
+    return !(
+      (url.includes('login') && url.includes('email')) ||
+      (url.includes('login') && url.includes('tos')) ||
+      url.includes('reset-password') ||
+      url.includes('support-ticket')
+    );
   }
 }
