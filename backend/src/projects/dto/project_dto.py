@@ -25,11 +25,15 @@ ProjectName = Annotated[
 
 # Project DTOs
 class ProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspace_id: int
     name: ProjectName
 
 
 class ProjectUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: ProjectName
 
 

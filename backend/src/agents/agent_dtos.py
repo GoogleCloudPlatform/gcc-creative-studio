@@ -119,6 +119,8 @@ class SessionResponseDto(BaseModel):
 class UpdateSessionRequestDto(BaseModel):
     """Server-side chat title and summary (they replace localStorage topics)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     title: Optional[str] = Field(default=None, max_length=200)
     summary: Optional[str] = Field(default=None, max_length=1000)
 

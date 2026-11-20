@@ -154,6 +154,24 @@ uv run pytest tests -v --asyncio-mode=auto --cov=src --cov-fail-under=80
 uv run pytest tests/users -v --asyncio-mode=auto
 ```
 
+**CI parity in Docker**: the backend container is synced `--no-dev` and mounts only `./backend`, but two tests read `../frontend/src`. Under a plain `docker exec`, `test_frontend_json_mutation_endpoints_match_backend_routes` fails with `Too few resolved calls: 0` and the Veo capability sync test is skipped. Install the dev extras once, then run the suite in a throwaway container with the frontend mounted:
+
+```bash
+docker exec creative-studio-backend uv sync --locked --extra dev --group dev
+docker compose run --rm --no-deps -v "$PWD/frontend/src:/frontend/src:ro" -e REQUIRE_POSTGRES_TESTS=1 \
+  backend uv run pytest tests --cov=src --cov-fail-under=80
+```
+
+### Frontend (Angular)
+
+CI (`.github/workflows/frontend-quality.yml`) runs `npx gts lint`, `npm run compile` and Karma. The `frontend` image (`node:20-alpine`) has no browser and bind-mounts only `src/`, so rebuild it whenever `package.json` / `package-lock.json` change, then run Karma in a throwaway container:
+
+```bash
+docker compose build frontend
+docker compose run --rm --no-deps -e CHROME_BIN=/usr/bin/chromium frontend sh -c \
+  "apk add --no-cache chromium >/dev/null && npm run compile && npx ng test --watch=false --browsers=ChromeHeadlessCI"
+```
+
 ---
 
 ## 📜 AI Agent Guidelines & Rules
