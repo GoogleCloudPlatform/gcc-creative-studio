@@ -30,7 +30,7 @@ import {
   signal,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
-import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
+import {takeUntilDestroyed, toObservable} from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormArray,
@@ -108,6 +108,9 @@ import {
   LOOP_LINKED_ITEMS_INPUT,
 } from './step-components/step-configs/loop-step.config';
 import {WorkflowService} from '../workflow.service';
+import {RunFolderService} from '../shared/run-folder.service';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
+import {collectStepFolderIds, FolderPathMap} from '../utils/folder-path.util';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
@@ -259,6 +262,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private mainSubscription!: Subscription;
   private pollingSubscription?: Subscription;
   currentExecutionId: string | null = null;
+  private currentExecutionWorkspaceId: number | null = null;
   initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
   executionStepEntries: StepEntry[] = [];
@@ -277,6 +281,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (!step) return null;
     return this.executionEntries().find(e => e.step_id === step.stepId) ?? null;
   });
+  /** Resolved paths of the folders used by the inspected step's history. */
+  readonly folderPaths = signal<FolderPathMap>(new Map());
+  private readonly runFolderService = inject(RunFolderService);
+  private readonly workspaceStateService = inject(WorkspaceStateService);
+  /**
+   * Sorted unique folder ids of the inspected step's inputs. Equality by
+   * content so live polling updates only refetch when the ids change.
+   */
+  private readonly historySidebarFolderIds = computed<number[]>(
+    () => {
+      const entry = this.historySidebarEntry();
+      if (!entry) return [];
+      const ids = entry.history.flatMap(h =>
+        collectStepFolderIds(h.step_inputs),
+      );
+      return [...new Set(ids)].sort((a, b) => a - b);
+    },
+    {equal: (a, b) => a.length === b.length && a.every((id, i) => id === b[i])},
+  );
   mediaUrlMap = new Map<string, string>();
   loadedMedia = new Set<string>();
   returnUrl: string | null = null;
@@ -425,7 +448,41 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     private dialog: MatDialog,
     private snackBar: MatSnackBar,
     private mediaResolutionService: MediaResolutionService,
-  ) {}
+  ) {
+    this.watchHistorySidebarFolderPaths();
+  }
+
+  /**
+   * Resolves the folder paths of the inspected step whenever its folder ids
+   * change. A newer selection cancels the pending request; ids that fail to
+   * resolve keep their `Folder #<id>` label.
+   */
+  private watchHistorySidebarFolderPaths(): void {
+    toObservable(this.historySidebarFolderIds)
+      .pipe(
+        switchMap(ids =>
+          ids.length === 0
+            ? of(null)
+            : this.runFolderService
+                .resolveFolderPaths(ids, this.historySidebarWorkspaceId())
+                .pipe(catchError(() => of(null))),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(resolved => {
+        if (!resolved) return;
+        this.folderPaths.update(paths => new Map([...paths, ...resolved]));
+      });
+  }
+
+  /** Workspace of the opened run, else the active workspace. */
+  private historySidebarWorkspaceId(): number | null {
+    return (
+      this.currentExecutionWorkspaceId ??
+      this.workflowRun?.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId()
+    );
+  }
 
   get stepsArray(): FormArray {
     return this.formService.stepsArray;
@@ -488,6 +545,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         } else {
           this.initialExecutionId = null;
           this.currentExecutionId = null;
+          this.currentExecutionWorkspaceId = null;
           this.currentExecutionState = null;
           this.executionStepEntries = [];
           this.executionEntries.set([]);
@@ -2280,6 +2338,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
               res.executionId ??
               '';
             this.currentExecutionId = createdRunId;
+            this.currentExecutionWorkspaceId = null;
             this.currentExecutionState =
               res.status || WorkflowRunStatusEnum.RUNNING;
             this.isLoading = false;
@@ -2307,6 +2366,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (!this.workflowId) return;
 
     this.currentExecutionId = runOrExecutionId;
+    this.currentExecutionWorkspaceId = null;
     this.isLoading = true;
 
     this.workflowService
@@ -2355,6 +2415,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private handleExecutionUpdate(details: WorkflowRunDetail): void {
     const runStatus = details.status ?? details.state ?? '';
     this.currentExecutionState = runStatus;
+    this.currentExecutionWorkspaceId =
+      details.workspace_id ?? details.workspaceId ?? null;
     this.executionStepEntries = this.buildStepEntriesFromRunDetails(details);
     this.executionEntries.set(this.executionStepEntries);
     this.updateStepStatuses(this.executionStepEntries);

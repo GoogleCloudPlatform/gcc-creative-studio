@@ -56,6 +56,7 @@ from src.workflows.queue.failure_classifier import (
 from src.workflows.repository.workflow_run_repository import (
     WorkflowRunRepository,
 )
+from src.workflows.schema.folder_parameters import folder_arg_names
 from src.workflows.schema.workflow_model import (
     StepStatusEnum,
     WorkflowBase,
@@ -74,6 +75,7 @@ from src.workflows.workflow_yaml_builder import (
     build_prior_outputs,
     compute_definition_hash,
     missing_required_args,
+    required_args,
     reconcile_step_states_for_resume,
 )
 from src.workflows_executor.step_errors import StepError
@@ -85,6 +87,11 @@ CONTINUATION_DELAY_SECONDS = 5
 # Stale RUNNING claim threshold when execution_ids is empty (spec §8.4, E5).
 STALE_CLAIM_SECONDS = 120
 SECONDS_PER_DAY = 86400
+
+
+def _is_valid_folder_id(value: Any) -> bool:
+    """True when ``value`` is a strict positive int (bools rejected)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 class MissingResumeInputsError(StepError):
@@ -745,6 +752,35 @@ class RunStateService:
             missing = missing_required_args(steps, effective_args)
             if missing:
                 raise MissingResumeInputsError(missing)
+
+            all_folder_args = folder_arg_names(steps)
+            linked_folder_args = all_folder_args & set(required_args(steps))
+            unlinked_folder_args = all_folder_args - linked_folder_args
+            for name in unlinked_folder_args:
+                if name in effective_args and effective_args[name] is None:
+                    effective_args.pop(name, None)
+
+            invalid_folder_args = sorted(
+                name
+                for name in all_folder_args
+                if (
+                    name in linked_folder_args
+                    and not _is_valid_folder_id(effective_args.get(name))
+                )
+                or (
+                    name in unlinked_folder_args
+                    and name in effective_args
+                    and not _is_valid_folder_id(effective_args[name])
+                )
+            )
+            if invalid_folder_args:
+                raise StepError(
+                    422,
+                    ErrorCategory.INVALID_INPUT,
+                    "Folder inputs must be positive integer ids: "
+                    + ", ".join(invalid_folder_args),
+                    retry_safe=False,
+                )
 
             changed_inputs = [
                 key

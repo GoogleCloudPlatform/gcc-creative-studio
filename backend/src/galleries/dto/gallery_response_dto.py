@@ -13,8 +13,9 @@
 # limitations under the License.
 
 
-from pydantic import field_validator
+from pydantic import ConfigDict, field_validator
 
+from src.audios.lyria3_text import normalize_audio_analysis
 from src.common.media_utils import format_api_error_message
 from src.common.schema.media_item_model import (
     MediaItemModel,
@@ -36,6 +37,10 @@ class SourceAssetLinkResponse(SourceAssetLink):
 
 class SourceMediaItemLinkResponse(SourceMediaItemLink):
     """Extends the source media item link with a presigned URL and GCS URI for frontend display."""
+
+    model_config = ConfigDict(
+        **{**SourceMediaItemLink.model_config, "extra": "ignore"}
+    )
 
     presigned_url: str
     gcs_uri: str
@@ -63,3 +68,9 @@ class MediaItemResponse(MediaItemModel):
         if v:
             return format_api_error_message(v)
         return v
+
+    @field_validator("audio_analysis", mode="after")
+    @classmethod
+    def normalize_legacy_audio_analysis(cls, v: dict | None) -> dict | None:
+        """Splits metadata out of lyrics on pre-parser Lyria 3 rows."""
+        return normalize_audio_analysis(v)

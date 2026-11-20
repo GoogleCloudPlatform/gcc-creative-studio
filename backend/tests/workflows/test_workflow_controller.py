@@ -241,10 +241,12 @@ def test_list_runs_and_get_run_details(client, mock_service):
         total_pages=1,
     )
 
-    list_resp = client.get("/api/workflows/wf1/runs")
+    list_resp = client.get("/api/workflows/wf1/runs?workspace_id=3")
     assert list_resp.status_code == 200
-    assert list_resp.json()["data"][0]["id"] == "run-1"
-    assert list_resp.json()["data"][0]["queuePosition"] == 1
+    first_run = list_resp.json()["data"][0]
+    assert first_run["id"] == "run-1"
+    assert first_run["queuePosition"] == 1
+    assert mock_service.list_runs.await_args.kwargs["workspace_id"] == 3
 
     mock_service.get_run_details.return_value = WorkflowRunDetailDto(
         id="run-1",
@@ -263,6 +265,13 @@ def test_list_runs_and_get_run_details(client, mock_service):
     mock_service.get_run_details.return_value = None
     not_found_resp = client.get("/api/workflows/wf1/runs/missing")
     assert not_found_resp.status_code == 404
+
+
+def test_list_runs_requires_workspace_id(client, mock_service):
+    resp = client.get("/api/workflows/wf1/runs")
+
+    assert resp.status_code == 422
+    mock_service.list_runs.assert_not_called()
 
 
 def test_resume_run_and_cancel_run_routes(client, mock_service):

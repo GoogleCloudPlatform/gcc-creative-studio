@@ -99,29 +99,33 @@ class GenAIModelSetup:
     def get_global_client(cls) -> Client:
         """Initializes and returns a shared global GenAI client instance for Gemini models."""
         if cls._global_client is None:
-            try:
-                config = config_service
-                project_id = config.PROJECT_ID
-                if project_id is None:
-                    raise ValueError("Project ID must be set.")
+            with cls._client_lock:
+                if cls._global_client is None:
+                    try:
+                        config = config_service
+                        project_id = config.PROJECT_ID
+                        if project_id is None:
+                            raise ValueError("Project ID must be set.")
 
-                logger.info(
-                    f"Initializing shared global GenAI client for project '{project_id}' in location 'global'",
-                )
+                        logger.info(
+                            f"Initializing shared global GenAI client for project '{project_id}' in location 'global'",
+                        )
 
-                cls._global_client = Client(
-                    vertexai=config.INIT_VERTEX,
-                    project=project_id,
-                    location="global",
-                    http_options={
-                        "headers": {
-                            "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
-                        }
-                    },
-                )
-            except Exception as e:
-                logger.error("Failed to initialize global GenAI client: %s", e)
-                raise
+                        cls._global_client = Client(
+                            vertexai=config.INIT_VERTEX,
+                            project=project_id,
+                            location="global",
+                            http_options={
+                                "headers": {
+                                    "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
+                                }
+                            },
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Failed to initialize global GenAI client: %s", e
+                        )
+                        raise
         return cls._global_client
 
     @classmethod

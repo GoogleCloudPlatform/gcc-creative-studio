@@ -112,6 +112,7 @@ import {AddStepModalComponent} from './workflows/workflow-editor/add-step-modal/
 import {RunWorkflowModalComponent} from './workflows/workflow-editor/run-workflow-modal/run-workflow-modal.component';
 import {StepInputFieldComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-input-field/step-input-field.component';
 import {StepMediaInputComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-media-input/step-media-input.component';
+import {StepFolderInputComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-folder-input/step-folder-input.component';
 import {GenericStepComponent} from './workflows/workflow-editor/step-components/generic-step/generic-step.component';
 import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-editor.component';
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
@@ -156,6 +157,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     GenericStepComponent,
     StepInputFieldComponent,
     StepMediaInputComponent,
+    StepFolderInputComponent,
     RunWorkflowModalComponent,
     ExecutionHistoryComponent,
     ExecutionDetailsModalComponent,

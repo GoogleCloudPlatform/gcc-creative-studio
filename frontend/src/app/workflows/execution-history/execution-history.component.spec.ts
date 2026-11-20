@@ -21,6 +21,7 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, convertToParamMap} from '@angular/router';
 import {of, throwError} from 'rxjs';
 import {AuthService} from '../../common/services/auth.service';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {WorkflowRunStatusEnum, WorkflowRunSummary} from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
@@ -36,6 +37,7 @@ describe('ExecutionHistoryComponent', () => {
   let dialogSpy: jasmine.SpyObj<MatDialog>;
   let snackBarSpy: jasmine.SpyObj<MatSnackBar>;
   let authServiceSpy: jasmine.SpyObj<AuthService>;
+  let workspaceState: WorkspaceStateService;
 
   const mockRuns: WorkflowRunSummary[] = [
     {
@@ -129,6 +131,8 @@ describe('ExecutionHistoryComponent', () => {
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
+    workspaceState = TestBed.inject(WorkspaceStateService);
+    workspaceState.setActiveWorkspaceId(7);
     fixture = TestBed.createComponent(ExecutionHistoryComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -136,13 +140,86 @@ describe('ExecutionHistoryComponent', () => {
 
   it('should create and load runs via getRuns', () => {
     expect(component).toBeTruthy();
-    expect(workflowServiceSpy.getRuns).toHaveBeenCalledWith(
+    expect(workflowServiceSpy.getRuns).toHaveBeenCalledOnceWith(
       'wf-123',
+      7,
       20,
       0,
       'ALL',
     );
     expect(component.runRows().length).toBe(3);
+  });
+
+  it('should poll runs of the active workspace', () => {
+    expect(pollingServiceSpy.pollRuns).toHaveBeenCalledWith(
+      'wf-123',
+      7,
+      20,
+      'ALL',
+    );
+  });
+
+  it('should clear runs and reload page 1 when the active workspace changes', () => {
+    const nextRuns = [mockRuns[2]];
+    component.currentOffset.set(40);
+    workflowServiceSpy.getRuns.calls.reset();
+    workflowServiceSpy.getRuns.and.returnValue(
+      of({runs: nextRuns, next_page_token: null}),
+    );
+
+    workspaceState.setActiveWorkspaceId(8);
+
+    expect(workflowServiceSpy.getRuns).toHaveBeenCalledOnceWith(
+      'wf-123',
+      8,
+      20,
+      0,
+      'ALL',
+    );
+    expect(component.runs()).toEqual(nextRuns);
+    expect(component.currentOffset()).toBe(1);
+  });
+
+  it('should not reload when the same workspace is emitted again', () => {
+    workflowServiceSpy.getRuns.calls.reset();
+
+    workspaceState.setActiveWorkspaceId(7);
+
+    expect(workflowServiceSpy.getRuns).not.toHaveBeenCalled();
+  });
+
+  it('should not fetch runs while no workspace is active and load once one is', () => {
+    workflowServiceSpy.getRuns.calls.reset();
+
+    workspaceState.setActiveWorkspaceId(null);
+
+    expect(workflowServiceSpy.getRuns).not.toHaveBeenCalled();
+    expect(component.runs()).toEqual([]);
+    expect(component.isLoading()).toBeFalse();
+
+    workspaceState.setActiveWorkspaceId(9);
+
+    expect(workflowServiceSpy.getRuns).toHaveBeenCalledOnceWith(
+      'wf-123',
+      9,
+      20,
+      0,
+      'ALL',
+    );
+  });
+
+  it('should not fetch runs on init when no workspace is active', () => {
+    workspaceState.setActiveWorkspaceId(null);
+    workflowServiceSpy.getRuns.calls.reset();
+
+    const nullWorkspaceFixture = TestBed.createComponent(
+      ExecutionHistoryComponent,
+    );
+    nullWorkspaceFixture.detectChanges();
+
+    expect(workflowServiceSpy.getRuns).not.toHaveBeenCalled();
+    expect(nullWorkspaceFixture.componentInstance.runs()).toEqual([]);
+    expect(nullWorkspaceFixture.componentInstance.isLoading()).toBeFalse();
   });
 
   it('should compute queue position, queue reason label, attempt count, and action eligibility', () => {
@@ -174,6 +251,7 @@ describe('ExecutionHistoryComponent', () => {
     );
     expect(workflowServiceSpy.getRuns).toHaveBeenCalledWith(
       'wf-123',
+      7,
       20,
       0,
       WorkflowRunStatusEnum.NEEDS_ATTENTION,

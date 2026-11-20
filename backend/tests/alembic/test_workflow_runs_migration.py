@@ -293,7 +293,8 @@ async def _snapshot() -> dict[str, Any]:
         constraints = await conn.fetch(
             "SELECT conname, pg_get_constraintdef(oid) AS definition "
             "FROM pg_constraint "
-            "WHERE conrelid = to_regclass('public.workflow_user_sessions')"
+            "WHERE conrelid = to_regclass('public.workflow_user_sessions') "
+            "AND contype <> 'n'"
         )
         runs = await conn.fetch("SELECT * FROM workflow_runs")
         workflows = await conn.fetch("SELECT * FROM workflows")

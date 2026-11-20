@@ -135,6 +135,30 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(query)
         return result.scalars().first()
 
+    async def resolve_folder_path(
+        self, workspace_id: int, path: str
+    ) -> int | None:
+        """Id of the active folder at a '/'-separated path from the root.
+
+        Segments are trimmed and matched case-insensitively. Returns None for
+        non-string input, empty segments or any unmatched segment; database
+        errors propagate to the caller like in the sibling lookups.
+        """
+        if not isinstance(path, str):
+            return None
+        segments = [segment.strip() for segment in path.split("/")]
+        if any(not segment for segment in segments):
+            return None
+        parent_id: int | None = None
+        for segment in segments:
+            folder = await self.get_folder_by_name(
+                workspace_id=workspace_id, parent_id=parent_id, name=segment
+            )
+            if folder is None:
+                return None
+            parent_id = folder.id
+        return parent_id
+
     async def get_existing_folders_map(
         self,
         workspace_id: int,

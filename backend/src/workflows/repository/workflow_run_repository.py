@@ -441,11 +441,13 @@ class WorkflowRunRepository(
         status: WorkflowRunStatusEnum | str | None = None,
         limit: int = 20,
         offset: int = 0,
+        workspace_id: int,
     ) -> tuple[list[WorkflowRunModel], int]:
         """Lists DB runs for ``workflow_id`` owned by ``user_id``."""
         filters = [
             WorkflowRun.workflow_id == workflow_id,
             WorkflowRun.user_id == user_id,
+            WorkflowRun.workspace_id == workspace_id,
         ]
         if status is not None:
             status_val = (

@@ -13,14 +13,18 @@
 # limitations under the License.
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class BulkDeleteItemDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: int
     type: str
 
 
 class BulkDeleteDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[BulkDeleteItemDto]
     workspace_id: int

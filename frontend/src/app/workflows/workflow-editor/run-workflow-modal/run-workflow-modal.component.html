@@ -23,7 +23,10 @@
   <form [formGroup]="runForm" class="flex flex-col gap-4">
     <div *ngFor="let input of inputDefinitions">
       <div
-        *ngIf="input.type === 'image' || input.type === 'video'; else textInput"
+        *ngIf="
+          input.type === 'image' || input.type === 'video';
+          else nonMediaInput
+        "
       >
         <label class="block text-sm font-medium text-neutral-300 mb-2">{{
           input.label | titlecase
@@ -87,6 +90,40 @@
           </div>
         </div>
       </div>
+
+      <ng-template #nonMediaInput>
+        <div
+          *ngIf="input.type === folderInputType; else textInput"
+          class="run-folder-field"
+        >
+          <label class="run-folder-label" [for]="'run-folder-btn-' + input.name">{{
+            input.label | titlecase
+          }}</label>
+          <button
+            type="button"
+            class="run-folder-btn"
+            [id]="'run-folder-btn-' + input.name"
+            [class.has-folder]="folderSelections()[input.name]"
+            (click)="openFolderPicker(input.name)"
+          >
+            <mat-icon class="run-folder-icon">folder</mat-icon>
+            <span
+              class="run-folder-path"
+              [id]="'run-folder-path-' + input.name"
+              [attr.title]="folderSelections()[input.name]?.path ?? null"
+              >{{
+                folderSelections()[input.name]?.path ?? folderPickerEmptyLabel
+              }}</span
+            >
+            <span class="run-folder-action">{{
+              folderSelections()[input.name] ? 'Change' : 'Browse'
+            }}</span>
+          </button>
+          <span class="run-folder-hint"
+            >Required · folders of the active workspace</span
+          >
+        </div>
+      </ng-template>
 
       <ng-template #textInput>
         <mat-form-field appearance="outline" class="w-full">

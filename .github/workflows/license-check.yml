@@ -2,11 +2,7 @@ name: License Check
 
 on:
   pull_request:
-    types: [opened, synchronize]
-    branches:
-      - main
-      - develop
-      - test
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, develop, test]
 

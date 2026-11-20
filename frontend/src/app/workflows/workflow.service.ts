@@ -295,19 +295,21 @@ export class WorkflowService implements OnDestroy {
 
   getRuns(
     workflowId: string,
+    workspaceId: number,
     limit = 20,
     offset = 0,
     status?: string | null,
   ): Observable<WorkflowRunListResponse> {
     const normalizedStatus =
       status && status !== 'ALL' ? status.toLowerCase() : '';
-    const requestKey = `${workflowId}:${limit}:${offset}:${normalizedStatus}`;
+    const requestKey = `${workflowId}:${workspaceId}:${limit}:${offset}:${normalizedStatus}`;
     const existingRequest = this.inFlightGetRuns.get(requestKey);
     if (existingRequest) {
       return existingRequest;
     }
 
     let params = new HttpParams()
+      .set('workspace_id', String(workspaceId))
       .set('limit', String(limit))
       .set('offset', String(offset));
     if (normalizedStatus) {

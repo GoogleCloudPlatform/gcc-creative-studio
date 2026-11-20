@@ -26,14 +26,15 @@ class ImageModeEnum(str, Enum):
 
 
 IMAGE_MODE_ALLOWED_INPUTS: dict[str, list[str]] = {
-    ImageModeEnum.GENERATE_IMAGE.value: ["prompt"],
-    ImageModeEnum.EDIT_IMAGE.value: ["prompt", "input_images"],
-    ImageModeEnum.UPSCALE_IMAGE.value: ["input_image"],
+    ImageModeEnum.GENERATE_IMAGE.value: ["prompt", "output_folder"],
+    ImageModeEnum.EDIT_IMAGE.value: ["prompt", "input_images", "output_folder"],
+    ImageModeEnum.UPSCALE_IMAGE.value: ["input_image", "output_folder"],
     ImageModeEnum.VIRTUAL_TRY_ON.value: [
         "model_image",
         "top_image",
         "bottom_image",
         "dress_image",
         "shoes_image",
+        "output_folder",
     ],
 }

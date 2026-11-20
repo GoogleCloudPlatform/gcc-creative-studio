@@ -506,8 +506,8 @@ def test_resolve_loop_items_route_wires_guard_and_dependencies():
             **CONTEXT,
             "step_id": "loop_1",
             "workspace_id": 1,
-            "inputs": {},
-            "config": {"mode": "folder", "folder_id": 42, "item_type": "image"},
+            "inputs": {"folder": 42},
+            "config": {"mode": "folder", "item_type": "image"},
         },
         headers={"Authorization": AUTH},
     )
@@ -516,7 +516,7 @@ def test_resolve_loop_items_route_wires_guard_and_dependencies():
     assert response.json()["total_iterations"] == 0
     request = service.resolve_loop_items.await_args.args[0]
     kwargs = service.resolve_loop_items.await_args.kwargs
-    assert request.config.folder_id == 42
+    assert request.inputs.folder == 42
     assert kwargs["user"] == USER
     assert kwargs["folder_repository"] is folder_repository
     assert kwargs["gallery_repository"] is gallery_repository
@@ -603,6 +603,26 @@ def test_resolve_loop_items_rejects_invalid_linked_body(fake_service, body):
     response = client.post(
         f"{PREFIX}/resolve-loop-items",
         json=body,
+        headers={"Authorization": AUTH},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_category"] == "INVALID_INPUT"
+
+
+@pytest.mark.parametrize("folder", ["42", True, 0, -1, 1.5])
+def test_resolve_loop_items_rejects_non_strict_folder(fake_service, folder):
+    _, client = _build_client(fake_service)
+
+    response = client.post(
+        f"{PREFIX}/resolve-loop-items",
+        json={
+            **CONTEXT,
+            "step_id": "loop_1",
+            "workspace_id": 1,
+            "inputs": {"folder": folder},
+            "config": {"mode": "folder", "item_type": "image"},
+        },
         headers={"Authorization": AUTH},
     )
 

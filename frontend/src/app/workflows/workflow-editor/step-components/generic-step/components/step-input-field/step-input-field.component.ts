@@ -18,6 +18,7 @@ import {Component, EventEmitter, Input, Output} from '@angular/core';
 import {FormControl} from '@angular/forms';
 import {StepInput} from '../../step.model';
 import {LOOP_ITEMS_TEXT_EMPTY_MESSAGE} from '../../../step-configs/loop-step.config';
+import {FolderPreviewMimeType} from '../../../step-configs/folder-setting.util';
 
 @Component({
   selector: 'app-step-input-field',
@@ -32,6 +33,10 @@ export class StepInputFieldComponent {
   @Input() showValidationErrors = false;
   @Input() maxMediaItems = 1;
   @Input() disabledMessage = '';
+  /** Owning step id; builds the folder select's stable DOM id. */
+  @Input() stepId = '';
+  /** Media previewed by the folder picker (Loop: item_type; media nodes: generated type). */
+  @Input() folderPickerMimeType: FolderPreviewMimeType = 'image/*';
 
   readonly loopItemsTextEmptyMessage = LOOP_ITEMS_TEXT_EMPTY_MESSAGE;
 

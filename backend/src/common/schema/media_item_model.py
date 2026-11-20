@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 import datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 from sqlalchemy import (
     Boolean,
@@ -135,6 +136,7 @@ class SourceMediaItemLink(BaseModel):
         populate_by_name=True,
         from_attributes=True,
         alias_generator=to_camel,
+        extra="forbid",
     )
 
 
@@ -306,6 +308,26 @@ class MediaItemModel(BaseDocument):
     A list that describes the 'recipe' of generated inputs used to create this
     media item. It links to parent items from the 'media_library' collection.
     """
+
+    @field_validator("source_media_items", mode="before")
+    @classmethod
+    def _strip_unknown_source_media_link_keys(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        allowed: set[str] = set()
+        for fname, finfo in SourceMediaItemLink.model_fields.items():
+            allowed.add(fname)
+            if finfo.alias:
+                allowed.add(finfo.alias)
+            allowed.add(to_camel(fname))
+        return [
+            (
+                {k: v for k, v in item.items() if k in allowed}
+                if isinstance(item, Mapping)
+                else item
+            )
+            for item in value
+        ]
 
     gcs_uris: Annotated[
         list[str],

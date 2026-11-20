@@ -57,12 +57,22 @@ import {
 } from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
 import {mergeLiveStepEntries} from '../../utils/step-history.util';
+import {labelToName, nameToLabel} from '../../utils/workflow-step.util';
 import {getLoopBodies, LoopGraphStep} from '../../utils/workflow-loop.util';
 import {StepHistorySidebarDialogComponent} from '../../workflow-editor/step-history-sidebar/step-history-sidebar-dialog.component';
 import {
   STEP_HISTORY_SIDEBAR_PANEL_CLASS,
   StepHistorySidebarDialogData,
 } from '../../workflow-editor/step-history-sidebar/step-history-sidebar.models';
+import {
+  FOLDER_PICKER_EMPTY_LABEL,
+  FolderPathMap,
+  collectStepFolderIds,
+  formatFolderLabel,
+  getFolderInputNames,
+} from '../../utils/folder-path.util';
+import {RunFolderService} from '../../shared/run-folder.service';
+import {toFolderId} from '../../workflow-editor/step-components/step-configs/folder-setting.util';
 
 /**
  * System-managed run arguments that must never be exposed as editable
@@ -125,6 +135,12 @@ export interface ResumeFieldViewModel {
   name: string;
   label: string;
   errorMessage: string | null;
+  /** True for Folder parameters (edited with the folder picker). */
+  isFolder: boolean;
+  /** Folder path, `Folder #<id>`, or null when no folder is set. */
+  folderLabel: string | null;
+  /** DOM id of the field's control (button for folders, textarea otherwise). */
+  controlId: string;
 }
 
 export interface ExecutionAttemptViewModel {
@@ -158,12 +174,31 @@ export class ExecutionDetailsModalComponent implements OnInit {
   readonly missingInputs = signal<string[]>([]);
   readonly fieldErrors = signal<Record<string, string>>({});
   readonly resumeFieldNames = signal<string[]>([]);
+  /** Folder id → path in the run's workspace; failed ids stay absent. */
+  readonly folderPaths = signal<FolderPathMap>(new Map());
+  /** Folder resume field values, mirrored so computeds react to picks. */
+  readonly resumeFolderValues = signal<Record<string, number | null>>({});
+  readonly folderPickerEmptyLabel = FOLDER_PICKER_EMPTY_LABEL;
 
   resumeForm: FormGroup;
   mediaUrlMap = new Map<string, string>();
   loadedMedia = new Set<string>();
   NodeTypes = NodeTypes;
   private readonly dialog = inject(MatDialog);
+  private readonly runFolderService = inject(RunFolderService);
+
+  /** Workspace the run belongs to (folder paths are resolved there). */
+  readonly runWorkspaceId = computed<number | null>(() => {
+    const d = this.runDetails();
+    return d?.workspace_id ?? d?.workspaceId ?? null;
+  });
+
+  /** Folder parameters of the snapshot's user input step. */
+  readonly folderInputNames = computed<ReadonlySet<string>>(() =>
+    getFolderInputNames(
+      this.workflowSignal()?.steps?.find(s => s.type === NodeTypes.USER_INPUT),
+    ),
+  );
 
   /** Backwards-compatible getter/setter for specs accessing `component.details`. */
   get details(): WorkflowRunDetail | null {
@@ -383,15 +418,22 @@ export class ExecutionDetailsModalComponent implements OnInit {
     const d = this.runDetails();
     const args = d?.input_args ?? d?.inputArgs ?? null;
     if (!args || typeof args !== 'object') return [];
-    return Object.entries(args).map(([key, value]) => ({
-      key,
-      displayValue:
-        typeof value === 'string'
-          ? value
-          : value === null || value === undefined
-            ? ''
-            : JSON.stringify(value),
-    }));
+    const folderInputNames = this.folderInputNames();
+    const paths = this.folderPaths();
+    return Object.entries(args).map(([key, value]) => {
+      const folderId = folderInputNames.has(key) ? toFolderId(value) : null;
+      return {
+        key,
+        displayValue:
+          folderId !== null
+            ? formatFolderLabel(folderId, paths)
+            : typeof value === 'string'
+              ? value
+              : value === null || value === undefined
+                ? ''
+                : JSON.stringify(value),
+      };
+    });
   });
 
   readonly workflowSnapshotStepCount = computed<number>(() => {
@@ -402,11 +444,24 @@ export class ExecutionDetailsModalComponent implements OnInit {
   readonly resumeFieldList = computed<ResumeFieldViewModel[]>(() => {
     const names = this.resumeFieldNames();
     const errors = this.fieldErrors();
-    return names.map(name => ({
-      name,
-      label: name,
-      errorMessage: errors[name] ?? null,
-    }));
+    const folderInputNames = this.folderInputNames();
+    const folderValues = this.resumeFolderValues();
+    const paths = this.folderPaths();
+    return names.map(name => {
+      const isFolder = folderInputNames.has(name);
+      const folderId = isFolder ? (folderValues[name] ?? null) : null;
+      return {
+        name,
+        label: nameToLabel(name),
+        errorMessage: errors[name] ?? null,
+        isFolder,
+        folderLabel:
+          folderId !== null ? formatFolderLabel(folderId, paths) : null,
+        controlId: isFolder
+          ? `resume-folder-btn-${name}`
+          : `resume-input-${name}`,
+      };
+    });
   });
 
   readonly executionAttempts = computed<ExecutionAttemptViewModel[]>(() => {
@@ -473,6 +528,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
           this.initResumeForm(details, snapshot);
           this.autoExpandFailedSteps();
           this.resolveMediaUrls();
+          this.loadFolderPaths();
           this.isLoading.set(false);
         },
         error: err => {
@@ -513,6 +569,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
       stepTitle: stepId,
       stepMode: step.stepMode,
       mediaUrlMap: this.mediaUrlMap,
+      folderPaths: this.folderPaths,
     };
     this.dialog.open(StepHistorySidebarDialogComponent, {
       data,
@@ -549,8 +606,11 @@ export class ExecutionDetailsModalComponent implements OnInit {
         error: err => {
           this.isSubmitting.set(false);
           if (err?.status === 422) {
-            this.handleMissingInputsError(err);
-            return;
+            const missing = this.extractMissingInputs(err);
+            if (missing.length > 0) {
+              this.handleMissingInputsError(missing);
+              return;
+            }
           }
           handleErrorSnackbar(this.snackBar, err, 'Resume workflow run');
         },
@@ -605,7 +665,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
       [];
     for (const def of dynamicDefinitions) {
       if (def?.name) {
-        fieldSet.add(def.name);
+        fieldSet.add(labelToName(def.name));
       }
     }
     if (userInputStep?.outputs && typeof userInputStep.outputs === 'object') {
@@ -615,11 +675,19 @@ export class ExecutionDetailsModalComponent implements OnInit {
     }
 
     const controls: Record<string, FormControl> = {};
+    const folderValues: Record<string, number | null> = {};
+    const folderInputNames = this.folderInputNames();
     const orderedNames = Array.from(fieldSet).filter(
       name => !RESUME_SYSTEM_ARG_KEYS.has(name),
     );
     for (const name of orderedNames) {
       const rawVal = inputArgs[name];
+      if (folderInputNames.has(name)) {
+        const folderId = toFolderId(rawVal);
+        folderValues[name] = folderId;
+        controls[name] = new FormControl<number | null>(folderId);
+        continue;
+      }
       const strVal =
         rawVal === undefined || rawVal === null
           ? ''
@@ -630,6 +698,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
     }
 
     this.resumeForm = this.fb.group(controls);
+    this.resumeFolderValues.set(folderValues);
     this.resumeFieldNames.set(orderedNames);
   }
 
@@ -674,17 +743,23 @@ export class ExecutionDetailsModalComponent implements OnInit {
     return override;
   }
 
-  private handleMissingInputsError(err: {
+  private extractMissingInputs(err: {
     error?: {
-      missing_inputs?: string[];
-      detail?: {missing_inputs?: string[]; message?: string} | string;
+      missing_inputs?: unknown;
+      detail?: {missing_inputs?: unknown; message?: string} | string;
     };
-  }): void {
+  }): string[] {
     const detailObj =
-      typeof err?.error?.detail === 'object' ? err.error.detail : null;
-    const missing =
-      err?.error?.missing_inputs ?? detailObj?.missing_inputs ?? [];
+      typeof err?.error?.detail === 'object' && err?.error?.detail !== null
+        ? err.error.detail
+        : null;
+    const raw = err?.error?.missing_inputs ?? detailObj?.missing_inputs;
+    return Array.isArray(raw)
+      ? raw.filter((item): item is string => typeof item === 'string')
+      : [];
+  }
 
+  private handleMissingInputsError(missing: string[]): void {
     this.showResumeForm.set(true);
     this.missingInputs.set(missing);
 
@@ -700,13 +775,21 @@ export class ExecutionDetailsModalComponent implements OnInit {
         : null;
     };
 
+    const folderInputNames = this.folderInputNames();
+    const addedFolderValues: Record<string, number | null> = {};
     for (const fieldName of missing) {
       nextNames.add(fieldName);
       if (!this.resumeForm.contains(fieldName)) {
+        const isFolder = folderInputNames.has(fieldName);
         this.resumeForm.addControl(
           fieldName,
-          new FormControl('', [missingInputValidator]),
+          isFolder
+            ? new FormControl<number | null>(null, [missingInputValidator])
+            : new FormControl('', [missingInputValidator]),
         );
+        if (isFolder) {
+          addedFolderValues[fieldName] = null;
+        }
       } else {
         const existingCtrl = this.resumeForm.get(fieldName);
         existingCtrl?.setValidators([missingInputValidator]);
@@ -718,7 +801,58 @@ export class ExecutionDetailsModalComponent implements OnInit {
       nextFieldErrors[fieldName] = `Required input "${fieldName}" is missing.`;
     }
 
+    this.resumeFolderValues.update(values => ({
+      ...values,
+      ...addedFolderValues,
+    }));
     this.resumeFieldNames.set(Array.from(nextNames));
     this.fieldErrors.set(nextFieldErrors);
+  }
+
+  /** Opens the folder picker for a folder resume field and stores the folder id. */
+  openResumeFolderPicker(fieldName: string): void {
+    const control = this.resumeForm.get(fieldName);
+    if (!control) return;
+    this.runFolderService
+      .pickFolder(toFolderId(control.value))
+      .subscribe(selection => {
+        if (!selection) return;
+        const {folderId, path} = selection;
+        control.setValue(folderId);
+        control.markAsDirty();
+        this.resumeFolderValues.update(values => ({
+          ...values,
+          [fieldName]: folderId,
+        }));
+        this.folderPaths.update(paths => new Map(paths).set(folderId, path));
+        this.fieldErrors.update(errors => {
+          const next = {...errors};
+          delete next[fieldName];
+          return next;
+        });
+      });
+  }
+
+  /**
+   * Resolves the paths of the folders used by the run (folder run inputs and
+   * step folder inputs) in the run's workspace. Never blocks the page: ids
+   * that fail to resolve keep their `Folder #<id>` label.
+   */
+  private loadFolderPaths(): void {
+    const details = this.runDetails();
+    if (!details) return;
+    const args: Record<string, unknown> =
+      details.input_args ?? details.inputArgs ?? {};
+    const argIds = [...this.folderInputNames()]
+      .map(name => toFolderId(args[name]))
+      .filter((id): id is number => id !== null);
+    const stepIds = this.mergedStepEntries().flatMap(entry =>
+      entry.history.flatMap(h => collectStepFolderIds(h.step_inputs)),
+    );
+    this.runFolderService
+      .resolveFolderPaths([...argIds, ...stepIds], this.runWorkspaceId())
+      .subscribe(resolved =>
+        this.folderPaths.update(paths => new Map([...paths, ...resolved])),
+      );
   }
 }

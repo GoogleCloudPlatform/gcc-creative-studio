@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 import datetime
 from enum import Enum
 from typing import (
@@ -27,7 +28,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PositiveInt,
     field_validator,
 )
 from sqlalchemy import DateTime, ForeignKey, String, func
@@ -62,12 +62,14 @@ class NodeTypes(str, Enum):
 
 
 class SourceMediaItemLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     mediaItemId: int
     mediaIndex: int
     role: str
 
 
 class ReferenceMediaOrAsset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     previewUrl: str
     sourceAssetId: int | None = None
     sourceMediaItem: SourceMediaItemLink | None = None
@@ -76,8 +78,13 @@ class ReferenceMediaOrAsset(BaseModel):
 class StepOutputReference(BaseModel):
     """Reference to an output from a previous step."""
 
+    model_config = ConfigDict(extra="forbid")
     step: str
     output: str
+
+
+# Media Gallery folder id: a positive JSON number only (no string coercion).
+FolderId = Annotated[int, Field(strict=True, gt=0)]
 
 
 # =========================================
@@ -154,16 +161,18 @@ WorkflowInputItem = Union[
 
 # --- User Input ---
 class UserInputInputs(BaseModel):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserInputDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str | None = None
     name: str
     type: str
 
 
 class UserInputSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     definitions: list[UserInputDefinition] = Field(default_factory=list)
 
 
@@ -183,6 +192,7 @@ class GenerateTextInputs(BaseModel):
 
 
 class GenerateTextSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model: str
     temperature: float
     google_search: bool = False
@@ -204,6 +214,7 @@ class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):
 
 # --- Generate Video ---
 class GenerateVideoInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     prompt: StepOutputReference | str
     input_images: WorkflowInputItem | None = None
     input_video: WorkflowInputItem | None = None
@@ -211,17 +222,18 @@ class GenerateVideoInputs(BaseModel):
     start_frame: WorkflowInputItem | None = None
     end_frame: WorkflowInputItem | None = None
     source_video: WorkflowInputItem | None = None
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder: StepOutputReference | FolderId | None = None
 
 
 class GenerateVideoSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model: str
     brand_guidelines: bool = False
     aspect_ratio: str = "16:9"
     duration_seconds: int = 8
     input_mode: str | None = None
     resolution: Literal["1K", "2K", "4K"] = "1K"
-    # Gallery folder for the generated media; None means the root folder.
-    output_folder_id: PositiveInt | None = None
 
 
 class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
@@ -232,17 +244,19 @@ class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
 
 # --- Generate Audio ---
 class GenerateAudioInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     prompt: StepOutputReference | str
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder: StepOutputReference | FolderId | None = None
 
 
 class GenerateAudioSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model: str
     voice_name: str | None = None
     language_code: str | None = None
     negative_prompt: str | None = None
     seed: int | None = None
-    # Gallery folder for the generated media; None means the root folder.
-    output_folder_id: PositiveInt | None = None
 
     @field_validator("seed", mode="before")
     @classmethod
@@ -260,6 +274,7 @@ class GenerateAudioStep(BaseStep[GenerateAudioInputs, GenerateAudioSettings]):
 
 # --- Image (Unified) ---
 class ImageInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # Text to Image / Edit Image inputs
     prompt: StepOutputReference | str | None = None
     input_images: WorkflowInputItem | None = None
@@ -274,8 +289,12 @@ class ImageInputs(BaseModel):
     dress_image: WorkflowInputItem | None = None
     shoes_image: WorkflowInputItem | None = None
 
+    # Gallery folder for the generated media (all modes); None means root.
+    output_folder: StepOutputReference | FolderId | None = None
+
 
 class ImageSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     mode: str = "generate_image"
     model: str | None = "gemini-3.1-flash-image"
     aspect_ratio: str | None = "1:1"
@@ -284,8 +303,6 @@ class ImageSettings(BaseModel):
     upscale_factor: Literal["x2", "x3", "x4"] = "x2"
     enhance_input_image: bool = False
     image_preservation_factor: float | None = None
-    # Gallery folder for the generated media (all modes); None means root.
-    output_folder_id: PositiveInt | None = None
 
 
 class ImageStep(BaseStep[ImageInputs, ImageSettings]):
@@ -300,6 +317,7 @@ LoopItemType = Literal["image", "video", "audio"]
 
 
 class LoopInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # Comma-separated items (text_input mode): fixed text or a reference.
     items_text: StepOutputReference | str | None = None
     # Linked Items mode: upstream media output references and Media Gallery
@@ -307,11 +325,14 @@ class LoopInputs(BaseModel):
     linked_items: WorkflowInputItem | None = None
     # Loop-closing back-edge from the last step of the loop body.
     loop_ending: StepOutputReference | None = None
+    # Folder mode: the Media Gallery folder (id) or a link to a Folder
+    # parameter. Never the root folder.
+    folder: StepOutputReference | FolderId | None = None
 
 
 class LoopSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     mode: LoopMode = "folder"
-    folder_id: int | None = None
     item_type: LoopItemType = "image"
 
 
@@ -430,6 +451,109 @@ WorkflowStepUnion = Union[
 # Discriminated union based on the 'type' field in each step
 WorkflowStep = Annotated[WorkflowStepUnion, Field(discriminator="type")]
 
+_PERSISTED_STEP_SCHEMAS: dict[
+    str, tuple[type[BaseModel], type[BaseModel], type[BaseModel]]
+] = {
+    NodeTypes.USER_INPUT.value: (
+        UserInputStep,
+        UserInputInputs,
+        UserInputSettings,
+    ),
+    NodeTypes.GENERATE_TEXT.value: (
+        GenerateTextStep,
+        GenerateTextInputs,
+        GenerateTextSettings,
+    ),
+    NodeTypes.GENERATE_VIDEO.value: (
+        GenerateVideoStep,
+        GenerateVideoInputs,
+        GenerateVideoSettings,
+    ),
+    NodeTypes.GENERATE_AUDIO.value: (
+        GenerateAudioStep,
+        GenerateAudioInputs,
+        GenerateAudioSettings,
+    ),
+    NodeTypes.IMAGE.value: (ImageStep, ImageInputs, ImageSettings),
+    NodeTypes.LOOP.value: (LoopStep, LoopInputs, LoopSettings),
+}
+
+
+def _allowed_field_keys(model_cls: type[BaseModel]) -> set[str]:
+    keys: set[str] = set()
+    alias_gen = model_cls.model_config.get("alias_generator")
+    for fname, finfo in model_cls.model_fields.items():
+        keys.add(fname)
+        if finfo.alias:
+            keys.add(finfo.alias)
+        if isinstance(finfo.validation_alias, str):
+            keys.add(finfo.validation_alias)
+        if callable(alias_gen):
+            keys.add(alias_gen(fname))
+    return keys
+
+
+def _filter_model_dict(
+    raw: Mapping[str, Any], model_cls: type[BaseModel]
+) -> dict[str, Any]:
+    allowed = _allowed_field_keys(model_cls)
+    return {k: v for k, v in raw.items() if k in allowed}
+
+
+def _sanitize_input_item(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_input_item(el) for el in value]
+    if isinstance(value, Mapping):
+        if "step" in value and "output" in value:
+            return _filter_model_dict(value, StepOutputReference)
+        if "previewUrl" in value or "preview_url" in value:
+            cleaned = _filter_model_dict(value, ReferenceMediaOrAsset)
+            smi = cleaned.get("sourceMediaItem")
+            if isinstance(smi, Mapping):
+                cleaned["sourceMediaItem"] = _filter_model_dict(
+                    smi, SourceMediaItemLink
+                )
+            return cleaned
+        if "mediaItemId" in value or "media_item_id" in value:
+            return _filter_model_dict(value, SourceMediaItemLink)
+    return value
+
+
+def _sanitize_persisted_step(raw_step: Any) -> Any:
+    if not isinstance(raw_step, Mapping):
+        return raw_step
+    schema_tuple = _PERSISTED_STEP_SCHEMAS.get(str(raw_step.get("type") or ""))
+    if schema_tuple is None:
+        return raw_step
+    step_cls, inputs_cls, settings_cls = schema_tuple
+    cleaned = _filter_model_dict(raw_step, step_cls)
+    if isinstance(cleaned.get("position"), Mapping):
+        cleaned["position"] = _filter_model_dict(cleaned["position"], Point)
+    if isinstance(cleaned.get("settings"), Mapping):
+        settings_clean = _filter_model_dict(cleaned["settings"], settings_cls)
+        if settings_cls is UserInputSettings and isinstance(
+            settings_clean.get("definitions"), list
+        ):
+            settings_clean["definitions"] = [
+                (
+                    _filter_model_dict(d, UserInputDefinition)
+                    if isinstance(d, Mapping)
+                    else d
+                )
+                for d in settings_clean["definitions"]
+            ]
+        cleaned["settings"] = settings_clean
+    if isinstance(cleaned.get("inputs"), Mapping):
+        inputs_src = (
+            dict(cleaned["inputs"])
+            if inputs_cls is GenerateTextInputs
+            else _filter_model_dict(cleaned["inputs"], inputs_cls)
+        )
+        cleaned["inputs"] = {
+            k: _sanitize_input_item(val) for k, val in inputs_src.items()
+        }
+    return cleaned
+
 
 # =========================================
 # Workflow Models
@@ -487,7 +611,10 @@ class WorkflowBase(BaseModel):
     @classmethod
     def translate_legacy_steps(cls, v: Any) -> Any:
         if isinstance(v, list):
-            return [translate_legacy_step(step) for step in v]
+            translated = [translate_legacy_step(step) for step in v]
+            if not issubclass(cls, BaseDto):
+                return [_sanitize_persisted_step(step) for step in translated]
+            return translated
         return v
 
 
