@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Service layer for gallery search, enrichment, and bulk asset operations."""
+
 import asyncio
 import logging
 import mimetypes
@@ -103,6 +105,12 @@ class GalleryService:
         self.folder_repo = folder_repo
         self.db = db
 
+    async def _sign_uri(self, uri: str | None) -> str:
+        """Generates a presigned URL using the async signer."""
+        return await self.iam_signer_credentials.generate_presigned_url_async(
+            uri
+        )
+
     async def _enrich_source_asset_link(
         self,
         link: SourceAssetLink,
@@ -142,20 +150,14 @@ class GalleryService:
             )
 
         tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url,
-                asset_doc.gcs_uri,
-            ),
+            self._sign_uri(asset_doc.gcs_uri),
         ]
 
         # Check if the asset has a thumbnail and create a task for it.
         # This requires the SourceAsset model to have a `thumbnail_gcs_uri` field.
         if asset_doc.thumbnail_gcs_uri:
             tasks.append(
-                asyncio.to_thread(
-                    self.iam_signer_credentials.generate_presigned_url,
-                    asset_doc.thumbnail_gcs_uri,
-                ),
+                self._sign_uri(asset_doc.thumbnail_gcs_uri),
             )
 
         results = await asyncio.gather(*tasks)
@@ -190,10 +192,7 @@ class GalleryService:
 
         # Prepare tasks for both the main media and its thumbnail
         tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url,
-                parent_gcs_uri,
-            ),
+            self._sign_uri(parent_gcs_uri),
         ]
 
         parent_thumbnail_gcs_uri = None
@@ -204,10 +203,7 @@ class GalleryService:
                 link.media_index
             ]
             tasks.append(
-                asyncio.to_thread(
-                    self.iam_signer_credentials.generate_presigned_url,
-                    parent_thumbnail_gcs_uri,
-                ),
+                self._sign_uri(parent_thumbnail_gcs_uri),
             )
 
         results = await asyncio.gather(*tasks)
@@ -231,31 +227,17 @@ class GalleryService:
         all_gcs_uris = item.gcs_uris or []
 
         # 1. Create tasks for main media URLs
-        main_url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in all_gcs_uris
-            if uri
-        ]
+        main_url_tasks = [self._sign_uri(uri) for uri in all_gcs_uris if uri]
 
         # 1.5 Create tasks for original media URLs
         all_original_gcs_uris = item.original_gcs_uris or []
         original_url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in all_original_gcs_uris
-            if uri
+            self._sign_uri(uri) for uri in all_original_gcs_uris if uri
         ]
 
         # 2. Create tasks for thumbnail URLs
         thumbnail_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in (item.thumbnail_uris or "")
-            if uri
+            self._sign_uri(uri) for uri in (item.thumbnail_uris or []) if uri
         ]
 
         # 3. Create tasks for source asset URLs
@@ -341,20 +323,10 @@ class GalleryService:
         thumbnail_uris_to_sign = item.thumbnail_uris or []
 
         # Create tasks
-        url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in uris_to_sign
-            if uri
-        ]
+        url_tasks = [self._sign_uri(uri) for uri in uris_to_sign if uri]
 
         thumbnail_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in thumbnail_uris_to_sign
-            if uri
+            self._sign_uri(uri) for uri in thumbnail_uris_to_sign if uri
         ]
 
         (presigned_urls, presigned_thumbnail_urls) = await asyncio.gather(

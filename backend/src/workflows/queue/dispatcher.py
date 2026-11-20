@@ -23,6 +23,7 @@ from src.workflows.queue.workflow_dispatcher import (
     pick_runs_round_robin,
     reset_dispatch_tick_throttle,
     run_default_dispatch,
+    schedule_post_auth_session,
     should_increment_attempt_count,
     should_run_throttled_tick,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "pick_runs_round_robin",
     "reset_dispatch_tick_throttle",
     "run_default_dispatch",
+    "schedule_post_auth_session",
     "should_increment_attempt_count",
     "should_run_throttled_tick",
 ]

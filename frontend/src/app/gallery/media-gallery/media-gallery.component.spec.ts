@@ -1399,4 +1399,84 @@ describe('MediaGalleryComponent', () => {
       expect(routerSpy.navigate).not.toHaveBeenCalled();
     });
   });
+
+  describe('Startup search deduplication', () => {
+    it('triggers searchTerm only once during ngOnInit and ignores unchanged itemType', () => {
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const freshComp = freshFixture.componentInstance;
+      const searchSpy = spyOn(freshComp, 'searchTerm').and.callThrough();
+
+      freshComp.ngOnInit();
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      freshComp.itemType = '';
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      freshComp.itemType = 'media_item';
+      expect(searchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps isLoading true and defers searchTerm while activeWorkspaceId is null', () => {
+      activeWorkspaceIdSubject.next(null);
+      const loadingSubject = new BehaviorSubject<boolean>(false);
+      (
+        galleryService as unknown as {isLoading$: BehaviorSubject<boolean>}
+      ).isLoading$ = loadingSubject;
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const freshComp = freshFixture.componentInstance;
+      const searchSpy = spyOn(freshComp, 'searchTerm').and.callThrough();
+      const setFiltersSpy = spyOn(galleryService, 'setFilters');
+
+      freshComp.ngOnInit();
+      expect(freshComp.isLoading).toBeTrue();
+      expect(searchSpy).not.toHaveBeenCalled();
+      expect(setFiltersSpy).not.toHaveBeenCalled();
+
+      activeWorkspaceIdSubject.next(1);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+      expect(setFiltersSpy).toHaveBeenCalledTimes(1);
+
+      loadingSubject.next(true);
+      expect(freshComp.isLoading).toBeTrue();
+      loadingSubject.next(false);
+      expect(freshComp.isLoading).toBeFalse();
+    });
+
+    it('clears isLoading when getWorkspaces fails or returns empty while activeWorkspaceId is null', () => {
+      spyOn(console, 'error');
+      activeWorkspaceIdSubject.next(null);
+      const workspaceService = TestBed.inject(WorkspaceService);
+
+      spyOn(workspaceService, 'getWorkspaces').and.returnValue(
+        throwError(() => new Error('Workspaces failed')),
+      );
+      const errFixture = TestBed.createComponent(MediaGalleryComponent);
+      const errComp = errFixture.componentInstance;
+      errComp.ngOnInit();
+      expect(errComp.isLoading).toBeFalse();
+
+      (workspaceService.getWorkspaces as jasmine.Spy).and.returnValue(of([]));
+      const emptyFixture = TestBed.createComponent(MediaGalleryComponent);
+      const emptyComp = emptyFixture.componentInstance;
+      emptyComp.ngOnInit();
+      expect(emptyComp.isLoading).toBeFalse();
+    });
+
+    it('clears images and groups synchronously when searchTerm runs', () => {
+      const sampleItem = {
+        id: 1,
+        itemType: 'media_item' as const,
+        workspaceId: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+      component.images = [sampleItem];
+      component.groups = [{title: 'Today', items: [sampleItem]}];
+
+      component.searchTerm();
+      expect(component.images).toEqual([]);
+      expect(component.groups).toEqual([]);
+    });
+  });
 });

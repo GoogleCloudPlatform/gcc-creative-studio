@@ -300,3 +300,52 @@ async def test_filter_linked_loop_items_without_ids_skips_query(mock_db):
 
     assert found == set()
     mock_db.execute.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_query_contradictory_filters_prune_both_branches(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    empty = await repo.query(
+        GallerySearchDto(
+            workspace_id=10,
+            item_type="source_asset",
+            model=GenerationModelEnum.IMAGEN_3_001,
+            limit=10,
+            offset=0,
+        )
+    )
+    assert empty.count == 0
+    assert empty.total_pages == 0
+    assert empty.data == []
+    mock_db.execute.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_query_short_circuits_stage2_when_empty(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    zero_count = MagicMock()
+    zero_count.scalar_one.return_value = 0
+    mock_db.execute.return_value = zero_count
+
+    res_empty = await repo.query(
+        GallerySearchDto(workspace_id=10, limit=10, offset=0)
+    )
+    assert res_empty.count == 0
+    assert res_empty.total_pages == 0
+    assert res_empty.data == []
+    assert mock_db.execute.await_count == 1
+
+    mock_db.reset_mock()
+    past_end = MagicMock()
+    past_end.scalar_one.return_value = 5
+    mock_db.execute.return_value = past_end
+
+    res_oob = await repo.query(
+        GallerySearchDto(workspace_id=10, limit=10, offset=10)
+    )
+    assert res_oob.count == 5
+    assert res_oob.total_pages == 1
+    assert res_oob.data == []
+    assert mock_db.execute.await_count == 1

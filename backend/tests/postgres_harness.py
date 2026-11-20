@@ -128,9 +128,19 @@ async def drop_throwaway_db(
         await conn.close()
 
 
-def _in_worker_thread(func: Callable[..., T], *args: object) -> T:
+def in_worker_thread(func: Callable[..., T], *args: object) -> T:
+    """Runs blocking/asyncio helper synchronously on a dedicated worker thread."""
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(func, *args).result()
+
+
+_in_worker_thread = in_worker_thread
+
+
+async def connect_throwaway_db(db_name: str) -> asyncpg.Connection:
+    """Connects directly via asyncpg to an already-created throwaway DB."""
+    safe_name = _validate_db_name(db_name)
+    return await _connect_admin(safe_name)
 
 
 def _alembic_config() -> Config:

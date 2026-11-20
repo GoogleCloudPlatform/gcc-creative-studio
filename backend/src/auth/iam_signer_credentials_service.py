@@ -14,14 +14,83 @@
 """IAM Signer credentials provider for GCS."""
 
 
+import asyncio
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import logging
 from os import getenv
+import threading
 
 from google.auth import credentials
 from google.cloud import iam_credentials_v1, storage
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PRESIGNED_EXPIRATION_HOURS = 6
+_CACHE_REFRESH_BUFFER = datetime.timedelta(minutes=15)
+_MAX_URL_CACHE_SIZE = 10_000
+
+_signing_executor: ThreadPoolExecutor | None = None
+_client_lock = threading.Lock()
+_cache_lock = threading.Lock()
+_inflight_lock = threading.Lock()
+_shared_iam_client: iam_credentials_v1.IAMCredentialsClient | None = None
+_shared_storage_client: storage.Client | None = None
+_inflight_futures: dict[
+    tuple[int, tuple[str, int, str]], asyncio.Future[str]
+] = {}
+
+
+def _get_signing_executor() -> ThreadPoolExecutor:
+    """Returns the lazily initialized thread pool used for GCS URL signing."""
+    global _signing_executor  # pylint: disable=global-statement
+    with _client_lock:
+        if _signing_executor is None:
+            _signing_executor = ThreadPoolExecutor(
+                max_workers=32, thread_name_prefix="gcs-sign"
+            )
+        return _signing_executor
+
+
+def shutdown_signing_executor() -> None:
+    """Shuts down the shared GCS URL signing thread pool during app teardown."""
+    global _signing_executor  # pylint: disable=global-statement
+    with _client_lock:
+        executor = _signing_executor
+        _signing_executor = None
+    if executor is not None:
+        executor.shutdown(wait=False)
+
+
+def _get_iam_client() -> iam_credentials_v1.IAMCredentialsClient:
+    """Returns the lazy singleton IAM Credentials client."""
+    global _shared_iam_client  # pylint: disable=global-statement
+    with _client_lock:
+        if _shared_iam_client is None:
+            _shared_iam_client = iam_credentials_v1.IAMCredentialsClient()
+        return _shared_iam_client
+
+
+def _get_storage_client() -> storage.Client:
+    """Returns the lazy singleton GCS client."""
+    global _shared_storage_client  # pylint: disable=global-statement
+    with _client_lock:
+        if _shared_storage_client is None:
+            _shared_storage_client = storage.Client()
+        return _shared_storage_client
+
+
+def clear_signer_cache() -> None:
+    """Clears cached presigned URLs, in-flight deduplication state, and clients."""
+    global _shared_iam_client, _shared_storage_client  # pylint: disable=global-statement
+    with _cache_lock:
+        IamSignerCredentials.clear_url_cache()
+    with _inflight_lock:
+        _inflight_futures.clear()
+    with _client_lock:
+        _shared_iam_client = None
+        _shared_storage_client = None
 
 
 class IamSignerCredentials(credentials.Signing):
@@ -35,18 +104,29 @@ class IamSignerCredentials(credentials.Signing):
     access from the backend's other permissions.
     """
 
-    # In-memory cache for presigned URLs (persists across dependency injections)
+    # Process-wide LRU cache for presigned URLs (persists across DI instances)
     # Key: (gcs_uri, expiration_hours, method)
     # Value: (url, expiry_timestamp)
-    _url_cache: dict[tuple[str, int, str], tuple[str, datetime.datetime]] = {}
+    _url_cache: OrderedDict[
+        tuple[str, int, str], tuple[str, datetime.datetime]
+    ] = OrderedDict()
+
+    @classmethod
+    def clear_url_cache(cls) -> None:
+        """Empties the shared presigned URL cache."""
+        cls._url_cache.clear()
 
     def __init__(self):
-        # 1. Create the custom credentials object for signing.
+        # Defer cloud client initialization until an actual cache miss needs it.
         self.service_account_email = getenv("SIGNING_SA_EMAIL", "")
-        self.iam_client = iam_credentials_v1.IAMCredentialsClient()
         self._sa_path = (
             f"projects/-/serviceAccounts/{self.service_account_email}"
         )
+
+    @property
+    def iam_client(self) -> iam_credentials_v1.IAMCredentialsClient:
+        """Lazily returns the shared IAM Credentials client."""
+        return _get_iam_client()
 
     def _get_cached_url(
         self,
@@ -56,12 +136,15 @@ class IamSignerCredentials(credentials.Signing):
     ) -> str | None:
         """Retrieves a valid cached URL if available."""
         cache_key = (gcs_uri, expiration_hours, method)
-        if cache_key in self._url_cache:
-            url, expiry = self._url_cache[cache_key]
-            # Add a 5-minute buffer before actual expiration
-            if datetime.datetime.now() < (
-                expiry - datetime.timedelta(minutes=5)
-            ):
+        now = datetime.datetime.now(datetime.UTC)
+        with _cache_lock:
+            entry = self._url_cache.get(cache_key)
+            if entry is None:
+                return None
+            url, expiry = entry
+            # Refresh proactively before actual expiration
+            if now < (expiry - _CACHE_REFRESH_BUFFER):
+                self._url_cache.move_to_end(cache_key)
                 return url
             del self._url_cache[cache_key]
         return None
@@ -73,17 +156,21 @@ class IamSignerCredentials(credentials.Signing):
         url: str,
         method: str = "GET",
     ):
-        """Caches a newly generated URL."""
+        """Caches a newly generated URL with bounded LRU eviction."""
         cache_key = (gcs_uri, expiration_hours, method)
-        expiry = datetime.datetime.now() + datetime.timedelta(
+        expiry = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
             hours=expiration_hours
         )
-        self._url_cache[cache_key] = (url, expiry)
+        with _cache_lock:
+            self._url_cache[cache_key] = (url, expiry)
+            self._url_cache.move_to_end(cache_key)
+            while len(self._url_cache) > _MAX_URL_CACHE_SIZE:
+                self._url_cache.popitem(last=False)
 
     def generate_presigned_url(
         self,
         gcs_uri: str | None,
-        expiration_hours: int = 1,
+        expiration_hours: int = DEFAULT_PRESIGNED_EXPIRATION_HOURS,
     ) -> str:
         """Generates a v4 presigned URL for a GCS object.
 
@@ -101,26 +188,22 @@ class IamSignerCredentials(credentials.Signing):
             A presigned URL, or the original GCS URI if an error occurs.
 
         """
-        if not gcs_uri or (gcs_uri and not gcs_uri.startswith("gs://")):
+        if not gcs_uri or not gcs_uri.startswith("gs://"):
             return gcs_uri or ""
 
-        # Check cache first
+        if not self.service_account_email:
+            return gcs_uri
+
         cached_url = self._get_cached_url(gcs_uri, expiration_hours)
         if cached_url:
             return cached_url
 
-        # Get the service account email from an environment variable.
-        if not self.service_account_email:
-            return gcs_uri
-
         try:
-            # 2. Parse the GCS URI and create a blob object.
-            storage_client = storage.Client()
-            bucket_name, blob_name = gcs_uri.replace("gs://", "").split("/", 1)
+            storage_client = _get_storage_client()
+            bucket_name, blob_name = gcs_uri.removeprefix("gs://").split("/", 1)
             bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
 
-            # 3. Generate the signed URL, passing the custom credentials.
             logger.info(
                 "Generating presigned URL for %s (not in cache)", gcs_uri
             )
@@ -131,7 +214,6 @@ class IamSignerCredentials(credentials.Signing):
                 credentials=self,
             )
 
-            # Cache the result
             self._set_cached_url(gcs_uri, expiration_hours, url)
             return url
         except Exception as e:
@@ -139,6 +221,52 @@ class IamSignerCredentials(credentials.Signing):
                 "Error generating presigned URL for %s: %s", gcs_uri, e
             )
             return gcs_uri
+
+    async def generate_presigned_url_async(
+        self,
+        gcs_uri: str | None,
+        expiration_hours: int = DEFAULT_PRESIGNED_EXPIRATION_HOURS,
+    ) -> str:
+        """Asynchronously resolves a presigned URL using the signing pool.
+
+        Cache hits and non-GCS URIs return immediately without scheduling
+        thread-pool work. Concurrent requests for the same uncached URI on an
+        event loop share a single signing task.
+        """
+        if not gcs_uri or not gcs_uri.startswith("gs://"):
+            return gcs_uri or ""
+
+        if not self.service_account_email:
+            return gcs_uri
+
+        cached_url = self._get_cached_url(gcs_uri, expiration_hours)
+        if cached_url:
+            return cached_url
+
+        loop = asyncio.get_running_loop()
+        cache_key = (gcs_uri, expiration_hours, "GET")
+        inflight_key = (id(loop), cache_key)
+        with _inflight_lock:
+            inflight = _inflight_futures.get(inflight_key)
+            if inflight is None or inflight.done():
+                inflight = loop.run_in_executor(
+                    _get_signing_executor(),
+                    self.generate_presigned_url,
+                    gcs_uri,
+                    expiration_hours,
+                )
+                _inflight_futures[inflight_key] = inflight
+
+                def _cleanup(done_fut: asyncio.Future[str]) -> None:
+                    with _inflight_lock:
+                        if _inflight_futures.get(inflight_key) is done_fut:
+                            _inflight_futures.pop(inflight_key, None)
+                    if not done_fut.cancelled():
+                        _ = done_fut.exception()
+
+                inflight.add_done_callback(_cleanup)
+
+        return await asyncio.shield(inflight)
 
     def generate_v4_upload_signed_url(
         self,
@@ -176,7 +304,7 @@ class IamSignerCredentials(credentials.Signing):
             return None, None
 
         try:
-            storage_client = storage.Client()
+            storage_client = _get_storage_client()
             bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(destination_blob_name)
 

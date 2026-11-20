@@ -130,6 +130,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   private isInitialized = false;
 
   @Input() set itemType(value: string) {
+    if (this.assetTypeFilter === value) {
+      return;
+    }
     this.assetTypeFilter = value;
     if (this.isInitialized) {
       this.searchTerm();
@@ -265,6 +268,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   isBrowser: boolean;
   /** Workspaces visible to the user; used to resolve scope/owner for folder permissions. */
   private workspaces: Workspace[] = [];
+  private waitingForInitialWorkspace = false;
+  private isGalleryServiceLoading = false;
 
   constructor(
     private galleryService: GalleryService,
@@ -292,6 +297,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
   ngOnInit(): void {
     this.isInitialized = true;
+    this.waitingForInitialWorkspace =
+      this.isBrowser && !this.workspaceStateService.getActiveWorkspaceId();
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
     this.loadWorkspaces();
@@ -313,10 +320,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       }
     }
 
-    this.searchTerm(); // Initial search with stored filters
     this.loadingSubscription = this.galleryService.isLoading$.subscribe(
       loading => {
-        this.isLoading = loading;
+        this.isGalleryServiceLoading = loading;
+        this.isLoading = loading || this.waitingForInitialWorkspace;
         if (!loading && this.isBrowser) {
           // Re-check loading finishes
           setTimeout(() => {
@@ -400,6 +407,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         if (!workspaceId) {
           return;
         }
+        this.waitingForInitialWorkspace = false;
 
         if (lastWorkspaceId !== workspaceId) {
           if (lastWorkspaceId !== null && this.currentFolderId !== null) {
@@ -429,7 +437,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.loadTags();
     this.loadFolders();
     this.loadBreadcrumbs();
-    this.searchTerm();
+    if (this.workspaceStateService.getActiveWorkspaceId()) {
+      this.searchTerm();
+    }
   }
 
   private loadTags(search?: string): void {
@@ -1128,6 +1138,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   public searchTerm(): void {
     // Reset local component state for a new search to show the main loader
     this.images = [];
+    this.filterImages();
     this.selectedItems.clear();
     this.tagsCurrentPage = 1; // Reset tags pagination on search
 
@@ -1488,11 +1499,17 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.workspaceService.getWorkspaces().subscribe({
       next: workspaces => {
         this.workspaces = workspaces;
+        if (workspaces.length === 0) {
+          this.waitingForInitialWorkspace = false;
+          this.isLoading = this.isGalleryServiceLoading;
+        }
       },
       error: err => {
         // Non-fatal: without workspace metadata we fall back to the
         // stricter creator-only rule and let the backend decide.
         console.error('Error loading workspaces for folder permissions:', err);
+        this.waitingForInitialWorkspace = false;
+        this.isLoading = this.isGalleryServiceLoading;
       },
     });
   }

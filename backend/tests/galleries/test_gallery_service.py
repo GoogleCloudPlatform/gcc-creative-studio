@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
     AspectRatioEnum,
     GenerationModelEnum,
@@ -48,7 +49,8 @@ def fixture_service():
     mock_unified_gallery_repo = AsyncMock()
     mock_user_repo = AsyncMock()
     mock_workspace_repo = AsyncMock()
-    mock_iam_signer = MagicMock()
+    mock_iam_signer = MagicMock(spec=IamSignerCredentials)
+    mock_iam_signer.generate_presigned_url_async = AsyncMock()
     mock_workspace_auth = AsyncMock()
     mock_imagen_service = AsyncMock()
     mock_gcs_service = MagicMock()
@@ -106,7 +108,7 @@ async def test_enrich_source_asset_link(service):
     service.mock_source_asset_repo.get_by_id.return_value = mock_asset
 
     # Mock iam_signer_credentials
-    service.mock_iam_signer.generate_presigned_url.side_effect = [
+    service.mock_iam_signer.generate_presigned_url_async.side_effect = [
         "https://signed.url/asset.jpg",
         "https://signed.url/thumb.jpg",
     ]
@@ -149,7 +151,7 @@ async def test_get_paginated_gallery_admin(service):
     mock_query_result.total_pages = 1
 
     service.mock_unified_gallery_repo.query.return_value = mock_query_result
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url/image.png"
     )
 
@@ -283,7 +285,7 @@ async def test_get_media_by_id_success(service):
     mock_workspace = MagicMock()
     service.mock_workspace_repo.get_by_id.return_value = mock_workspace
 
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url/img.jpg"
     )
 
@@ -460,7 +462,7 @@ async def test_get_media_by_id_with_source_media_items(service):
     service.mock_media_repo.get_by_id.side_effect = get_by_id_side_effect
 
     service.mock_workspace_repo.get_by_id.return_value = MagicMock()
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url"
     )
 
@@ -676,7 +678,7 @@ async def test_get_media_by_id_with_both_source_references(service):
     service.mock_source_asset_repo.get_by_id.return_value = source_asset
 
     service.mock_workspace_repo.get_by_id.return_value = MagicMock()
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url"
     )
 
@@ -1027,7 +1029,6 @@ async def test_bulk_move_folder_conflict_detection_409(service):
 @pytest.mark.anyio
 async def test_bulk_move_folder_merge_strategy(service):
     from pydantic import BaseModel
-    from src.folders.dto.folder_dto import ConflictStrategyEnum
     from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
 
     class DummyFolder(BaseModel):
@@ -1213,7 +1214,6 @@ async def test_bulk_copy_folder_conflict_detection_409(service):
 @pytest.mark.anyio
 async def test_bulk_copy_folder_merge_strategy(service):
     from pydantic import BaseModel
-    from src.folders.dto.folder_dto import ConflictStrategyEnum
     from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
 
     class DummyFolder(BaseModel):
@@ -1401,3 +1401,17 @@ async def test_bulk_move_reraises_http_exception(service):
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Forbidden"
+
+
+@pytest.mark.anyio
+async def test_sign_uri_delegates_to_async_signer(service):
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
+        "https://async-signed.url/img.webp"
+    )
+
+    result = await service._sign_uri("gs://bucket/img.webp")
+
+    assert result == "https://async-signed.url/img.webp"
+    service.mock_iam_signer.generate_presigned_url_async.assert_awaited_once_with(
+        "gs://bucket/img.webp"
+    )
