@@ -172,6 +172,9 @@ docker compose run --rm --no-deps -e CHROME_BIN=/usr/bin/chromium frontend sh -c
   "apk add --no-cache chromium >/dev/null && npm run compile && npx ng test --watch=false --browsers=ChromeHeadlessCI"
 ```
 
+> [!NOTE]
+> Alpine's `chromium` (149) lags CI's `google-chrome-stable` (157+ on `ubuntu-latest`), so a browser-behaviour failure can show in CI only (see the focus fixup learning below). To reproduce one, run Karma against Chrome stable, e.g. a throwaway `node:20-bookworm-slim` image with Google's `google-chrome-stable` `.deb`, `frontend/` mounted, run as your own uid.
+
 ---
 
 ## 📜 AI Agent Guidelines & Rules
@@ -286,5 +289,6 @@ To maintain a pristine codebase, AI Agents **MUST** follow these rules:
   9. A restored chat (`agent_sessions.restored_at`) is never run by Izumi: `chat()` answers 409 and the chat UI swaps the composer for a banner. Izumi does not remember it, and a new run would reuse, and overwrite, its storyboard and timeline (`reuse_session_record`). Do not lift the lock without solving that reuse.
   10. A Workbench save sends the active project's workspace (`ProjectStateService.activeProjectWorkspaceId`), never `WorkspaceStateService`'s: a workspace switch flushes the pending autosave after the switcher has moved on, and `resolve_project_for_write` answers 400 to a `project_id` from another workspace.
   11. While a save is in flight, the Workbench timeline effect also waits on an unset `loadedTimelineId`, for updates as well as creates: the chat reloads a storyboard by unsetting the id right before setting it again, and the effect runs for both values. Never narrow that check to creates (`savingTimelineId === null`): clearing the editor in between leaves it empty yet bound to the timeline being saved, and the next autosave wipes that timeline. The reset is deferred to `endSave()` (`docs/projects.md`, Workbench rule 8).
+- **In Chrome 157+ a focused element that becomes disabled keeps the focus until the next rendering update; Chrome 149 (Alpine's `chromium`) blurs it at once.** Chrome 157/158 runs the HTML focus fixup only then, or right away when another attribute of the disabled element changes: `mat-menu-item` resets `tabindex` before it removes `disabled`, so the re-render that re-enables it blurs it. A synchronous spec never reaches a rendering update. Never gate a focus restore on `document.activeElement === document.body` alone; also accept the element itself still holding the focus (`ProjectSwitcherComponent.confirmDelete()`). Otherwise the restore is skipped and the re-render drops the focus, which failed `gives the focus back to Delete when the delete is refused` on Chrome 157.
 
 ---

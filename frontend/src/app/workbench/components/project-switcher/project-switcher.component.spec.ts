@@ -535,7 +535,37 @@ describe('ProjectSwitcherComponent', () => {
     deleteItem.click();
     fixture.detectChanges();
 
-    // Disabled while the delete runs, the item lost the focus.
+    // Disabled while the delete runs, the item loses the focus, though not
+    // yet in Chrome 157+ (only at its next rendering update): this refusal
+    // still finds it focused, and the re-render then drops the focus.
+    deleted.error({
+      status: 409,
+      error: {detail: 'A chat in this project is still running.'},
+    });
+    fixture.detectChanges();
+    render();
+
+    expect(document.activeElement?.id).toBe('project-delete-2');
+  });
+
+  it('gives the focus back to Delete from the page when refused', () => {
+    spyOn(console, 'error');
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    const deleted = new Subject<Project | null>();
+    state.deleteProject.and.returnValue(deleted);
+    openMenu();
+    render();
+    const deleteItem = inMenu<HTMLButtonElement>('#project-delete-2')!;
+    deleteItem.focus();
+    deleteItem.click();
+    fixture.detectChanges();
+    // A DELETE outlasts a rendering update, by which time every browser has
+    // moved the focus off the disabled item (the HTML focus fixup rule).
+    deleteItem.blur();
+    expect(document.activeElement).toBe(document.body);
+
     deleted.error({
       status: 409,
       error: {detail: 'A chat in this project is still running.'},

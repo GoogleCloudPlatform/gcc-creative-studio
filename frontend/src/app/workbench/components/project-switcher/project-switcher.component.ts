@@ -259,10 +259,15 @@ export class ProjectSwitcherComponent {
             // The backend answers 409 while one of the project's chats runs.
             error: error => {
               handleErrorSnackbar(this.snackBar, error, 'Delete project');
-              // Disabled meanwhile, the item lost the focus: give it back,
+              // Disabled meanwhile, the item loses the focus: give it back,
               // unless the focus has moved on (e.g. into an open editor).
-              if (this.document.activeElement === this.document.body) {
-                this.focusAfterRender(`project-delete-${project.id}`);
+              // It may not be gone yet: Chrome 149 blurs a disabled element
+              // at once, Chrome 157+ only at its next rendering update (or
+              // when the item is re-rendered), after this check.
+              const itemId = `project-delete-${project.id}`;
+              const focused = this.document.activeElement;
+              if (focused === this.document.body || focused?.id === itemId) {
+                this.focusAfterRender(itemId);
               }
             },
           });
