@@ -48,6 +48,8 @@ import {SourceAssetService} from '../common/services/source-asset.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {ProjectStateService} from './services/project-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {NotificationService} from '../common/services/notification.service';
+import {useTestBedAppInjector} from '../testing/app-injector.testing';
 
 /** The parts of `ProjectStateService` the Workbench uses. */
 interface ProjectStateStub {
@@ -1132,12 +1134,17 @@ describe('WorkbenchComponent', () => {
     let workbenchService: WorkbenchService;
     let sourceAssetService: SourceAssetService;
     let http: HttpClient;
+    let showNotification: jasmine.Spy<NotificationService['show']>;
 
     beforeEach(() => {
       agentChatService = TestBed.inject(AgentChatService);
       workbenchService = TestBed.inject(WorkbenchService);
       sourceAssetService = TestBed.inject(SourceAssetService);
       http = TestBed.inject(HttpClient);
+      // The snackbar helpers resolve NotificationService through the global
+      // AppInjector: point it at this TestBed and spy on the real service.
+      useTestBedAppInjector();
+      showNotification = spyOn(TestBed.inject(NotificationService), 'show');
     });
 
     it('should not call renderVideo if storyboard is null', () => {
@@ -1167,7 +1174,6 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should call renderVideo and then getAsset to trigger file download', fakeAsync(() => {
-      spyOn(console, 'error');
       const stateService = TestBed.inject(TimelineStateService);
       stateService.loadedTimelineId.set(2);
 
@@ -1217,18 +1223,19 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4'); // Filename is dynamic now
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
-      // The success notification was attempted: the AppInjector is not wired
-      // to this TestBed, so the snackbar helper reports it as unavailable.
-      expect(console.error).toHaveBeenCalledWith(
-        'NotificationService not available',
-        jasmine.any(Error),
+      // The finished render is announced with a link to its gallery item.
+      expect(showNotification).toHaveBeenCalledOnceWith(
+        jasmine.stringContaining(`href="${window.location.origin}/gallery/10"`),
+        'success',
+        undefined,
+        'check_small',
+        20000,
       );
       flush();
       discardPeriodicTasks();
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
-      spyOn(console, 'error');
       const stateService = TestBed.inject(TimelineStateService);
       stateService.loadedTimelineId.set(2);
 
@@ -1282,11 +1289,13 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4');
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
-      // The success notification was attempted: the AppInjector is not wired
-      // to this TestBed, so the snackbar helper reports it as unavailable.
-      expect(console.error).toHaveBeenCalledWith(
-        'NotificationService not available',
-        jasmine.any(Error),
+      // The finished render is announced with a link to its gallery item.
+      expect(showNotification).toHaveBeenCalledOnceWith(
+        jasmine.stringContaining(`href="${window.location.origin}/gallery/10"`),
+        'success',
+        undefined,
+        'check_small',
+        20000,
       );
       flush();
       discardPeriodicTasks();
