@@ -1,0 +1,187 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: '🛡️ AI PR Verification (Fork)'
+
+# Executes Dual-Model AI Verification for fork pull requests (e.g. collaborator
+# forks) after the unprivileged `🛡️ AI PR Verification` `prepare` job succeeds:
+#   - Never checks out or executes fork code: runs strictly from the trusted
+#     default branch and parses `context-pack.json` purely as JSON data.
+#   - Cryptographically binds `context-pack.json`'s `pr_number` to
+#     `workflow_run.head_sha` via GitHub's REST API, preventing PR spoofing.
+#   - Automatically authorizes `OWNER`/`MEMBER`/`COLLABORATOR` fork PRs; gates
+#     external contributors behind the `ai-verify` / `ai-review` maintainer label.
+on:
+  # zizmor: ignore[dangerous-triggers] -- never checks out fork code; SHA-binds JSON artifact to PR via GitHub API
+  workflow_run:
+    workflows:
+      - '🛡️ AI PR Verification'
+    types:
+      - completed
+
+permissions: {}
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.event.workflow_run.id }}'
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  authorize:
+    name: 'Authorize Fork PR Context Pack'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 5
+    permissions:
+      contents: 'read'
+      actions: 'read'
+      pull-requests: 'read'
+    outputs:
+      should_verify: '${{ steps.gate.outputs.should_verify }}'
+      verified_pr_number: '${{ steps.gate.outputs.verified_pr_number }}'
+    steps:
+      # Explicitly pin checkout to trusted base branch ref (never fork head_sha)
+      - name: 'Checkout trusted repository scripts'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
+        with:
+          ref: '${{ github.ref }}'
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: 'Download Context Pack from prepare workflow run'
+        continue-on-error: true
+        uses: 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' # v4
+        with:
+          name: 'ai-verify-context-pack'
+          path: '${{ runner.temp }}/fork-pack'
+          run-id: '${{ github.event.workflow_run.id }}'
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+
+      - name: 'Verify fork PR SHA binding & authorization'
+        id: 'gate'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          EXPECTED_HEAD_SHA: '${{ github.event.workflow_run.head_sha }}'
+          PYTHONPATH: '.github/scripts/ai_verify/src'
+        run: |-
+          python3 -m ai_verify authorize-fork \
+            --pack "${RUNNER_TEMP}/fork-pack/context-pack.json" \
+            --expected-head-sha "${EXPECTED_HEAD_SHA}"
+
+  verify-fork:
+    name: 'AI Verification Orchestrator (Fork PR)'
+    needs: 'authorize'
+    if: "needs.authorize.outputs.should_verify == 'true'"
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 20
+    permissions:
+      contents: 'read'
+      actions: 'read'
+      pull-requests: 'write'
+      checks: 'write'
+      id-token: 'write'
+    steps:
+      # Explicitly pin checkout to trusted base branch ref (never fork head_sha)
+      - name: 'Checkout trusted repository scripts'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
+        with:
+          ref: '${{ github.ref }}'
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: 'Download Context Pack from prepare workflow run'
+        uses: 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' # v4
+        with:
+          name: 'ai-verify-context-pack'
+          path: '${{ runner.temp }}/fork-pack'
+          run-id: '${{ github.event.workflow_run.id }}'
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+
+      - name: 'Authenticate to Google Cloud (Workload Identity)'
+        id: 'gcp_wif'
+        if: "vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != ''"
+        uses: 'google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed' # v2
+        with:
+          workload_identity_provider: '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ vars.GCP_SERVICE_ACCOUNT }}'
+
+      - name: 'Detect Service Account JSON fallback'
+        id: 'gcp_creds_check'
+        if: "vars.GCP_WORKLOAD_IDENTITY_PROVIDER == ''"
+        env:
+          GCP_CREDS_PRESENT: '${{ secrets.GCP_CREDENTIALS_JSON }}'
+        run: |-
+          if [ -n "${GCP_CREDS_PRESENT}" ]; then
+            echo "has_creds=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_creds=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: 'Authenticate to Google Cloud (Service Account JSON)'
+        id: 'gcp_json'
+        if: "steps.gcp_creds_check.outputs.has_creds == 'true'"
+        uses: 'google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed' # v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS_JSON }}'
+
+      - name: 'Fetch optional secrets from GCP Secret Manager'
+        if: >-
+          vars.GCP_AI_SECRETS_SPEC != '' &&
+          (steps.gcp_wif.outcome == 'success' || steps.gcp_json.outcome == 'success')
+        uses: 'google-github-actions/get-secretmanager-secrets@2b5f97c5a4b9c105e64646762ad4fc3f5128e6f5' # v2
+        with:
+          secrets: '${{ vars.GCP_AI_SECRETS_SPEC }}'
+          export_environment: true
+
+      - name: 'Set up Python 3.12 & uv'
+        uses: 'astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86' # v5.4.2
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: '.github/scripts/ai_verify/uv.lock'
+
+      - name: 'Run Multi-Step AI Verification for Fork PR'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          VERIFIED_PR_NUMBER: '${{ needs.authorize.outputs.verified_pr_number }}'
+          GCP_PROJECT_ID: '${{ steps.gcp_wif.outputs.project_id || steps.gcp_json.outputs.project_id || vars.GCP_PROJECT_ID }}'
+          VERTEX_LOCATION: "${{ vars.VERTEX_LOCATION || 'global' }}"
+          CLAUDE_VERTEX_REGION: "${{ vars.CLAUDE_VERTEX_REGION || vars.VERTEX_LOCATION || 'global' }}"
+          GEMINI_DEEP_MODEL: "${{ vars.GEMINI_DEEP_MODEL || 'gemini-3.1-pro-preview' }}"
+          GEMINI_FAST_MODEL: "${{ vars.GEMINI_FAST_MODEL || 'gemini-3.8-flash' }}"
+          GEMINI_DEEP_THINKING_LEVEL: "${{ vars.GEMINI_DEEP_THINKING_LEVEL || 'LOW' }}"
+          GEMINI_FAST_THINKING_LEVEL: "${{ vars.GEMINI_FAST_THINKING_LEVEL || 'LOW' }}"
+          CLAUDE_DEEP_MODEL: '${{ vars.CLAUDE_DEEP_MODEL }}'
+          CLAUDE_FAST_MODEL: '${{ vars.CLAUDE_FAST_MODEL }}'
+          AI_VERIFY_GATE_MODE: "${{ vars.AI_VERIFY_GATE_MODE || 'advisory' }}"
+          AI_VERIFY_MAX_TOTAL_TOKENS: "${{ vars.AI_VERIFY_MAX_TOTAL_TOKENS || '4000000' }}"
+          AI_VERIFY_MAX_PARALLEL_STEPS: "${{ vars.AI_VERIFY_MAX_PARALLEL_STEPS || '4' }}"
+          GEMINI_API_KEY_V2: '${{ secrets.GEMINI_API_KEY_V2 }}'
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+          ANTHROPIC_API_KEY: '${{ secrets.ANTHROPIC_API_KEY }}'
+        run: |-
+          uv run --project .github/scripts/ai_verify --locked --no-group prep \
+            ai-verify verify \
+            --pack "${RUNNER_TEMP}/fork-pack/context-pack.json" \
+            --report "${RUNNER_TEMP}/ai-verify-report.md" \
+            --results "${RUNNER_TEMP}/ai-verify-results.json" \
+            --publish-pr "${VERIFIED_PR_NUMBER}" \
+            --post-inline \
+            --publish-agent-checks
