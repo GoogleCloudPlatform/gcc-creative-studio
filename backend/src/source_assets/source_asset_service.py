@@ -40,6 +40,13 @@ from src.common.media_utils import (
 from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.imagen_service import ImagenService
+from src.images.repository.media_item_repository import MediaRepository
+from src.lineage.lineage_builder import ExplicitPrimarySpec
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import (
+    LineageItemTypeEnum,
+    LineageRoleEnum,
+)
 from src.multimodal.gemini_service import GeminiService
 from src.source_assets.dto.finalize_upload_dto import (
     FinalizeSourceAssetUploadDto,
@@ -246,6 +253,77 @@ class SourceAssetService:
             user_picture=user_picture,
         )
 
+    async def _record_crop_lineage_if_requested(
+        self,
+        *,
+        child_asset_id: int | None,
+        workspace_id: int,
+        parent_media_item_id: int | None,
+        parent_media_index: int | None,
+        parent_source_asset_id: int | None,
+        action_summary: str | None,
+        skip_if_exists: bool,
+    ) -> None:
+        if not child_asset_id or (
+            not parent_media_item_id and not parent_source_asset_id
+        ):
+            return
+        db = getattr(self.repo, "db", None)
+        explicit_primary: ExplicitPrimarySpec | None = None
+        try:
+            if parent_media_item_id and parent_media_item_id > 0:
+                if db is not None:
+                    parent_item = await MediaRepository(db).get_by_id(
+                        parent_media_item_id
+                    )
+                    if (
+                        parent_item is None
+                        or parent_item.workspace_id != workspace_id
+                    ):
+                        return
+                explicit_primary = ExplicitPrimarySpec(
+                    parent_type=LineageItemTypeEnum.MEDIA_ITEM,
+                    parent_id=parent_media_item_id,
+                    parent_index=max(0, int(parent_media_index or 0)),
+                    role=LineageRoleEnum.CROP_SOURCE.value,
+                    action_summary=action_summary or "Cropped & edited image",
+                )
+            elif (
+                parent_source_asset_id
+                and parent_source_asset_id > 0
+                and parent_source_asset_id != child_asset_id
+            ):
+                parent_asset = await self.repo.get_by_id(parent_source_asset_id)
+                if parent_asset is None or (
+                    parent_asset.workspace_id != workspace_id
+                    and parent_asset.scope != AssetScopeEnum.SYSTEM
+                ):
+                    return
+                explicit_primary = ExplicitPrimarySpec(
+                    parent_type=LineageItemTypeEnum.SOURCE_ASSET,
+                    parent_id=parent_source_asset_id,
+                    parent_index=0,
+                    role=LineageRoleEnum.CROP_SOURCE.value,
+                    action_summary=action_summary or "Cropped & edited image",
+                )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Could not validate crop parent for source_asset %s: %s",
+                child_asset_id,
+                exc,
+            )
+            return
+
+        if explicit_primary is not None:
+            await record_lineage_safely(
+                db,
+                workspace_id=workspace_id,
+                child_type=LineageItemTypeEnum.SOURCE_ASSET,
+                child_id=child_asset_id,
+                explicit_primary=explicit_primary,
+                skip_if_exists=skip_if_exists,
+            )
+
     async def upload_asset(
         self,
         user: UserModel,
@@ -262,6 +340,10 @@ class SourceAssetService:
         metadata_generation_model: str | None = None,
         title: str | None = None,
         description: str | None = None,
+        parent_media_item_id: int | None = None,
+        parent_media_index: int | None = None,
+        parent_source_asset_id: int | None = None,
+        action_summary: str | None = None,
     ) -> SourceAssetResponseDto:
         """Handles uploading, de-duplicating, upscaling, and saving a new user asset."""
         contents = file_bytes
@@ -282,6 +364,15 @@ class SourceAssetService:
                 "Duplicate asset found for user %s with hash %s. Returning existing.",
                 user.email,
                 file_hash[:8],
+            )
+            await self._record_crop_lineage_if_requested(
+                child_asset_id=existing_asset.id,
+                workspace_id=workspace_id,
+                parent_media_item_id=parent_media_item_id,
+                parent_media_index=parent_media_index,
+                parent_source_asset_id=parent_source_asset_id,
+                action_summary=action_summary,
+                skip_if_exists=True,
             )
             return await self._create_asset_response(existing_asset)
 
@@ -533,6 +624,15 @@ class SourceAssetService:
         )
         created_asset = await self.repo.create(new_asset)
         new_asset.id = created_asset.id
+        await self._record_crop_lineage_if_requested(
+            child_asset_id=new_asset.id,
+            workspace_id=workspace_id,
+            parent_media_item_id=parent_media_item_id,
+            parent_media_index=parent_media_index,
+            parent_source_asset_id=parent_source_asset_id,
+            action_summary=action_summary,
+            skip_if_exists=False,
+        )
 
         return await self._create_asset_response(new_asset)
 

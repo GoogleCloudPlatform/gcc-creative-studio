@@ -190,3 +190,51 @@ def test_bulk_move_folders_success(client, mock_service):
     assert response.status_code == 200
     assert response.json() == {"moved_count": 1}
     mock_service.bulk_move.assert_called_once()
+
+
+def test_get_gallery_item_lineage_success(mock_user):
+    from src.lineage.dto.lineage_dto import (
+        ItemLineageResponseDto,
+        LineageNodeDto,
+    )
+    from src.lineage.lineage_service import LineageService
+    from src.lineage.schema.item_lineage_model import LineageItemTypeEnum
+
+    mock_lineage_service = AsyncMock()
+    mock_lineage_service.get_item_lineage.return_value = ItemLineageResponseDto(
+        spine=[
+            LineageNodeDto(
+                item_type=LineageItemTypeEnum.SOURCE_ASSET,
+                id=10,
+                media_index=0,
+                prompt="Uploaded: hero.png",
+            ),
+            LineageNodeDto(
+                item_type=LineageItemTypeEnum.MEDIA_ITEM,
+                id=42,
+                media_index=0,
+                role="image_edit_source",
+                prompt="Add dramatic rim lighting",
+            ),
+        ],
+        derivatives=[],
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[LineageService] = lambda: mock_lineage_service
+    test_client = TestClient(app)
+
+    response = test_client.get("/api/gallery/lineage/media_item/42")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["spine"]) == 2
+    assert body["spine"][0]["itemType"] == "source_asset"
+    assert body["spine"][1]["id"] == 42
+    assert body["spine"][1]["role"] == "image_edit_source"
+    mock_lineage_service.get_item_lineage.assert_awaited_once_with(
+        item_type=LineageItemTypeEnum.MEDIA_ITEM,
+        item_id=42,
+        current_user=mock_user,
+    )

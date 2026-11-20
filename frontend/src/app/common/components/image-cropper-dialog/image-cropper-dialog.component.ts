@@ -71,6 +71,9 @@ interface ImageCropperDialogData {
   assetType?: AssetTypeEnum;
   aspectRatios?: AspectRatio[];
   enableUpscale?: boolean;
+  parentMediaItemId?: number;
+  parentMediaIndex?: number;
+  parentSourceAssetId?: number;
 }
 
 interface TextInputCanvas {
@@ -162,20 +165,23 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     const previewUrl = data.ref?.previewUrl;
     if (!previewUrl) return;
 
-    ImageCropperDialogComponent.open(dialog, {imageUrl: previewUrl}).subscribe(
-      result => {
-        if (result && result.id) {
-          referenceImages[data.index] = {
-            ...referenceImages[data.index],
-            sourceAssetId: result.id,
-            sourceMediaItem: undefined,
-            previewUrl:
-              result.presignedUrl || result.presignedThumbnailUrl || previewUrl,
-          };
-          saveState();
-        }
-      },
-    );
+    ImageCropperDialogComponent.open(dialog, {
+      imageUrl: previewUrl,
+      parentMediaItemId: data.ref.sourceMediaItem?.mediaItemId,
+      parentMediaIndex: data.ref.sourceMediaItem?.mediaIndex ?? 0,
+      parentSourceAssetId: data.ref.sourceAssetId,
+    }).subscribe(result => {
+      if (result && result.id) {
+        referenceImages[data.index] = {
+          ...referenceImages[data.index],
+          sourceAssetId: result.id,
+          sourceMediaItem: undefined,
+          previewUrl:
+            result.presignedUrl || result.presignedThumbnailUrl || previewUrl,
+        };
+        saveState();
+      }
+    });
   }
 
   constructor(
@@ -635,10 +641,31 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     file: File,
     aspectRatio: string,
   ): Observable<SourceAssetResponseDto> {
+    const hasParent =
+      this.data.parentMediaItemId !== undefined ||
+      this.data.parentSourceAssetId !== undefined;
+    const isAnnotated =
+      this.activeMode() === ImageEditorMode.DRAW || this.canUndo();
+    const ratioSuffix =
+      aspectRatio && aspectRatio !== 'other' ? ` (${aspectRatio})` : '';
+    const actionSummary = hasParent
+      ? isAnnotated
+        ? `Cropped & annotated${ratioSuffix}`
+        : `Cropped${ratioSuffix}`
+      : undefined;
+
     return this.sourceAssetService.uploadAsset(file, {
       aspectRatio: aspectRatio,
       scope: AssetScopeEnum.PRIVATE,
       assetType: this.data.assetType || AssetTypeEnum.GENERIC_IMAGE,
+      ...(hasParent
+        ? {
+            parentMediaItemId: this.data.parentMediaItemId,
+            parentMediaIndex: this.data.parentMediaIndex,
+            parentSourceAssetId: this.data.parentSourceAssetId,
+            actionSummary,
+          }
+        : {}),
     });
   }
 }

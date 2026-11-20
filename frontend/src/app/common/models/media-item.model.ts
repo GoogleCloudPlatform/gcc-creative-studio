@@ -20,7 +20,7 @@ import {SourceMediaItemLink} from './search.model';
 
 export interface EnrichedSourceAsset {
   assetId?: number | string;
-  sourceAssetId: string;
+  sourceAssetId?: string;
   presignedUrl: string;
   presignedThumbnailUrl: string;
   gcsUri: string;
@@ -40,6 +40,29 @@ export interface ReferenceAudio {
   type: 'source_asset' | 'media_item';
   name: string;
   index?: number;
+}
+
+export type LineageItemType = 'media_item' | 'source_asset';
+
+export interface LineageNode {
+  itemType: LineageItemType;
+  id: number;
+  mediaIndex: number;
+  mimeType?: string | null;
+  model?: string | null;
+  title?: string | null;
+  prompt?: string | null;
+  role?: string | null;
+  status?: string | null;
+  thumbnailUrl?: string | null;
+  previewUrl?: string | null;
+  deleted?: boolean;
+  createdAt?: string | null;
+}
+
+export interface ItemLineageResponse {
+  spine: LineageNode[];
+  derivatives: LineageNode[];
 }
 
 /**

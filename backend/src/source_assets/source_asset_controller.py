@@ -169,6 +169,12 @@ async def upload_source_asset(
     ),
     title: str | None = Form(None),
     description: str | None = Form(None),
+    parent_media_item_id: int | None = Form(None, alias="parentMediaItemId"),
+    parent_media_index: int | None = Form(None, alias="parentMediaIndex"),
+    parent_source_asset_id: int | None = Form(
+        None, alias="parentSourceAssetId"
+    ),
+    action_summary: str | None = Form(None, alias="actionSummary"),
     current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(SourceAssetService),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -214,6 +220,10 @@ async def upload_source_asset(
         metadata_generation_model=metadata_generation_model,
         title=title,
         description=description,
+        parent_media_item_id=parent_media_item_id,
+        parent_media_index=parent_media_index,
+        parent_source_asset_id=parent_source_asset_id,
+        action_summary=action_summary,
     )
 
 

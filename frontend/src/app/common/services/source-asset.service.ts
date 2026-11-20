@@ -64,6 +64,10 @@ export interface SourceAssetOptionsDto {
   upscaleFactor?: string;
   enhance_input_image?: boolean;
   image_preservation_factor?: number | null;
+  parentMediaItemId?: number;
+  parentMediaIndex?: number;
+  parentSourceAssetId?: number;
+  actionSummary?: string;
 }
 
 export interface SourceAssetSearchDto {
@@ -163,6 +167,21 @@ export class SourceAssetService {
     if (options.upscaleFactor) {
       formData.append('upscaleFactor', options.upscaleFactor);
     }
+    if (options.parentMediaItemId !== undefined) {
+      formData.append('parentMediaItemId', String(options.parentMediaItemId));
+    }
+    if (options.parentMediaIndex !== undefined) {
+      formData.append('parentMediaIndex', String(options.parentMediaIndex));
+    }
+    if (options.parentSourceAssetId !== undefined) {
+      formData.append(
+        'parentSourceAssetId',
+        String(options.parentSourceAssetId),
+      );
+    }
+    if (options.actionSummary) {
+      formData.append('actionSummary', options.actionSummary);
+    }
 
     return this.http
       .post<SourceAssetResponseDto>(
@@ -237,6 +256,9 @@ export class SourceAssetService {
       (asset as any).isMediaItem
     ) {
       formData.append('mediaItemId', String(asset.id));
+      if ((asset as any).mediaIndex !== undefined) {
+        formData.append('mediaIndex', String((asset as any).mediaIndex));
+      }
     } else {
       formData.append('id', String(asset.id));
     }
