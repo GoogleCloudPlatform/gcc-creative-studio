@@ -58,6 +58,7 @@ import {SharedModule} from '../common/shared.module';
 import {MediaGalleryManagementComponent} from './media-gallery-management/media-gallery-management.component';
 import {TagsManagementComponent} from './tags-management/tags-management.component';
 import {AdminHomeComponent} from './admin-home/admin-home.component';
+import {AdminVersionBannerComponent} from './admin-version-banner/admin-version-banner.component';
 
 @NgModule({
   declarations: [
@@ -72,6 +73,7 @@ import {AdminHomeComponent} from './admin-home/admin-home.component';
     MediaGalleryManagementComponent,
     TagsManagementComponent,
     AdminHomeComponent,
+    AdminVersionBannerComponent,
   ],
   imports: [
     CommonModule,
