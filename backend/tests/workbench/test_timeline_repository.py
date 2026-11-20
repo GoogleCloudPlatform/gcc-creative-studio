@@ -302,3 +302,50 @@ class TestTimelineRepository:
 
         res = await timeline_repo.delete_timeline(999)
         assert res is False
+
+    @pytest.mark.anyio
+    async def test_get_access_info(self, timeline_repo, db_session_mock):
+        mock_result = MagicMock()
+        mock_result.first.return_value = (7, 40, "1")
+        db_session_mock.execute.return_value = mock_result
+
+        assert await timeline_repo.get_access_info(4) == (7, 40, "1")
+
+    @pytest.mark.anyio
+    async def test_get_access_info_unknown_timeline(
+        self, timeline_repo, db_session_mock
+    ):
+        mock_result = MagicMock()
+        mock_result.first.return_value = None
+        db_session_mock.execute.return_value = mock_result
+
+        assert await timeline_repo.get_access_info(999) is None
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "current, sent, expected", [(None, 7, 7), (3, 7, 3), (3, None, 3)]
+    )
+    async def test_update_never_moves_the_project(
+        self, timeline_repo, db_session_mock, current, sent, expected
+    ):
+        mock_result = MagicMock()
+        mock_timeline = Timeline(
+            id=4, project_id=current, workspace_id="ws1", title="Cut"
+        )
+        mock_timeline.video_clips = []
+        mock_timeline.audio_clips = []
+        mock_result.scalar_one_or_none.return_value = mock_timeline
+        db_session_mock.execute.return_value = mock_result
+
+        await timeline_repo.update_timeline(
+            4,
+            VideoTimeline(
+                workspace_id="ws1",
+                title="Cut",
+                video_clips=[],
+                transitions=[],
+                project_id=sent,
+            ),
+        )
+
+        assert mock_timeline.project_id == expected

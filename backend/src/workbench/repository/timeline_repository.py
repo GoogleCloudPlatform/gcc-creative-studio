@@ -179,6 +179,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
         return VideoTimeline(
             timeline_id=db_timeline.id,
             storyboard_id=db_timeline.storyboard_id,
+            project_id=db_timeline.project_id,
             workspace_id=db_timeline.workspace_id
             or str(db_timeline.storyboard_id or 1),
             user_id=db_timeline.user_id,
@@ -327,6 +328,23 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             return None
         return self._model_to_dto(item)
 
+    async def get_access_info(
+        self, timeline_id: int
+    ) -> tuple[int | None, int | None, str | None] | None:
+        """``(project_id, storyboard_id, user_id)`` of a timeline, or None.
+
+        A light query for ``TimelineAuth``: no clips are loaded.
+        """
+        result = await self.db.execute(
+            select(
+                self.model.project_id,
+                self.model.storyboard_id,
+                self.model.user_id,
+            ).where(self.model.id == timeline_id)
+        )
+        row = result.first()
+        return (row[0], row[1], row[2]) if row else None
+
     async def find_by_storyboard(
         self, storyboard_id: int
     ) -> list[TimelineResponse]:
@@ -355,6 +373,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                 sb_id = None
         db_timeline = Timeline(
             storyboard_id=sb_id,
+            project_id=timeline_create.project_id,
             workspace_id=str(timeline_create.workspace_id),
             user_id=(
                 str(timeline_create.user_id)
@@ -423,6 +442,11 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                 db_timeline.storyboard_id = int(timeline_update.storyboard_id)  # type: ignore
             except (ValueError, TypeError):
                 pass
+
+        # The owning project never moves on update. A legacy row the migration
+        # could not attribute (NULL) is the only one an update may claim.
+        if db_timeline.project_id is None and timeline_update.project_id:
+            db_timeline.project_id = timeline_update.project_id
 
         db_timeline.workspace_id = str(timeline_update.workspace_id)
         if timeline_update.user_id is not None:

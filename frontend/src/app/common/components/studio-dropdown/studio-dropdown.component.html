@@ -63,6 +63,9 @@
         *ngFor="let option of options; trackBy: trackByOption"
         (click)="selectOption(option)"
         [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
+        [class.is-disabled]="option.disabled"
+        [disabled]="!!option.disabled"
+        [disabledInteractive]="true"
         class="studio-menu-item"
         [matTooltip]="option.tooltip || ''"
       >
@@ -76,6 +79,8 @@
           <span class="option-label truncate text-left">{{
             option.label
           }}</span>
+          <!-- Status Badge -->
+          <span *ngIf="option.badge" class="option-badge">{{ option.badge }}</span>
           <!-- Delete Button -->
           <!-- <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
                       class="delete-btn">

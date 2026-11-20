@@ -250,4 +250,11 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
             "prompt": "studio portrait",
         },
     ),
+    (
+        "PATCH",
+        "/api/agent/sessions/{}",
+        {"title": "Spring launch", "summary": "Teaser"},
+    ),
+    ("POST", "/api/projects", {"workspace_id": 1, "name": "Spring campaign"}),
+    ("PATCH", "/api/projects/{}", {"name": "Spring campaign v2"}),
 ]

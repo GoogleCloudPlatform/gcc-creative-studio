@@ -13,44 +13,69 @@
 # limitations under the License.
 
 from datetime import datetime
-from sqlalchemy import ForeignKey, String, DateTime, func, Table, Column, Float
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Index,
+    String,
+    DateTime,
+    false,
+    func,
+    text,
+    Float,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
-# # Association table for project resources (MediaItems)
-# project_media_items = Table(
-#     "project_media_items",
-#     Base.metadata,
-#     Column("project_id", ForeignKey("projects.id"), primary_key=True),
-#     Column("media_item_id", ForeignKey("media_items.id"), primary_key=True),
-# )
-#
-# # Association table for project resources (SourceAssets)
-# project_source_assets = Table(
-#     "project_source_assets",
-#     Base.metadata,
-#     Column("project_id", ForeignKey("projects.id"), primary_key=True),
-#     Column("source_asset_id", ForeignKey("source_assets.id"), primary_key=True),
-# )
+# Name of the project the backend creates on demand (see
+# ``ProjectRepository.ensure_default``) and the migration backfills into.
+DEFAULT_PROJECT_NAME = "Default project"
 
-# class Project(Base):
-#     __tablename__ = "projects"
-#
-#     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-#     name: Mapped[str] = mapped_column(String, nullable=False)
-#     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-#     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
-#     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
-#     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
-#
-#     # Relationships
-#     storyboard: Mapped["Storyboard"] = relationship(back_populates="project", uselist=False, cascade="all, delete-orphan")
-#     canvas: Mapped["Canvas"] = relationship(back_populates="project", uselist=False, cascade="all, delete-orphan")
-#     timeline: Mapped["Timeline"] = relationship(back_populates="project", uselist=False, cascade="all, delete-orphan")
-#
-#     # Resources
-#     media_items: Mapped[list["MediaItem"]] = relationship(secondary=project_media_items)
-#     source_assets: Mapped[list["SourceAsset"]] = relationship(secondary=project_source_assets)
+
+class Project(Base):
+    """A user's container for Workbench work inside a workspace.
+
+    A project groups its owner's agent chats (``agent_sessions``),
+    storyboards and timelines, and only the owner can see it (see
+    ``ProjectAuth``). There are deliberately no ORM relationships here:
+    children are read with explicit queries, which avoids async lazy loads,
+    and are removed by the database's ``ON DELETE CASCADE``.
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        Index("ix_projects_workspace_owner", "workspace_id", "owner_id"),
+        # At most one default project per (workspace, owner). This keeps
+        # "ensure the Default project" idempotent and race-safe.
+        Index(
+            "uq_projects_default_per_owner",
+            "workspace_id",
+            "owner_id",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False
+    )
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class Storyboard(Base):
@@ -60,6 +85,11 @@ class Storyboard(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     workspace_id: Mapped[int] = mapped_column(
         ForeignKey("workspaces.id"), nullable=False
+    )
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     template_name: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -72,7 +102,6 @@ class Storyboard(Base):
         ForeignKey("media_items.id"), nullable=True
     )
 
-    # project: Mapped["Project"] = relationship(back_populates="storyboard")
     # Ordered by the persisted position, then by id so legacy rows (all
     # written with ``order = 0``) still come back in insertion order.
     scenes: Mapped[list["Scene"]] = relationship(
@@ -94,7 +123,7 @@ class Scene(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     storyboard_id: Mapped[int] = mapped_column(
-        ForeignKey("storyboards.id"), nullable=False
+        ForeignKey("storyboards.id", ondelete="CASCADE"), nullable=False
     )
     order: Mapped[int] = mapped_column(default=0, nullable=False)
     # Izumi's stable scene identity (survives reorder); nullable for rows
@@ -158,14 +187,3 @@ class Scene(Base):
     )
 
     storyboard: Mapped["Storyboard"] = relationship(back_populates="scenes")
-
-
-# class Canvas(Base):
-#     __tablename__ = "canvases"
-#
-#     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-#     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
-#     title: Mapped[str | None] = mapped_column(String, nullable=True)
-#     html_content: Mapped[str | None] = mapped_column(String, nullable=True)
-#
-#     project: Mapped["Project"] = relationship(back_populates="canvas")

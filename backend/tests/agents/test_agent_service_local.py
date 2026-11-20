@@ -15,6 +15,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ from src.agents.agent_service import (
     AgentService,
 )
 from src.agents.local_adk_client import LocalAdkAgentClient, LocalRemoteAgent
+from src.agents.agent_session_repository import AgentSessionRepository
 from src.config.config_service import config_service
 from src.users.user_model import UserModel
 
@@ -38,6 +40,15 @@ def fixture_local_mode():
     config_service.USE_LOCAL_IZUMI_AGENT = previous
 
 
+def _registry_stub():
+    """An empty session registry: no chat registered yet."""
+    repo = AsyncMock(spec=AgentSessionRepository)
+    repo.get.return_value = None
+    repo.register.return_value = None
+    repo.map_for_user_workspace.return_value = {}
+    return repo
+
+
 def _service(local_client: AsyncMock | None = None, **deps) -> AgentService:
     with patch("vertexai.Client"):
         service = AgentService(
@@ -46,6 +57,7 @@ def _service(local_client: AsyncMock | None = None, **deps) -> AgentService:
             storyboard_repo=deps.get("storyboard_repo", AsyncMock()),
             workspace_auth=deps.get("workspace_auth", AsyncMock()),
             project_service=deps.get("project_service", AsyncMock()),
+            agent_session_repo=deps.get("agent_session_repo", _registry_stub()),
         )
     if local_client is not None:
         service.local_client = local_client
@@ -122,8 +134,25 @@ async def test_list_sessions_local_filters_by_workspace(local_mode):
         _local_session("s2", 11),
         {**_local_session("s3"), "session_state": {}},
     ]
-    service = _service(local_client)
+    # The local store's chats are unregistered: the listing adopts s1, the
+    # only chat of workspace 10, into the default project, then lists it.
+    registry = _registry_stub()
+    registry.map_for_user_workspace.side_effect = [
+        {},
+        {
+            "s1": SimpleNamespace(
+                session_id="s1",
+                project_id=1,
+                title=None,
+                summary=None,
+                last_used_at=None,
+                restored_at=None,
+            )
+        },
+    ]
+    service = _service(local_client, agent_session_repo=registry)
     user = MagicMock(spec=UserModel)
+    user.id = 999
 
     result = await service.list_sessions(
         current_user=user,
@@ -132,7 +161,8 @@ async def test_list_sessions_local_filters_by_workspace(local_mode):
         workspace_id=10,
     )
     local_client.list_sessions.assert_awaited_once_with("ads_x", "999")
-    assert [s.id for s in result] == ["s1"]
+    assert registry.adopt.await_args.args[0] == ["s1"]
+    assert [(s.id, s.projectId) for s in result] == [("s1", 1)]
     assert result[0].lastUpdateTime == 1718976000.0
 
 
@@ -145,7 +175,7 @@ async def test_create_session_local_passes_state(local_mode):
     request.headers = {"Authorization": "Bearer abc"}
 
     dto = await service.create_session(
-        current_user=MagicMock(spec=UserModel),
+        current_user=MagicMock(spec=UserModel, id=999),
         user_id="999",
         request=request,
         workspace_id=10,
@@ -190,9 +220,10 @@ async def test_get_session_detail_local_recreates_missing_session(local_mode):
         current_user=user, workspace_id=1, request=request, storyboard_id=123
     )
     local_client.get_session.assert_awaited_once_with("ads_x", "999", "old")
-    storyboard_repo.update.assert_awaited_once_with(
-        123, {"session_id": "new_id"}
+    storyboard_repo.reassign_session.assert_awaited_once_with(
+        "old", "new_id", 999
     )
+    storyboard_repo.update.assert_not_called()
     assert res.session.id == "new_id"
     # Events come straight from the (new) session payload, no extra fetch.
     assert local_client.get_session.await_count == 1
@@ -353,6 +384,7 @@ async def test_chat_local_unreachable_agent_records_error(local_mode):
     from src.agents.local_adk_client import LocalAgentError
 
     local_client = AsyncMock()
+    local_client.get_session.return_value = _local_session("s1", 10)
 
     async def failing_stream(**_kwargs):
         raise LocalAgentError("Local Izumi agent is not reachable (503)")
