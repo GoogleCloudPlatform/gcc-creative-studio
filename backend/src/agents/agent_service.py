@@ -1290,7 +1290,9 @@ class AgentService:
         activity takes the listing's update time: it orders
         ``latest_session_id``, which otherwise picked an arbitrary chat
         (possibly one that no longer exists). ``project_id`` then narrows
-        the result. With ``include_expired``, the kept rows of ``app_name``
+        the result. A chat registered in another workspace is never listed:
+        adoption skips it, and opening or running it from this workspace
+        answers 400. With ``include_expired``, the kept rows of ``app_name``
         are appended as expired chats (see ``_expired_session_dtos``).
         """
         registry = await self.agent_session_repo.map_for_user_workspace(
@@ -1328,9 +1330,8 @@ class AgentService:
         for dto in sessions:
             row = registry.get(dto.id)
             if row is None:
-                # Registered under another workspace: unfiltered lists only.
-                if project_id is None:
-                    result.append(dto)
+                # Registered in another workspace (adoption skips it): this
+                # workspace refuses to open or run it, so it is never listed.
                 continue
             if project_id is not None and row.project_id != project_id:
                 continue

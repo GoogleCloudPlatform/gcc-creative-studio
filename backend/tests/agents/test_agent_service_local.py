@@ -15,6 +15,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -133,7 +134,23 @@ async def test_list_sessions_local_filters_by_workspace(local_mode):
         _local_session("s2", 11),
         {**_local_session("s3"), "session_state": {}},
     ]
-    service = _service(local_client)
+    # The local store's chats are unregistered: the listing adopts s1, the
+    # only chat of workspace 10, into the default project, then lists it.
+    registry = _registry_stub()
+    registry.map_for_user_workspace.side_effect = [
+        {},
+        {
+            "s1": SimpleNamespace(
+                session_id="s1",
+                project_id=1,
+                title=None,
+                summary=None,
+                last_used_at=None,
+                restored_at=None,
+            )
+        },
+    ]
+    service = _service(local_client, agent_session_repo=registry)
     user = MagicMock(spec=UserModel)
     user.id = 999
 
@@ -144,7 +161,8 @@ async def test_list_sessions_local_filters_by_workspace(local_mode):
         workspace_id=10,
     )
     local_client.list_sessions.assert_awaited_once_with("ads_x", "999")
-    assert [s.id for s in result] == ["s1"]
+    assert registry.adopt.await_args.args[0] == ["s1"]
+    assert [(s.id, s.projectId) for s in result] == [("s1", 1)]
     assert result[0].lastUpdateTime == 1718976000.0
 
 

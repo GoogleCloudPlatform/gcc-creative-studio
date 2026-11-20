@@ -194,11 +194,12 @@ class TestApplySessionRegistry:
         assert [d.id for d in result] == ["s2"]
 
     @pytest.mark.anyio
-    async def test_chat_registered_elsewhere_only_in_unfiltered_lists(
+    async def test_chat_registered_elsewhere_is_never_listed(
         self, service, project_service
     ):
         # Adoption skips a chat registered under another workspace, so it
-        # stays missing from this workspace's map.
+        # stays missing from this workspace's map. Opening or running it
+        # from this workspace answers 400, so no listing may offer it.
         project_service.resolve_project_for_write.return_value = _project(
             1, is_default=True
         )
@@ -210,7 +211,7 @@ class TestApplySessionRegistry:
             USER, 10, [_dto("s9")], project_id=1
         )
 
-        assert [(d.id, d.projectId) for d in unfiltered] == [("s9", None)]
+        assert unfiltered == []
         assert filtered == []
 
     @pytest.mark.anyio
