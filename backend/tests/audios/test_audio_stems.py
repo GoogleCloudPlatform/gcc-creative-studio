@@ -140,6 +140,28 @@ def test_decode_and_encode_validation_errors():
     with pytest.raises(ValueError, match="empty audio"):
         encode_stereo_f32_to_wav(np.zeros((2, 0), dtype=np.float32))
 
+    with patch(
+        "src.audios.audio_stems.subprocess.run",
+        side_effect=FileNotFoundError("ffmpeg"),
+    ):
+        with pytest.raises(ValueError, match="ffmpeg binary is not installed"):
+            decode_audio_to_stereo_f32(b"some-bytes")
+        with pytest.raises(
+            RuntimeError, match="ffmpeg binary is not installed"
+        ):
+            encode_stereo_f32_to_mp3(np.ones((2, 64), dtype=np.float32))
+
+    with patch(
+        "src.audios.audio_stems.subprocess.Popen",
+        side_effect=FileNotFoundError("ffmpeg"),
+    ):
+        with pytest.raises(
+            RuntimeError, match="ffmpeg binary is not installed"
+        ):
+            audio_stems._spawn_mp3_encoder_process(
+                Path("/tmp/out.mp3"), SAMPLE_RATE, "192k"
+            )
+
 
 def test_ensure_model_file_uses_gcs_cache_and_https_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -805,6 +805,7 @@ describe('MediaDetailComponent', () => {
         state: {
           remixState: {
             lyriaModel: undefined,
+            parentMediaItemId: 910,
             referenceAudio: {
               id: 910,
               type: 'media_item',

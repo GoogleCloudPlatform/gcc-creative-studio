@@ -121,27 +121,32 @@ def decode_audio_to_stereo_f32(
     if not audio_bytes:
         raise ValueError("Audio payload is empty.")
 
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-i",
-            "pipe:0",
-            "-f",
-            "f32le",
-            "-ac",
-            str(N_CHANNELS),
-            "-ar",
-            str(sample_rate),
-            "pipe:1",
-        ],
-        input=audio_bytes,
-        capture_output=True,
-        timeout=_FFMPEG_DECODE_TIMEOUT_SECONDS,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                "pipe:0",
+                "-f",
+                "f32le",
+                "-ac",
+                str(N_CHANNELS),
+                "-ar",
+                str(sample_rate),
+                "pipe:1",
+            ],
+            input=audio_bytes,
+            capture_output=True,
+            timeout=_FFMPEG_DECODE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "Failed to decode audio for stem separation: ffmpeg binary is not installed."
+        ) from exc
     if result.returncode != 0 or not result.stdout:
         stderr_msg = result.stderr.decode("utf-8", errors="replace").strip()
         raise ValueError(
@@ -180,34 +185,39 @@ def encode_stereo_f32_to_mp3(
 
     clamped = np.clip(samples, -1.0, 1.0)
     raw_bytes = np.ascontiguousarray(clamped.T, dtype="<f4").tobytes()
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-f",
-            "f32le",
-            "-ac",
-            str(N_CHANNELS),
-            "-ar",
-            str(sample_rate),
-            "-i",
-            "pipe:0",
-            "-vn",
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            bitrate,
-            "-f",
-            "mp3",
-            "pipe:1",
-        ],
-        input=raw_bytes,
-        capture_output=True,
-        timeout=_FFMPEG_ENCODE_TIMEOUT_SECONDS,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "f32le",
+                "-ac",
+                str(N_CHANNELS),
+                "-ar",
+                str(sample_rate),
+                "-i",
+                "pipe:0",
+                "-vn",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                bitrate,
+                "-f",
+                "mp3",
+                "pipe:1",
+            ],
+            input=raw_bytes,
+            capture_output=True,
+            timeout=_FFMPEG_ENCODE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Failed to encode stem MP3 audio: ffmpeg binary is not installed."
+        ) from exc
     if result.returncode != 0 or not result.stdout:
         stderr_msg = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(
@@ -521,34 +531,39 @@ def _spawn_mp3_encoder_process(
     bitrate: str,
 ) -> subprocess.Popen[bytes]:
     """Starts an ffmpeg process consuming f32le stereo stdin into ``output_path``."""
-    return subprocess.Popen(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-y",
-            "-f",
-            "f32le",
-            "-ac",
-            str(N_CHANNELS),
-            "-ar",
-            str(sample_rate),
-            "-i",
-            "pipe:0",
-            "-vn",
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            bitrate,
-            "-f",
-            "mp3",
-            str(output_path),
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        return subprocess.Popen(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "f32le",
+                "-ac",
+                str(N_CHANNELS),
+                "-ar",
+                str(sample_rate),
+                "-i",
+                "pipe:0",
+                "-vn",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                bitrate,
+                "-f",
+                "mp3",
+                str(output_path),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Failed to start MP3 stem encoder: ffmpeg binary is not installed."
+        ) from exc
 
 
 def separate_and_encode_stems_mp3(
