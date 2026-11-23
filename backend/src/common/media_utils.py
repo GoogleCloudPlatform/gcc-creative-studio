@@ -21,40 +21,51 @@ import os
 import pathlib
 import re
 import subprocess
+import tempfile
+from urllib.parse import parse_qs, urlparse
 
 from PIL import Image as PILImage
+from PIL import ImageOps
 
-from google.api_core import exceptions
-
+from src.common.base_dto import AspectRatioEnum
 from src.common.storage_service import GcsService
 
 logger = logging.getLogger(__name__)
 
 
-def generate_image_thumbnail_bytes(
-    image_bytes: bytes, mime_type: str
-) -> bytes | None:
-    """Generates a thumbnail from image bytes using PIL.
+VIDEO_THUMBNAIL_MIME_TYPE = "image/jpeg"
+VIDEO_THUMBNAIL_EXT = ".jpg"
 
-    Args:
-        image_bytes: The raw bytes of the image.
-        mime_type: The mime type of the image (e.g., 'image/png', 'image/jpeg').
 
-    Returns:
-        The raw bytes of the generated thumbnail, or None if it fails.
+def _derive_thumbnail_blob_name(gcs_uri: str, ext: str) -> str | None:
+    """Returns derived *_thumbnail<ext> blob path for a valid gs:// URI."""
+    if not gcs_uri or not gcs_uri.startswith("gs://"):
+        return None
+    parts = gcs_uri.split("/", 3)  # gs:, , bucket, blob_name
+    if len(parts) < 4 or not parts[3]:
+        return None
+    path = pathlib.Path(parts[3])
+    thumb_name = f"{path.stem}_thumbnail{ext}"
+    if path.parent == pathlib.Path():
+        return thumb_name
+    return str(path.parent / thumb_name)
 
-    """
+
+def generate_image_thumbnail_bytes(image_bytes: bytes) -> bytes | None:
+    """Generates a 512px max-edge compressed WebP thumbnail from image bytes."""
     try:
         with PILImage.open(io.BytesIO(image_bytes)) as img:
-            # Convert to RGB if RGBA and saving as JPEG
-            if mime_type == "image/jpeg" and img.mode == "RGBA":
-                img = img.convert("RGB")
+            img = ImageOps.exif_transpose(img)
+            has_alpha = img.mode in ("RGBA", "LA") or (
+                img.mode == "P" and "transparency" in img.info
+            )
+            target_mode = "RGBA" if has_alpha else "RGB"
+            if img.mode != target_mode:
+                img = img.convert(target_mode)
 
-            img.thumbnail((512, 512))
+            img.thumbnail((512, 512), PILImage.Resampling.LANCZOS)
             output = io.BytesIO()
-
-            format_to_save = "PNG" if mime_type == "image/png" else "JPEG"
-            img.save(output, format=format_to_save, optimize=True)
+            img.save(output, format="WEBP", quality=80, method=4)
             return output.getvalue()
     except Exception as e:
         logger.error("Error generating image thumbnail: %s", e)
@@ -64,48 +75,25 @@ def generate_image_thumbnail_bytes(
 def generate_image_thumbnail_from_gcs(
     gcs_service: GcsService,
     gcs_uri: str,
-    mime_type: str,
 ) -> str | None:
-    """Generates a thumbnail for the given GCS URI and uploads it.
-
-    Args:
-        gcs_service: The GcsService instance to use for download/upload.
-        gcs_uri: The GCS URI of the source image.
-        mime_type: The mime type of the image.
-
-    Returns:
-        The GCS URI of the generated thumbnail, or None if it fails.
-
-    """
+    """Generates a WebP thumbnail for the given GCS image URI and uploads it."""
     try:
+        new_blob_name = _derive_thumbnail_blob_name(gcs_uri, ".webp")
+        if not new_blob_name:
+            return None
+
         image_bytes = gcs_service.download_bytes_from_gcs(gcs_uri)
         if not image_bytes:
             return None
 
-        thumbnail_bytes = generate_image_thumbnail_bytes(image_bytes, mime_type)
+        thumbnail_bytes = generate_image_thumbnail_bytes(image_bytes)
         if not thumbnail_bytes:
             return None
-
-        if not gcs_uri.startswith("gs://"):
-            return None
-
-        # gs://bucket/blob_name
-        parts = gcs_uri.split("/", 3)  # gs:, , bucket, blob_name
-        if len(parts) < 4:
-            return None
-        blob_name = parts[3]
-
-        path = pathlib.Path(blob_name)
-        # Use simple string manipulation to avoid path issues on different OS
-        # if needed, pathlib is generally fine.
-        new_blob_name = str(path.parent / f"{path.stem}_thumbnail{path.suffix}")
-        if path.parent == pathlib.Path():
-            new_blob_name = f"{path.stem}_thumbnail{path.suffix}"
 
         return gcs_service.upload_bytes_to_gcs(
             thumbnail_bytes,
             new_blob_name,
-            mime_type,
+            "image/webp",
         )
 
     except Exception as e:
@@ -114,13 +102,13 @@ def generate_image_thumbnail_from_gcs(
 
 
 def generate_thumbnail(video_path: str) -> str | None:
-    """Generates a thumbnail from a video file using ffmpeg.
+    """Generates a 512px-capped JPEG thumbnail from a video file using ffmpeg.
 
     Args:
         video_path: The path to the video file.
 
     Returns:
-        The path to the generated thumbnail, or None if it fails.
+        The path to the generated JPEG thumbnail, or None if it fails.
 
     """
     if not video_path:
@@ -129,7 +117,7 @@ def generate_thumbnail(video_path: str) -> str | None:
     thumbnail_filename = (
         "thumbnail_"
         + os.path.splitext(os.path.basename(video_path))[0]
-        + ".png"
+        + ".jpg"
     )
     thumbnail_path = os.path.join(
         os.path.dirname(video_path), thumbnail_filename
@@ -143,12 +131,24 @@ def generate_thumbnail(video_path: str) -> str | None:
         "00:00:00.000",  # Capture frame at 0 milisecond
         "-vframes",
         "1",
+        "-vf",
+        "scale='if(gt(iw,ih),min(512,iw),-2)':'if(gt(iw,ih),-2,min(512,ih))'",
+        "-q:v",
+        "4",
         "-y",  # Overwrite output file if it exists
         thumbnail_path,
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        subprocess.run(
+            command, check=True, capture_output=True, text=True, timeout=30
+        )
         return thumbnail_path
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "Timed out generating video thumbnail for %s after 30s.",
+            video_path,
+        )
+        return None
     except FileNotFoundError:
         logger.error(
             "ffmpeg not found. Please ensure ffmpeg is installed and in "
@@ -157,6 +157,51 @@ def generate_thumbnail(video_path: str) -> str | None:
         return None
     except subprocess.CalledProcessError as e:
         logger.error("Error generating thumbnail: %s", e.stderr)
+        return None
+
+
+def generate_video_thumbnail_from_gcs(
+    gcs_service: GcsService,
+    gcs_uri: str,
+) -> str | None:
+    """Streams GCS video to temp disk, builds a JPEG thumbnail, and uploads."""
+    try:
+        new_blob_name = _derive_thumbnail_blob_name(
+            gcs_uri, VIDEO_THUMBNAIL_EXT
+        )
+        if not new_blob_name:
+            return None
+
+        blob_path = pathlib.Path(gcs_uri.split("/", 3)[3])
+        suffix = blob_path.suffix or ".mp4"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_video_path = os.path.join(temp_dir, f"video{suffix}")
+            bytes_written = 0
+            with open(temp_video_path, "wb") as video_file:
+                for chunk in (
+                    gcs_service.download_stream_from_gcs(gcs_uri) or ()
+                ):
+                    if chunk:
+                        video_file.write(chunk)
+                        bytes_written += len(chunk)
+            if bytes_written == 0:
+                return None
+
+            thumbnail_path = generate_thumbnail(temp_video_path)
+            if (
+                not thumbnail_path
+                or not os.path.exists(thumbnail_path)
+                or os.path.getsize(thumbnail_path) == 0
+            ):
+                return None
+
+            return gcs_service.upload_file_to_gcs(
+                local_path=thumbnail_path,
+                destination_blob_name=new_blob_name,
+                mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
+            )
+    except Exception as e:
+        logger.error("Video thumbnail generation failed: %s", e)
         return None
 
 
@@ -246,8 +291,6 @@ def extract_youtube_video_id(url: str | None) -> str | None:
         return None
     trimmed = url.strip()
     try:
-        from urllib.parse import urlparse, parse_qs
-
         parsed = urlparse(trimmed)
         hostname = parsed.hostname.lower() if parsed.hostname else ""
 
@@ -282,9 +325,7 @@ def extract_youtube_video_id(url: str | None) -> str | None:
 
 
 def get_youtube_aspect_ratio(url: str | None) -> str:
-    """Determines the aspect ratio of a YouTube video based on its URL (e.g., 9:16 for Shorts)."""
-    from src.common.base_dto import AspectRatioEnum
-
+    """Determines YouTube aspect ratio from URL (9:16 for Shorts)."""
     if not url:
         return AspectRatioEnum.RATIO_16_9.value
     if "/shorts/" in url:

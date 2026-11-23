@@ -37,6 +37,8 @@ from src.common.base_dto import (
     ReferenceImageTypeEnum,
 )
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     concatenate_videos,
     generate_thumbnail,
 )
@@ -1069,17 +1071,15 @@ def _process_video_in_background(
                                 local_thumbnail_name = thumbnail_path or ""
 
                                 # Upload thumbnail to GCS
-                                thumbnail_gcs_blob = (
-                                    f"thumbnails/{media_item_id}_{i}.png"
-                                )
                                 thumbnail_gcs_uri = ""
                                 if thumbnail_path:
+                                    thumbnail_gcs_blob = f"thumbnails/{media_item_id}_{i}{VIDEO_THUMBNAIL_EXT}"
                                     thumbnail_gcs_uri = (
                                         await asyncio.to_thread(
                                             gcs_service.upload_file_to_gcs,
                                             local_path=thumbnail_path,
                                             destination_blob_name=thumbnail_gcs_blob,
-                                            mime_type="image/png",
+                                            mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                                         )
                                         or ""
                                     )
@@ -1247,7 +1247,7 @@ def _process_video_in_background(
                                                         "thumbnails/",
                                                         "",
                                                     ),
-                                                    mime_type="image/png",
+                                                    mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                                                 )
                                                 or ""
                                             )
@@ -1502,8 +1502,8 @@ def _process_video_concatenation_in_background(
                             thumbnail_gcs_uri = await asyncio.to_thread(
                                 gcs_service.upload_file_to_gcs,
                                 local_path=thumbnail_path,
-                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb.png",
-                                mime_type="image/png",
+                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb{VIDEO_THUMBNAIL_EXT}",
+                                mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                             )
 
                         end_time = time.monotonic()

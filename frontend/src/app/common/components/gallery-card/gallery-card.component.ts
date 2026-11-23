@@ -52,7 +52,27 @@ export class GalleryCardComponent implements OnDestroy {
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
   }
-  @Input() item!: GalleryItem;
+  private _item!: GalleryItem;
+  private visitedIndices = new Set<number>([0]);
+
+  @Input()
+  set item(value: GalleryItem) {
+    const isSameItem =
+      this._item?.id === value?.id && this._item?.itemType === value?.itemType;
+    this._item = value;
+    if (!isSameItem) {
+      this.resetCarouselState();
+    }
+  }
+  get item(): GalleryItem {
+    return this._item;
+  }
+
+  private resetCarouselState(): void {
+    this.currentImageIndex = 0;
+    this.visitedIndices = new Set<number>([0]);
+    this.loadedMedia = {};
+  }
   @Input() isSelectionMode = false;
   @Input() isSelectorMode = false;
   @Input() isSelected = false;
@@ -198,14 +218,26 @@ export class GalleryCardComponent implements OnDestroy {
     event.stopPropagation();
     event.preventDefault();
     const total = this.displayUrls.length;
+    if (total <= 0) return;
     this.currentImageIndex = (this.currentImageIndex + 1) % total;
+    this.visitedIndices.add(this.currentImageIndex);
   }
 
   prevImageItem(event: Event) {
     event.stopPropagation();
     event.preventDefault();
     const total = this.displayUrls.length;
+    if (total <= 0) return;
     this.currentImageIndex = (this.currentImageIndex - 1 + total) % total;
+    this.visitedIndices.add(this.currentImageIndex);
+  }
+
+  shouldRenderSlide(index: number): boolean {
+    return index === this.currentImageIndex || this.visitedIndices.has(index);
+  }
+
+  trackByIndex(index: number): number {
+    return index;
   }
 
   onMediaLoad(index = 0): void {

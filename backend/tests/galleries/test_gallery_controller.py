@@ -190,3 +190,47 @@ def test_bulk_move_folders_success(client, mock_service):
     assert response.status_code == 200
     assert response.json() == {"moved_count": 1}
     mock_service.bulk_move.assert_called_once()
+
+
+def test_search_gallery_unauthenticated_returns_401():
+    app = FastAPI()
+    app.include_router(router)
+    anon_client = TestClient(app)
+
+    response = anon_client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 1, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 401
+
+
+def test_search_gallery_forbidden_workspace_returns_403(
+    mock_user, mock_service
+):
+    from fastapi import HTTPException
+
+    forbidden_auth = AsyncMock()
+    forbidden_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[GalleryService] = lambda: mock_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: forbidden_auth
+
+    forbidden_client = TestClient(app)
+    response = forbidden_client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 99, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 403
+    mock_service.get_paginated_gallery.assert_not_called()
+
+
+def test_search_gallery_invalid_payload_returns_422(client):
+    response = client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 0, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 422

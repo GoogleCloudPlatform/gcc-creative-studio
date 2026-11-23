@@ -389,7 +389,6 @@ def _process_vto_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 uri,
-                                mime_type.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)
@@ -1214,7 +1213,6 @@ def _process_image_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 uri,
-                                mime_type.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)
@@ -1558,7 +1556,6 @@ def _process_upload_upscale_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 final_upscaled_uri,
-                                MimeTypeEnum.IMAGE_PNG.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)

@@ -29,3 +29,15 @@ Source files:
   - Global `UserRoleEnum.ADMIN` users can manage any folder across all workspaces.
   - On `WorkspaceScopeEnum.PRIVATE` workspaces, the workspace owner (`workspace.owner_id == user.id`) manages all folders in that workspace.
   - On `WorkspaceScopeEnum.PUBLIC` workspaces, only global admins hold blanket folder management rights.
+
+## Query Pushdown, Presigned URL Caching & Background Auth Hooks
+
+- **Two-stage paginated search (`UnifiedGalleryRepository.query`):**
+  - Stage 1 counts matching IDs directly across `media_items` and `source_assets` base tables without constructing JSONB view rows.
+  - Stage 2 pushes per-branch `.order_by(...).limit(offset + limit)` down when both tables are queried, then filters `unified_gallery_view` by constant `item_type` and `ANY(ARRAY[...])` PK predicates so PostgreSQL uses `c8f4a2e91d05` partial covering indexes (`deleted_at IS NULL`).
+- **IAM presigned URL caching & lifecycle (`IamSignerCredentials`):**
+  - Defaults `DEFAULT_PRESIGNED_EXPIRATION_HOURS` to `6` hours with a 15-minute refresh buffer, an LRU cache bounded at `_MAX_URL_CACHE_SIZE = 10_000`, async singleflight deduplication on `_inflight_futures`, and a lazy 32-worker signing executor shut down cleanly by `shutdown_signing_executor()` during FastAPI teardown.
+- **Large source-asset thumbnail guard (`SourceAssetService.finalize_direct_upload`):**
+  - Enforces `MAX_INLINE_THUMBNAIL_BYTES` (50 MiB) by checking GCS object metadata (reloading if `blob.size is None`) before synchronous thumbnail generation; oversized assets log a warning and skip thumbnail creation instead of buffering large blobs in memory.
+- **Non-blocking post-auth workflow session sync (`schedule_post_auth_session`):**
+  - Offloads workflow token persistence and throttled dispatcher ticks onto a tracked background `asyncio.Task` with per-user singleflight dedup and queued token rotation, and drains cleanly via `drain_post_auth_tasks()` during shutdown.
