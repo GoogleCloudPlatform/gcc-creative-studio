@@ -234,9 +234,7 @@ class ProjectService:
                 detail="Not authorized to use this storyboard",
             )
         if write:
-            return await self.project_auth.authorize(
-                owner[1], user, write=True
-            )
+            return await self.project_auth.authorize(owner[1], user, write=True)
         return await self.project_auth.authorize(owner[1], user)
 
     async def resolve_project_for_write(

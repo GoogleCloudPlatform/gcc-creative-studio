@@ -504,7 +504,9 @@ class TestListAndCreateSessions:
     async def test_create_in_a_project_without_workspace_id(
         self, service, registry, project_service
     ):
-        project_service.get_project.return_value = _project(5, workspace_id=10)
+        project_service.resolve_project_for_write.return_value = _project(
+            5, workspace_id=10
+        )
         service._sessions_create = AsyncMock(
             return_value={"id": "s-new", "session_state": {"workspace_id": 10}}
         )
@@ -516,8 +518,26 @@ class TestListAndCreateSessions:
         registry.register.assert_awaited_once_with(
             "s-new", 5, USER.id, 10, "ads_x"
         )
-        project_service.resolve_project_for_write.assert_not_called()
+        project_service.resolve_project_for_write.assert_awaited_once_with(
+            USER, None, project_id=5
+        )
+        project_service.get_project.assert_not_called()
         assert dto.projectId == 5
+
+    @pytest.mark.anyio
+    async def test_create_in_a_project_without_workspace_id_refuses_viewer_403(
+        self, service, project_service
+    ):
+        project_service.resolve_project_for_write.side_effect = HTTPException(
+            status_code=403, detail="Viewers have read-only access"
+        )
+        service._sessions_create = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc:
+            await service.create_session(USER, "7", _request(), project_id=5)
+
+        assert exc.value.status_code == 403
+        service._sessions_create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_refused_project_creates_no_agent_session(

@@ -855,15 +855,12 @@ class AgentService:
             # Pick the chat's project before creating the agent session, so a
             # refused project never leaves an orphan session behind.
             project = None
-            if project_id is not None and workspace_id is None:
-                project = await self.project_service.get_project(
-                    current_user, project_id
-                )
-                workspace_id = project.workspace_id
-            elif workspace_id is not None:
+            if project_id is not None or workspace_id is not None:
                 project = await self.project_service.resolve_project_for_write(
                     current_user, workspace_id, project_id=project_id
                 )
+                if workspace_id is None:
+                    workspace_id = project.workspace_id
 
             agent_name = self._get_validated_agent_name(appName)
             agent_config = self._get_agent_config(appName)
@@ -1702,8 +1699,9 @@ class AgentService:
         app_name: str,
         user_id: str,
         session_id: str,
+        expected_workspace_id: int | None = None,
     ) -> dict:
-        """Fetches a session's state dict, authorising its workspace."""
+        """Fetches a session's state dict, authorising write access to its workspace."""
         session = await self._sessions_get(
             agent_name, app_name, user_id, session_id
         )
@@ -1720,9 +1718,22 @@ class AgentService:
             )
         s_state = dict(s_state) if isinstance(s_state, dict) else {}
         s_workspace_id = s_state.get("workspace_id")
+        if s_workspace_id is None:
+            row = await self.agent_session_repo.get(session_id)
+            if row is not None:
+                s_workspace_id = row.workspace_id
         if s_workspace_id is not None:
-            await self.workspace_auth.authorize(
-                workspace_id=int(s_workspace_id),
+            session_ws_id = int(s_workspace_id)
+            if (
+                expected_workspace_id is not None
+                and session_ws_id != expected_workspace_id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Session does not belong to the requested workspace.",
+                )
+            await self.workspace_auth.authorize_write(
+                workspace_id=session_ws_id,
                 user=current_user,
             )
         return s_state
@@ -1748,7 +1759,12 @@ class AgentService:
             self._ensure_session_idle(session_id)
             agent_name = self._get_validated_agent_name(app_name)
             state = await self._load_session_state(
-                current_user, agent_name, app_name, user_id, session_id
+                current_user,
+                agent_name,
+                app_name,
+                user_id,
+                session_id,
+                expected_workspace_id=payload.workspaceId,
             )
             asset_ref = (
                 {
@@ -1802,7 +1818,12 @@ class AgentService:
             self._ensure_session_idle(session_id)
             agent_name = self._get_validated_agent_name(app_name)
             state = await self._load_session_state(
-                current_user, agent_name, app_name, user_id, session_id
+                current_user,
+                agent_name,
+                app_name,
+                user_id,
+                session_id,
+                expected_workspace_id=workspace_id,
             )
             delta = build_character_removal_delta(state)
             await self._append_state_delta(
@@ -1848,7 +1869,12 @@ class AgentService:
                 return {"status": "busy", "detail": AGENT_BUSY_DETAIL}
             agent_name = self._get_validated_agent_name(app_name)
             state = await self._load_session_state(
-                current_user, agent_name, app_name, user_id, session_id
+                current_user,
+                agent_name,
+                app_name,
+                user_id,
+                session_id,
+                expected_workspace_id=storyboard.workspace_id,
             )
             try:
                 result = build_storyboard_delta(
@@ -1981,6 +2007,8 @@ class AgentService:
                             workspace_id=workspace_id,
                             user=current_user,
                         )
+            except HTTPException:
+                raise
             except Exception as e_err:
                 logger.warning(
                     f"Could not retrieve session workspace for chat authorization: {e_err}"

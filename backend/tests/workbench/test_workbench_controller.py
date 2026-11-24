@@ -39,6 +39,7 @@ from src.common.schema.media_item_model import (
     JobStatusEnum,
 )
 from src.workbench.workbench_service import WorkbenchService
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 
 def _project(project_id=7, workspace_id=1):
@@ -82,14 +83,23 @@ from src.workbench.workbench_controller import (
 )
 
 
+@pytest.fixture(name="mock_workspace_auth")
+def fixture_mock_workspace_auth():
+    return AsyncMock()
+
+
 @pytest.fixture(name="override_workbench_service", autouse=True)
 def fixture_override_workbench_service(
-    mock_workbench_service, mock_timeline_auth, mock_project_service
+    mock_workbench_service,
+    mock_timeline_auth,
+    mock_project_service,
+    mock_workspace_auth,
 ):
     """Overrides the WorkbenchService and security dependency in the app."""
     app.dependency_overrides[WorkbenchService] = lambda: mock_workbench_service
     app.dependency_overrides[TimelineAuth] = lambda: mock_timeline_auth
     app.dependency_overrides[ProjectService] = lambda: mock_project_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="mock"
     )
@@ -98,6 +108,7 @@ def fixture_override_workbench_service(
         WorkbenchService,
         TimelineAuth,
         ProjectService,
+        WorkspaceAuth,
         security,
     ):
         app.dependency_overrides.pop(dependency, None)
@@ -473,6 +484,7 @@ class TestTimelineAuthorization:
         mock_workbench_service,
         mock_project_service,
         mock_timeline_auth,
+        mock_workspace_auth,
     ):
         mock_timeline_auth.authorize.return_value = TimelineAccess(
             timeline_id=4,
@@ -494,6 +506,38 @@ class TestTimelineAuthorization:
         # No owning project to follow: the payload's value is kept.
         assert updated.workspace_id == "3"
         mock_project_service.authorize_storyboard.assert_not_called()
+        mock_workspace_auth.authorize_write.assert_awaited_once()
+        assert (
+            mock_workspace_auth.authorize_write.await_args.kwargs[
+                "workspace_id"
+            ]
+            == 3
+        )
+
+    def test_update_of_unattributed_legacy_timeline_rejects_unauthorized_workspace_403(
+        self,
+        admin_client,
+        mock_workbench_service,
+        mock_timeline_auth,
+        mock_workspace_auth,
+    ):
+        mock_timeline_auth.authorize.return_value = TimelineAccess(
+            timeline_id=4,
+            project_id=None,
+            storyboard_id=None,
+            user_id=None,
+            workspace_id=None,
+        )
+        mock_workspace_auth.authorize_write.side_effect = HTTPException(
+            status_code=403,
+            detail="Cannot access another user's personal workspace",
+        )
+        response = admin_client.put(
+            "/api/workbench/timelines/4",
+            json={"workspace_id": "99", "title": "T"},
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_workbench_service.update_timeline.assert_not_awaited()
 
     def test_require_workspace_id_validation(self):
         assert _require_workspace_id(7, status_code=403) == 7

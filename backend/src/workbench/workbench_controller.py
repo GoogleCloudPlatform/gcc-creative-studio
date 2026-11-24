@@ -35,6 +35,7 @@ from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.projects.project_service import ProjectService
 from src.workbench.timeline_auth_guard import TimelineAuth
 from src.workbench.workbench_service import WorkbenchService
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 router = APIRouter(
     prefix="/api/workbench",
@@ -177,6 +178,7 @@ async def update_timeline(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     timeline_auth: TimelineAuth = Depends(),
     project_service: ProjectService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
     access = await timeline_auth.authorize(
         timeline_id, current_user, write=True
@@ -208,9 +210,12 @@ async def update_timeline(
     if project_workspace_id is not None:
         timeline_update.workspace_id = str(project_workspace_id)
     else:
-        _require_workspace_id(
+        ws_id = _require_workspace_id(
             timeline_update.workspace_id,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+        await workspace_auth.authorize_write(
+            workspace_id=ws_id, user=current_user
         )
     timeline = await service.update_timeline(
         timeline_id, timeline_update, current_user=current_user
