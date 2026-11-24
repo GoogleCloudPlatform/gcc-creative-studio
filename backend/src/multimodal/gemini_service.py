@@ -401,6 +401,9 @@ class GeminiService:
                 "Invalid target_type. Must be IMAGE, VIDEO, or AUDIO."
             )
 
+        if not isinstance(dto, (CreateImagenDto, CreateVeoDto)):
+            return dto.prompt
+
         # --- Prompt Enhancement for Gemini Image-to-Image ---
         # This logic is placed here to ensure that any call to enhance a prompt
         # for Gemini Flash i2i will automatically include these critical
