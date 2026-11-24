@@ -2705,6 +2705,7 @@ class TestReferenceAudioIteration:
                 },
             )
 
+
 class TestAudioServiceRevisionLineage:
     """Behavioral tests for audio parent_media_item_id authorization and lineage."""
 
@@ -2735,7 +2736,7 @@ class TestAudioServiceRevisionLineage:
         with (
             patch(
                 "src.audios.audio_service.ensure_can_reference_inputs",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(return_value=set()),
             ) as ensure_refs,
             patch(
                 "src.audios.audio_service.resolve_generation_context",

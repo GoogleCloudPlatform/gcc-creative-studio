@@ -516,6 +516,10 @@ export class MediaDetailComponent implements OnDestroy {
       return;
     }
     if (mime.startsWith('audio/')) {
+      const model = take.model;
+      if (model && !model.toLowerCase().startsWith('lyria')) {
+        return;
+      }
       this.handleIterateAudio({mediaItem: take, selectedIndex: selectedIdx});
       return;
     }
@@ -811,9 +815,10 @@ export class MediaDetailComponent implements OnDestroy {
     mediaItem: GalleryItem | MediaItem;
     selectedIndex: number;
   }): void {
-    if (!this.mediaItem) return;
+    const targetItem = event.mediaItem ?? this.mediaItem;
+    if (!targetItem) return;
     const remixState = buildAudioIterationRemixState(
-      this.mediaItem,
+      targetItem,
       event.selectedIndex,
     );
     void this.router.navigate(['/audio'], {state: {remixState}});

@@ -843,6 +843,40 @@ describe('MediaDetailComponent', () => {
       expect(mockGalleryService.getItemRevisions).toHaveBeenCalledWith(120);
     });
 
+    it('routes Lyria audio revision takes to /audio and ignores non-Lyria TTS takes', () => {
+      const lyriaTake: GalleryItem = {
+        ...makeTake(130, 1),
+        mimeType: 'audio/wav',
+        model: 'lyria-3-clip-preview',
+        presignedUrls: ['https://example.com/audio-130.wav'],
+      };
+      const ttsTake: GalleryItem = {
+        ...makeTake(131, 1),
+        mimeType: 'audio/wav',
+        model: 'chirp-3-hd',
+        presignedUrls: ['https://example.com/audio-131.wav'],
+      };
+      component.mediaItem = lyriaTake;
+      mockRouter.navigate.calls.reset();
+
+      component.onEditFromRevisionTake(lyriaTake);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/audio'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              referenceAudio: jasmine.objectContaining({id: 130}),
+            }),
+          },
+        }),
+      );
+
+      mockRouter.navigate.calls.reset();
+      component.mediaItem = ttsTake;
+      component.onEditFromRevisionTake(ttsTake);
+      expect(mockRouter.navigate).not.toHaveBeenCalled();
+    });
+
     it('renders revisionHistoryError banner and retries loading on Retry click', () => {
       spyOn(console, 'error');
       mockGalleryService.getItemRevisions.calls.reset();
