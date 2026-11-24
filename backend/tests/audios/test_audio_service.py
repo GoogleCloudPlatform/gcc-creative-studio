@@ -35,6 +35,7 @@ from src.audios.audio_service import (
     LYRIA_3_CONTENT_BLOCKED_MESSAGE,
     LYRIA_3_CONTENT_BLOCKED_NO_RETRY_MESSAGE,
     MAX_AUDIO_ITERATION_STEPS,
+    AudioGenerationError,
     AudioService,
     _build_lyria3_prompt,
     _extract_lyria3_audio,
@@ -43,6 +44,7 @@ from src.audios.audio_service import (
     _is_lyria3_content_blocked,
     _is_valid_int_seed,
     _process_audio_in_background,
+    _resolve_lyria3_reference_images,
     _resolve_reference_audio,
     _simplify_lyria3_prompt,
 )
@@ -296,6 +298,177 @@ class TestAudioServiceMethods:
         assert response.workspace_id == 10
         submitted_dto = mock_executor.submit.call_args.args[2]
         assert submitted_dto.workspace_id == 10
+
+    @pytest.mark.anyio
+    async def test_start_audio_generation_job_authorizes_cross_workspace_inputs(
+        self,
+        _mock_generation_workspace,
+        audio_service,
+        mock_media_repo,
+        sample_user,
+    ):
+        repo_cls, auth_cls = _mock_generation_workspace
+        personal_ws = MagicMock(id=10, scope="personal")
+        auth_cls.return_value.authorize.return_value = personal_ws
+        repo_cls.return_value.ensure_personal_workspace.return_value = (
+            personal_ws
+        )
+
+        async def _create(item):
+            item.id = 902
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        dto = CreateAudioDto(
+            workspace_id=10,
+            prompt="Add brighter synth pads",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            source_asset_ids=[71],
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=81, media_index=0, role=AssetRoleEnum.INPUT
+                )
+            ],
+            reference_audio=AssetReferenceDto(
+                id=82, type="media_item", index=0
+            ),
+        )
+
+        with patch(
+            "src.audios.audio_service.ensure_can_reference_inputs",
+            new=AsyncMock(return_value={30, 40}),
+        ) as mock_ref_auth:
+            await audio_service.start_audio_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        mock_ref_auth.assert_awaited_once_with(
+            mock_media_repo.db,
+            sample_user,
+            media_item_ids=[81, 82],
+            source_asset_ids=[71],
+        )
+        allowed_ws = mock_executor.submit.call_args.args[5]
+        assert allowed_ws == frozenset({10, 30, 40})
+
+        # Unauthorized reference input fails closed with 403 before creating a job row.
+        mock_media_repo.create.reset_mock()
+        mock_executor.submit.reset_mock()
+        with patch(
+            "src.audios.audio_service.ensure_can_reference_inputs",
+            new=AsyncMock(
+                side_effect=HTTPException(status_code=403, detail="Forbidden")
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await audio_service.start_audio_generation_job(
+                    request_dto=dto,
+                    user=sample_user,
+                    executor=mock_executor,
+                )
+        assert exc.value.status_code == 403
+        mock_media_repo.create.assert_not_awaited()
+        mock_executor.submit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_cross_workspace_audio_and_image_references_resolve_for_personal_output(
+        self,
+    ):
+        media_repo = AsyncMock()
+        asset_repo = AsyncMock()
+
+        shared_audio = SimpleNamespace(
+            id=82,
+            workspace_id=30,
+            deleted_at=None,
+            status=JobStatusEnum.COMPLETED,
+            gcs_uris=["gs://bucket/shared-track.wav"],
+            mime_type=MimeTypeEnum.AUDIO_WAV,
+            prompt="Warm lo-fi beat",
+            original_prompt="Warm lo-fi beat",
+            audio_analysis=None,
+            seed=None,
+        )
+        shared_image_item = SimpleNamespace(
+            id=81,
+            workspace_id=30,
+            deleted_at=None,
+            status=JobStatusEnum.COMPLETED,
+            gcs_uris=["gs://bucket/shared-cover.png"],
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+        )
+        shared_image_asset = SimpleNamespace(
+            id=71,
+            workspace_id=30,
+            deleted_at=None,
+            scope=AssetScopeEnum.PRIVATE,
+            gcs_uri="gs://bucket/shared-ref.png",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+        )
+        media_repo.get_by_id.side_effect = lambda mid: (
+            shared_audio if mid == 82 else shared_image_item
+        )
+        asset_repo.get_by_id.return_value = shared_image_asset
+
+        # Worker DTO targets personal workspace 10 while inputs live in authorized shared workspace 30.
+        worker_dto = CreateAudioDto(
+            workspace_id=10,
+            prompt="Iterate with acoustic guitar",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            source_asset_ids=[71],
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=81, media_index=0, role=AssetRoleEnum.INPUT
+                )
+            ],
+            reference_audio=AssetReferenceDto(
+                id=82, type="media_item", index=0
+            ),
+        )
+        allowed = frozenset({10, 30})
+
+        img_inputs, asset_links, media_links = (
+            await _resolve_lyria3_reference_images(
+                worker_dto,
+                media_repo,
+                asset_repo,
+                allowed_workspace_ids=allowed,
+            )
+        )
+        assert len(img_inputs) == 2
+        assert [a.asset_id for a in asset_links] == [71]
+        assert [m.media_item_id for m in media_links] == [81]
+
+        ref_ctx, ref_asset, ref_media = await _resolve_reference_audio(
+            worker_dto, media_repo, asset_repo, allowed_workspace_ids=allowed
+        )
+        assert ref_ctx["uri"] == "gs://bucket/shared-track.wav"
+        assert ref_asset is None
+        assert ref_media is not None and ref_media.media_item_id == 82
+
+        # Without workspace 30 authorized, both resolvers reject fail-closed.
+        with pytest.raises(
+            AudioGenerationError, match="not found in this workspace"
+        ):
+            await _resolve_reference_audio(
+                worker_dto,
+                media_repo,
+                asset_repo,
+                allowed_workspace_ids=frozenset({10}),
+            )
+        with pytest.raises(
+            AudioGenerationError, match="not found in this workspace"
+        ):
+            await _resolve_lyria3_reference_images(
+                worker_dto,
+                media_repo,
+                asset_repo,
+                allowed_workspace_ids=frozenset({10}),
+            )
 
 
 class TestBackgroundWorkers:

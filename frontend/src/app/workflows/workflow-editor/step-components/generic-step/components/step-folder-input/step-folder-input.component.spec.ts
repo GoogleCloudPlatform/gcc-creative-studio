@@ -151,7 +151,10 @@ describe('StepFolderInputComponent', () => {
         {provide: FolderService, useValue: folderServiceSpy},
         {
           provide: WorkspaceStateService,
-          useValue: {activeWorkspaceId$: activeWorkspaceId$.asObservable()},
+          useValue: {
+            activeWorkspaceId$: activeWorkspaceId$.asObservable(),
+            activeWorkspace: () => null,
+          },
         },
       ],
     }).compileComponents();
@@ -637,6 +640,13 @@ describe('StepFolderInputComponent', () => {
         string,
         unknown
       >;
+      const prev = wsSpy['activeWorkspace'];
+      // Before workspaces load (null), do not flash the shared-workspace notice.
+      const coldOutput = mountOutput(2);
+      expect(
+        query(coldOutput.fixture, '.output-folder-personal-notice'),
+      ).toBeNull();
+
       wsSpy['activeWorkspace'] = () => ({
         id: 5,
         name: 'Team Space',
@@ -662,7 +672,7 @@ describe('StepFolderInputComponent', () => {
           query(loop.fixture, '.output-folder-personal-notice'),
         ).toBeNull();
       } finally {
-        delete wsSpy['activeWorkspace'];
+        wsSpy['activeWorkspace'] = prev;
       }
     });
   });

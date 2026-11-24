@@ -148,11 +148,8 @@ export class StepFolderInputComponent {
     if (this.inputName() !== OUTPUT_FOLDER_INPUT_NAME) {
       return false;
     }
-    const ws = this.workspaceStateService.activeWorkspace?.();
-    if (ws) {
-      return ws.scope !== WorkspaceScope.PERSONAL;
-    }
-    return this.workspaceStateService.isPersonalWorkspaceActive?.() === false;
+    const ws = this.workspaceStateService.activeWorkspace();
+    return ws ? ws.scope !== WorkspaceScope.PERSONAL : false;
   });
 
   /** Active workspace; its folder tree resolves the saved folder. */
