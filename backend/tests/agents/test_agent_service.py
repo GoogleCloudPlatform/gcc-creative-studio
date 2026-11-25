@@ -221,8 +221,8 @@ async def test_chat_secure_auth_fallback():
                 request=request,
             )
 
-        # Verify that authorize was called with the resolved workspace ID (10)
-        mock_workspace_auth.authorize.assert_called_once_with(
+        # Verify that authorize_write was called with the resolved workspace ID (10)
+        mock_workspace_auth.authorize_write.assert_called_once_with(
             workspace_id=10,
             user=user,
         )
@@ -902,14 +902,18 @@ async def test_chat_rejects_second_run_while_first_is_active():
 
 
 def _character_service():
+    agent_session_repo = MagicMock()
+    agent_session_repo.get = AsyncMock(return_value=None)
     service = AgentService(
         agent_repo=MagicMock(),
         workspace_service=MagicMock(),
         storyboard_repo=MagicMock(),
         workspace_auth=MagicMock(),
         project_service=MagicMock(),
+        agent_session_repo=agent_session_repo,
     )
     service.workspace_auth.authorize = AsyncMock()
+    service.workspace_auth.authorize_write = AsyncMock()
     service._get_validated_agent_name = MagicMock(return_value="agent")
     service._append_state_delta = AsyncMock()
     return service
@@ -990,8 +994,9 @@ async def test_update_session_character_writes_delta_and_returns_it():
         service._append_state_delta.assert_awaited_once_with(
             "agent", "ads_x", "1", "s1", delta
         )
-        # Authorised against the payload workspace AND the session's own.
-        assert service.workspace_auth.authorize.await_count == 2
+        # Authorised for write against the payload workspace AND the session's own.
+        assert service.workspace_auth.authorize_write.await_count == 2
+        assert service.workspace_auth.authorize.await_count == 0
 
 
 @pytest.mark.anyio
@@ -1090,9 +1095,70 @@ async def test_load_session_state_reads_object_sessions():
             user, "agent", "ads_x", "1", "s1"
         )
         assert state == {"workspace_id": 3, "x": 1}
-        service.workspace_auth.authorize.assert_awaited_once_with(
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=3, user=user
         )
+
+
+@pytest.mark.anyio
+async def test_update_and_remove_character_reject_workspace_mismatch_and_viewer():
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    with patch("vertexai.Client"):
+        # Bypass attempt: caller sends workspaceId=99 (personal), session belongs to 7 (shared)
+        service = _character_service()
+        service._sessions_get = AsyncMock(
+            return_value={"id": "s1", "state": _character_state()}
+        )
+        payload = _update_payload()
+        payload.workspaceId = 99
+        with pytest.raises(HTTPException) as exc_info:
+            await service.update_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="s1",
+                payload=payload,
+            )
+        assert exc_info.value.status_code == 403
+        service._append_state_delta.assert_not_called()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.remove_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="s1",
+                workspace_id=99,
+            )
+        assert exc_info.value.status_code == 403
+        service._append_state_delta.assert_not_called()
+
+        # Registry fallback when session state omits workspace_id: viewer write denied (403)
+        service2 = _character_service()
+        service2._sessions_get = AsyncMock(
+            return_value={"id": "s2", "state": {"parameters": {}}}
+        )
+        reg_row = MagicMock()
+        reg_row.workspace_id = 7
+        service2.agent_session_repo.get = AsyncMock(return_value=reg_row)
+        service2.workspace_auth.authorize_write = AsyncMock(
+            side_effect=HTTPException(
+                status_code=403, detail="Viewer read-only"
+            )
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await service2._load_session_state(
+                MagicMock(spec=UserModel),
+                "agent",
+                "ads_x",
+                "1",
+                "s2",
+                expected_workspace_id=7,
+            )
+        assert exc_info.value.status_code == 403
+        service2.workspace_auth.authorize_write.assert_awaited_once()
 
 
 @pytest.mark.anyio

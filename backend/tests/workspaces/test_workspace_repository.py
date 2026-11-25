@@ -221,3 +221,44 @@ class TestWorkspaceRepository:
         assert response is not None
         assert len(mock_asset.members) == 1
         db_session_mock.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_ensure_personal_workspace_and_map_role(
+        self, workspace_repo, db_session_mock
+    ):
+        import datetime
+        from src.users.user_model import UserModel
+        from src.workspaces.schema.workspace_model import (
+            Workspace,
+            WorkspaceMemberAssociation,
+            WorkspaceRoleEnum,
+        )
+
+        now = datetime.datetime.now(datetime.UTC)
+        user = UserModel(
+            id=42, email="u42@example.com", name="User 42", roles=[]
+        )
+        personal = Workspace(
+            id=7,
+            name="My Workspace",
+            owner_id=42,
+            scope="personal",
+            created_at=now,
+            updated_at=now,
+        )
+        personal.members = [
+            WorkspaceMemberAssociation(
+                workspace_id=7,
+                user_id=42,
+                role=WorkspaceRoleEnum.OWNER,
+            )
+        ]
+        mock_res = MagicMock()
+        mock_res.scalar_one_or_none.return_value = personal
+        db_session_mock.execute.return_value = mock_res
+
+        ws = await workspace_repo.ensure_personal_workspace(user)
+        assert ws.id == 7
+        assert ws.current_user_role == WorkspaceRoleEnum.OWNER
+        mapped = workspace_repo._map_to_schema(personal, user_id=42)
+        assert mapped.current_user_role == WorkspaceRoleEnum.OWNER

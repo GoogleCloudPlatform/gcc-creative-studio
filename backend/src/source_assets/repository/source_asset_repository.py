@@ -27,6 +27,10 @@ from src.source_assets.schema.source_asset_model import (
     SourceAsset,
     SourceAssetModel,
 )
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceScopeEnum,
+)
 
 
 class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
@@ -75,9 +79,24 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
         self,
         search_dto: SourceAssetSearchDto,
         target_user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> PaginationResponseDto[SourceAssetModel]:
         """Performs a paginated query for assets."""
-        query = select(self.model)
+        query = select(self.model).where(self.model.deleted_at.is_(None))
+
+        if not search_dto.workspace_id:
+            query = query.join(
+                Workspace, self.model.workspace_id == Workspace.id
+            )
+            if requesting_user_id is not None:
+                query = query.where(
+                    (Workspace.scope != WorkspaceScopeEnum.PERSONAL.value)
+                    | (Workspace.owner_id == requesting_user_id)
+                )
+            else:
+                query = query.where(
+                    Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+                )
 
         # Apply filters
         if search_dto.mime_type:
@@ -115,12 +134,12 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
                 ),
             )
 
-        if hasattr(search_dto, "workspace_id") and search_dto.workspace_id:
+        if search_dto.workspace_id:
             query = query.where(
                 self.model.workspace_id == search_dto.workspace_id
             )
 
-        if hasattr(search_dto, "tags") and search_dto.tags:
+        if search_dto.tags:
             from sqlalchemy import exists
             from src.tags.schema.tags_model import source_asset_tags, Tag
 
@@ -140,7 +159,7 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
 
         # Order and Pagination
         query = query.order_by(self.model.created_at.desc())
-        query = query.limit(search_dto.limit)
+        query = query.offset(search_dto.offset).limit(search_dto.limit)
 
         # Execute
         result = await self.db.execute(query)

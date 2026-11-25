@@ -131,6 +131,16 @@
       </button>
     }
   </div>
+} @else if (!data.canEdit) {
+  <div mat-dialog-content class="empty-read-only-state">
+    <p class="text-sm text-gray-300">
+      No brand guidelines have been uploaded for this workspace yet. Only
+      workspace owners and admins can upload or update brand guidelines.
+    </p>
+  </div>
+  <div mat-dialog-actions align="end">
+    <button mat-button (click)="onCancel()">Close</button>
+  </div>
 } @else {
   <div mat-dialog-content>
     <p>

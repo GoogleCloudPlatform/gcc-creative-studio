@@ -58,36 +58,45 @@
     </div>
 
     <div class="menu-items">
-      <button
-        mat-button
+      <div
         *ngFor="let option of options; trackBy: trackByOption"
-        (click)="selectOption(option)"
         [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
         [class.is-disabled]="option.disabled"
-        [disabled]="!!option.disabled"
-        [disabledInteractive]="true"
-        class="studio-menu-item"
+        class="studio-menu-item flex items-center gap-1"
         [matTooltip]="option.tooltip || ''"
       >
-        <div
-          class="flex items-center justify-start gap-4 w-full h-full relative text-left"
+        <button
+          mat-button
+          type="button"
+          [class.is-disabled]="option.disabled"
+          [disabled]="!!option.disabled"
+          [disabledInteractive]="true"
+          (click)="selectOption(option)"
+          class="studio-menu-item-btn flex-1 min-w-0 h-full text-left"
         >
-          <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
-          <!-- Color Dot -->
-          <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
-          <!-- Label in the Middle -->
-          <span class="option-label truncate text-left">{{
-            option.label
-          }}</span>
-          <!-- Status Badge -->
-          <span *ngIf="option.badge" class="option-badge">{{ option.badge }}</span>
-          <!-- Delete Button -->
-          <!-- <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
-                      class="delete-btn">
-            <mat-icon>delete</mat-icon>
-          </button> -->
+          <div class="flex items-center justify-start gap-4 w-full h-full relative text-left">
+            <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
+            <!-- Color Dot -->
+            <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
+            <!-- Label in the Middle -->
+            <span class="option-label truncate text-left">{{
+              option.label
+            }}</span>
+            <!-- Status Badge -->
+            <span *ngIf="option.badge" class="option-badge">{{ option.badge }}</span>
           </div>
-      </button>
+        </button>
+        <!-- Delete Button -->
+        <button
+          mat-icon-button
+          type="button"
+          *ngIf="deletable && option.deletable !== false"
+          (click)="onDeleteOption(option, $event)"
+          class="delete-btn shrink-0"
+        >
+          <mat-icon>delete</mat-icon>
+        </button>
+      </div>
       <!-- Load More Button -->
       <button mat-button *ngIf="hasMore" (click)="loadMore.emit(); $event.stopPropagation();"
         class="studio-menu-item justify-center" style="color: #a8c7fa !important;">

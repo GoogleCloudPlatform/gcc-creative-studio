@@ -76,8 +76,8 @@ def fixture_project_repo():
 @pytest.fixture(name="project_auth")
 def fixture_project_auth():
     project_auth = AsyncMock()
-    project_auth.authorize.side_effect = lambda project_id, user: _project(
-        project_id
+    project_auth.authorize.side_effect = (
+        lambda project_id, user, *, write=False: _project(project_id)
     )
     return project_auth
 
@@ -201,7 +201,9 @@ class TestCreateStoryboard:
         repo.find_latest_by_session.return_value = _existing(14)
         repo.get_owner_and_project.return_value = (1, 60)
         project_auth.authorize.side_effect = (
-            lambda project_id, user: calls.append(("authorize", project_id))
+            lambda project_id, user, *, write=False: calls.append(
+                ("authorize", project_id)
+            )
             or _project(project_id)
         )
         repo.update.side_effect = lambda storyboard_id, data: calls.append(
@@ -236,7 +238,7 @@ class TestCreateStoryboard:
         repo.find_latest_by_session.return_value = _existing(14)
         repo.get_owner_and_project.return_value = (1, 60)
         project_repo.get_by_id.return_value = _project(60)
-        workspace_auth.authorize.side_effect = HTTPException(
+        workspace_auth.authorize_write.side_effect = HTTPException(
             status_code=403,
             detail="You do not have permission to access this workspace.",
         )
@@ -247,7 +249,7 @@ class TestCreateStoryboard:
             )
 
         assert exc.value.status_code == 403
-        workspace_auth.authorize.assert_awaited_once_with(
+        workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         repo.update.assert_not_called()
@@ -309,7 +311,7 @@ class TestProjects:
         )
 
         assert project.id == 7
-        workspace_auth.authorize.assert_awaited_once()
+        workspace_auth.authorize_write.assert_awaited_once()
         project_repo.create_project.assert_awaited_once_with(10, 1, "Spring")
 
     @pytest.mark.anyio
@@ -336,7 +338,7 @@ class TestProjects:
     async def test_rename_project(self, service, project_auth, project_repo):
         await service.rename_project(USER, 7, "Renamed")
 
-        project_auth.authorize.assert_awaited_with(7, USER)
+        project_auth.authorize.assert_any_await(7, USER, write=True)
         project_repo.update.assert_awaited_once_with(7, {"name": "Renamed"})
 
     @pytest.mark.anyio
@@ -350,7 +352,7 @@ class TestProjects:
         registry.app_names_for_project.return_value = {"s1": "ads_x"}
 
         assert await service.prepare_project_delete(USER, 7) == {"s1": "ads_x"}
-        project_auth.authorize.assert_awaited_once_with(7, USER)
+        project_auth.authorize.assert_awaited_once_with(7, USER, write=True)
         registry.app_names_for_project.assert_awaited_once_with(7)
 
     @pytest.mark.anyio
@@ -364,7 +366,7 @@ class TestProjects:
 
         await service.delete_project(USER, 7)
 
-        project_auth.authorize.assert_awaited_once_with(7, USER)
+        project_auth.authorize.assert_awaited_once_with(7, USER, write=True)
         project_repo.delete.assert_awaited_once_with(7)
 
     @pytest.mark.anyio
@@ -551,7 +553,7 @@ class TestResolveProjectForWrite:
         project = await service.resolve_project_for_write(USER, 10)
 
         assert project.id == 50
-        workspace_auth.authorize.assert_awaited_once_with(
+        workspace_auth.authorize_write.assert_awaited_once_with(
             workspace_id=10, user=USER
         )
         registry.adopt.assert_not_called()

@@ -18,6 +18,7 @@ import {Component, Inject, OnInit} from '@angular/core';
 import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
 import {FolderTreeNode} from '../../models/folder.model';
 import {FolderService} from '../../services/folder.service';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {WorkspaceService} from '../../../services/workspace/workspace.service';
 import {forkJoin} from 'rxjs';
 import {WorkspaceScope} from '../../models/workspace.model';
@@ -64,12 +65,14 @@ export class MoveToFolderDialogComponent implements OnInit {
   isLoading = true;
   searchQuery = '';
   selectedTabIndex = 0;
+  hideWorkspaceTab = false;
 
   constructor(
     public dialogRef: MatDialogRef<MoveToFolderDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: MoveToFolderDialogData,
     private folderService: FolderService,
     private workspaceService: WorkspaceService,
+    private workspaceState: WorkspaceStateService,
   ) {}
 
   ngOnInit(): void {
@@ -83,14 +86,29 @@ export class MoveToFolderDialogComponent implements OnInit {
       this.workspaceService.getWorkspaces(),
     ]).subscribe({
       next: ([tree, workspaceList]) => {
-        // process workspaces
-        this.workspaceOptions = workspaceList.map(workspace => ({
-          id: workspace.id,
-          name: workspace.name,
-          scope:
-            workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'private',
-          disabled: workspace.id === this.data.workspaceId,
-        }));
+        const sourceWorkspace = workspaceList.find(
+          w => w.id === this.data.workspaceId,
+        );
+        this.hideWorkspaceTab =
+          sourceWorkspace?.scope === WorkspaceScope.PERSONAL;
+        if (this.hideWorkspaceTab && this.selectedTabIndex === 1) {
+          this.selectedTabIndex = 0;
+        }
+        // Filter out PERSONAL and non-editable workspaces so only writable shared
+        // targets can be selected for cross-workspace moves.
+        this.workspaceOptions = workspaceList
+          .filter(
+            workspace =>
+              workspace.scope !== WorkspaceScope.PERSONAL &&
+              this.workspaceState.canEditWorkspace(workspace),
+          )
+          .map(workspace => ({
+            id: workspace.id,
+            name: workspace.name,
+            scope:
+              workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'private',
+            disabled: workspace.id === this.data.workspaceId,
+          }));
 
         // Helper functions to calculate subtree depth and enforce max depth
         const getSubtreeHeight = (node: FolderTreeNode): number => {

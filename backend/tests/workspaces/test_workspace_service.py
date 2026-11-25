@@ -206,6 +206,7 @@ class TestInviteUserToWorkspace:
         )
 
         assert result == updated_workspace
+        assert result.current_user_role == WorkspaceRoleEnum.OWNER
         mock_workspace_repo.add_member_to_workspace.assert_called_once()
         mock_email_service.send_workspace_invitation_email.assert_called_once()
 
@@ -220,19 +221,38 @@ class TestListWorkspacesForUser:
         mock_workspace_repo,
         mock_user,
     ):
-        w1 = WorkspaceModel(id=1, name="Private 1", owner_id=mock_user.id)
+        from src.workspaces.schema.workspace_model import (
+            WorkspaceRoleEnum,
+            WorkspaceScopeEnum,
+        )
+
+        personal = WorkspaceModel(
+            id=10,
+            name="My Workspace",
+            owner_id=mock_user.id,
+            scope=WorkspaceScopeEnum.PERSONAL,
+        )
+        w1 = WorkspaceModel(
+            id=1,
+            name="Private 1",
+            owner_id=mock_user.id,
+            scope=WorkspaceScopeEnum.PRIVATE,
+        )
         w2 = WorkspaceModel(
             id=2,
             name="Public 1",
             owner_id=99,
+            scope=WorkspaceScopeEnum.PUBLIC,
         )  # Public, owned by someone else
 
+        mock_workspace_repo.ensure_personal_workspace.return_value = personal
         mock_workspace_repo.find_by_member_id.return_value = [w1]
         mock_workspace_repo.get_all_public_workspaces.return_value = [w2]
 
         result = await workspace_service.list_workspaces_for_user(mock_user)
 
-        assert len(result) == 2
-        ids = [w.id for w in result]
-        assert 1 in ids
-        assert 2 in ids
+        assert len(result) == 3
+        assert [w.id for w in result] == [10, 1, 2]
+        assert result[0].current_user_role == WorkspaceRoleEnum.OWNER
+        assert result[1].current_user_role == WorkspaceRoleEnum.OWNER
+        assert result[2].current_user_role == WorkspaceRoleEnum.EDITOR

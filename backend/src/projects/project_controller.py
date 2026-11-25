@@ -207,7 +207,9 @@ async def update_storyboard(
     project_service: ProjectService = Depends(),
     agent_service: AgentService = Depends(),
 ):
-    await project_service.authorize_storyboard(current_user, storyboard_id)
+    await project_service.authorize_storyboard(
+        current_user, storyboard_id, write=True
+    )
     updated_storyboard = await project_service.update_storyboard(
         storyboard_id, storyboard_update
     )
@@ -264,6 +266,8 @@ async def delete_storyboard(
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
 ):
-    await project_service.authorize_storyboard(current_user, storyboard_id)
+    await project_service.authorize_storyboard(
+        current_user, storyboard_id, write=True
+    )
     await project_service.delete_storyboard(storyboard_id)
     return None

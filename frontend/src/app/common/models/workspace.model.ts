@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-import {WorkspaceMember} from './workspace-member.model';
+import {WorkspaceMember, WorkspaceRole} from './workspace-member.model';
 
 export enum WorkspaceScope {
   PUBLIC = 'public',
   PRIVATE = 'private',
+  PERSONAL = 'personal',
 }
 
 export interface Workspace {
@@ -28,4 +29,5 @@ export interface Workspace {
   scope: WorkspaceScope;
   members: WorkspaceMember[];
   memberIds: string[];
+  currentUserRole?: WorkspaceRole | null;
 }

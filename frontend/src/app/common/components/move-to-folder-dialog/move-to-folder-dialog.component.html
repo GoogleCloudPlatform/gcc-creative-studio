@@ -85,7 +85,8 @@
             }
           </div>
         </mat-tab>
-        <mat-tab label="Workspace">
+        @if (!hideWorkspaceTab) {
+          <mat-tab label="Workspace">
           <div class="folder-list custom-scrollbar">
             @for (opt of filteredWorkspaces; track opt.id) {
               <div
@@ -120,7 +121,8 @@
               </div>
             }
           </div>
-        </mat-tab>
+          </mat-tab>
+        }
       </mat-tab-group>
     }
   </div>

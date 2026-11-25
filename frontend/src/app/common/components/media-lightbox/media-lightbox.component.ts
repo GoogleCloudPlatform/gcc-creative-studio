@@ -49,9 +49,17 @@ import {
 } from '../../../utils/handleMessageSnackbar';
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {TagsService} from '../../services/tags.service';
-import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
-import {MoveToFolderDialogComponent} from '../move-to-folder-dialog/move-to-folder-dialog.component';
+import {
+  PermissionUser,
+  WorkspaceStateService,
+} from '../../../services/workspace/workspace-state.service';
+import {
+  MoveToFolderDialogComponent,
+  MoveToFolderDialogResult,
+} from '../move-to-folder-dialog/move-to-folder-dialog.component';
 import {FolderService} from '../../services/folder.service';
+import {GalleryService} from '../../../gallery/gallery.service';
+import {UserService} from '../../services/user.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -153,7 +161,37 @@ export class MediaLightboxComponent
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
     private folderService: FolderService,
+    private galleryService: GalleryService,
+    private userService: UserService,
   ) {}
+
+  private permissionUser(): PermissionUser {
+    const details = this.userService.getUserDetails();
+    return {
+      id: details?.id,
+      roles: details?.roles,
+    };
+  }
+
+  get canEditItemWorkspace(): boolean {
+    if (!this.mediaItem) {
+      return false;
+    }
+    const wsId = this.mediaItem.workspaceId;
+    if (!wsId) {
+      return this.workspaceStateService.canEditActiveWorkspace();
+    }
+    const match = this.workspaceStateService
+      .workspaces()
+      .find(w => w.id === wsId);
+    if (!match) {
+      return this.workspaceStateService.canEditActiveWorkspace();
+    }
+    return this.workspaceStateService.canEditWorkspace(
+      match,
+      this.permissionUser(),
+    );
+  }
 
   ngAfterViewInit(): void {
     this.initializePhotoSwipe();
@@ -279,7 +317,9 @@ export class MediaLightboxComponent
   }
 
   openBatchMoveDialog(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId =
+      this.mediaItem?.workspaceId ||
+      this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId || !this.mediaItem) return;
 
     const dialogRef = this.dialog.open(MoveToFolderDialogComponent, {
@@ -290,15 +330,48 @@ export class MediaLightboxComponent
       },
     });
 
-    dialogRef.afterClosed().subscribe(result => {
-      if (result && result.destinationFolderId !== undefined) {
-        const destName =
-          result.destinationFolderId === null
-            ? 'All Media'
-            : result.folderName || 'Folder';
-        this.executeMove(workspaceId, result.destinationFolderId, destName);
-      }
-    });
+    dialogRef
+      .afterClosed()
+      .subscribe((result: MoveToFolderDialogResult | null | undefined) => {
+        if (!result) return;
+        if (result.destinationFolderId !== undefined) {
+          const destName =
+            result.destinationFolderId === null
+              ? 'All Media'
+              : result.destinationName || 'Folder';
+          this.executeMove(workspaceId, result.destinationFolderId, destName);
+        } else if (result.destinationWorkspaceId !== undefined) {
+          const destName = result.destinationName || 'Workspace';
+          this.executeMoveToWorkspace(result.destinationWorkspaceId, destName);
+        }
+      });
+  }
+
+  private executeMoveToWorkspace(
+    destinationWorkspaceId: number,
+    destinationName: string,
+  ): void {
+    if (!this.mediaItem) return;
+
+    const assetType = (this.mediaItem as GalleryItem).itemType || 'media_item';
+    this.galleryService
+      .bulkMove(
+        [{id: this.mediaItem.id, type: assetType}],
+        destinationWorkspaceId,
+      )
+      .subscribe({
+        next: () => {
+          this.snackBar.open(`Moved to "${destinationName}"`, 'Close', {
+            duration: 3000,
+          });
+          this.mediaItem!.workspaceId = destinationWorkspaceId;
+          this.mediaItem!.folderId = undefined;
+          this.moved.emit(null);
+        },
+        error: err => {
+          handleErrorSnackbar(this.snackBar, err, 'Move item');
+        },
+      });
   }
 
   private executeMove(
@@ -707,6 +780,9 @@ export class MediaLightboxComponent
         existingTags: ((this.mediaItem as any)?.tags || []).map((t: any) =>
           typeof t === 'object' ? t.name : t,
         ),
+        workspaceId:
+          this.mediaItem?.workspaceId ??
+          this.workspaceStateService.getActiveWorkspaceId(),
       },
       width: '400px',
     });
@@ -714,7 +790,9 @@ export class MediaLightboxComponent
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
         if (this.mediaItem) {
-          const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+          const workspaceId =
+            this.mediaItem.workspaceId ??
+            this.workspaceStateService.getActiveWorkspaceId();
           if (!workspaceId) return;
 
           this.tagsService

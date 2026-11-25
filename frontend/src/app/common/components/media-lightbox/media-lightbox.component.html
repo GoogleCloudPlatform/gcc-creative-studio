@@ -240,7 +240,7 @@
       </studio-button>
 
       <studio-button
-        *ngIf="showMoveButton"
+        *ngIf="showMoveButton && canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"
@@ -281,6 +281,7 @@
       </studio-button>
 
       <studio-button
+        *ngIf="canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"
@@ -291,7 +292,7 @@
       </studio-button>
 
       <studio-button
-        *ngIf="showDeleteButton"
+        *ngIf="showDeleteButton && canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"

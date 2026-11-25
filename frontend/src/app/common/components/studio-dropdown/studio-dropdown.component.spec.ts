@@ -58,7 +58,7 @@ describe('StudioDropdownComponent option states', () => {
 
   function items(): HTMLElement[] {
     return Array.from(
-      fixture.nativeElement.querySelectorAll('.studio-menu-item'),
+      fixture.nativeElement.querySelectorAll('.studio-menu-item-btn'),
     );
   }
 

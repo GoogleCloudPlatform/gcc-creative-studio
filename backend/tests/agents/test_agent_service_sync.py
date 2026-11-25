@@ -220,7 +220,7 @@ async def test_sync_happy_path_appends_delta(local_mode):
     assert res["matched"] == 1
     assert res["frames_replaced"] == ["s-1"]
     assert res["released"] == ["s-1:video"]
-    workspace_auth.authorize.assert_awaited_once_with(
+    workspace_auth.authorize_write.assert_awaited_once_with(
         workspace_id=10, user=user
     )
     local_client.update_session_state.assert_awaited_once()
@@ -272,12 +272,42 @@ async def test_sync_reports_authorization_failure(local_mode):
     local_client = AsyncMock()
     local_client.get_session.return_value = _local_session()
     workspace_auth = AsyncMock()
-    workspace_auth.authorize.side_effect = HTTPException(
+    workspace_auth.authorize_write.side_effect = HTTPException(
         status_code=403, detail="nope"
     )
     service = _service(local_client, workspace_auth=workspace_auth)
     res = await service.sync_storyboard_to_session(_user(), _storyboard())
     assert res == {"status": "failed", "detail": "nope"}
+
+
+@pytest.mark.anyio
+async def test_chat_session_only_preserves_workspace_auth_http_exception(
+    local_mode,
+):
+    local_client = AsyncMock()
+    local_client.get_session.return_value = _local_session()
+    workspace_auth = AsyncMock()
+    workspace_auth.authorize_write.side_effect = HTTPException(
+        status_code=403, detail="Viewers have read-only access"
+    )
+    service = _service(local_client, workspace_auth=workspace_auth)
+    req = MagicMock(spec=Request)
+    req.headers = {"Authorization": "Bearer test"}
+    payload = MagicMock()
+    payload.model_dump.return_value = {
+        "appName": "ads_x",
+        "sessionId": "s1",
+        "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+    }
+    with pytest.raises(HTTPException) as exc:
+        await service.chat(
+            current_user=_user(),
+            user_id="999",
+            payload=payload,
+            request=req,
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Viewers have read-only access"
 
 
 @pytest.mark.anyio

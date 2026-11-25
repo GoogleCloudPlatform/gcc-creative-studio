@@ -51,7 +51,14 @@ from src.common.storage_service import GcsService
 from src.multimodal.gemini_service import GeminiService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
-from src.workspaces.schema.workspace_model import WorkspaceScopeEnum
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceScopeEnum,
+)
+from src.workspaces.workspace_auth_guard import (
+    WorkspaceAuth,
+    is_workspace_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -346,22 +353,54 @@ class BrandGuidelineService:
             presigned_source_pdf_urls=presigned_urls,
         )
 
+    async def _authorize_workspace_read(
+        self,
+        workspace_id: int,
+        current_user: UserModel,
+    ) -> WorkspaceModel:
+        workspace = await WorkspaceAuth(
+            workspace_repo=self.workspace_repo
+        ).authorize(workspace_id, current_user)
+        if workspace.scope == WorkspaceScopeEnum.PERSONAL:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Brand guidelines are only available in shared workspaces.",
+            )
+        return workspace
+
+    async def _authorize_workspace_manage(
+        self,
+        workspace_id: int,
+        current_user: UserModel,
+    ) -> WorkspaceModel:
+        workspace = await self._authorize_workspace_read(
+            workspace_id, current_user
+        )
+        if not is_workspace_manager(current_user, workspace):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Only the workspace owner, a workspace admin, or a "
+                    "system admin can manage brand guidelines."
+                ),
+            )
+        return workspace
+
     async def generate_signed_upload_url(
         self,
         request_dto: GenerateUploadUrlDto,
         current_user: UserModel,
     ) -> GenerateUploadUrlResponseDto:
         """Generates a GCS v4 signed URL for a client-side upload."""
-        # Authorize the user for the workspace before generating a URL
         if request_dto.workspace_id:
-            workspace = await self.workspace_repo.get_by_id(
-                request_dto.workspace_id
+            await self._authorize_workspace_manage(
+                request_dto.workspace_id, current_user
             )
-            if not workspace:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Workspace with ID '{request_dto.workspace_id}' not found.",
-                )
+        elif UserRoleEnum.ADMIN not in (current_user.roles or []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a system admin can upload global brand guidelines.",
+            )
 
         file_uuid = uuid.uuid4()
         destination_blob_name = f"brand-guidelines/{request_dto.workspace_id or 'global'}/uploads/{file_uuid}/{request_dto.filename}"
@@ -396,22 +435,10 @@ class BrandGuidelineService:
         in a background job.
         """
         # 1. Authorization Check
-        is_system_admin = UserRoleEnum.ADMIN in current_user.roles
+        is_system_admin = UserRoleEnum.ADMIN in (current_user.roles or [])
 
         if workspace_id:
-            workspace = await self.workspace_repo.get_by_id(workspace_id)
-            if not workspace:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Workspace with ID '{workspace_id}' not found.",
-                )
-
-            is_workspace_owner = current_user.id == workspace.owner_id
-            if not (is_system_admin or is_workspace_owner):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the workspace owner or a system admin can add brand guidelines.",
-                )
+            await self._authorize_workspace_manage(workspace_id, current_user)
         elif not is_system_admin:
             # If no workspace is specified, it's a global guideline, which only admins can create.
             raise HTTPException(
@@ -472,34 +499,13 @@ class BrandGuidelineService:
         if not guideline:
             return None
 
-        is_system_admin = UserRoleEnum.ADMIN in current_user.roles
-
         # Global guidelines can be seen by any authenticated user
         if not guideline.workspace_id:
             return await self._create_brand_guideline_response(guideline)
 
-        # For workspace-specific guidelines, check membership.
-        workspace = await self.workspace_repo.get_by_id(guideline.workspace_id)
-
-        if not workspace:
-            # This indicates an data inconsistency, but we handle it gracefully.
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Parent workspace for this guideline not found.",
-            )
-
-        if (
-            not is_system_admin
-            and workspace.scope != WorkspaceScopeEnum.PUBLIC
-            and current_user.id != workspace.owner_id
-            and not await self.workspace_repo.is_member(
-                guideline.workspace_id, current_user.id
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not authorized to view this brand guideline.",
-            )
+        await self._authorize_workspace_read(
+            guideline.workspace_id, current_user
+        )
 
         return await self._create_brand_guideline_response(guideline)
 
@@ -509,26 +515,7 @@ class BrandGuidelineService:
         current_user: UserModel,
     ) -> BrandGuidelineResponseDto | None:
         """Retrieves the unique brand guideline for a workspace."""
-        workspace = await self.workspace_repo.get_by_id(workspace_id)
-        if not workspace:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workspace with ID '{workspace_id}' not found.",
-            )
-
-        if not workspace.scope == WorkspaceScopeEnum.PUBLIC:
-            is_system_admin = UserRoleEnum.ADMIN in current_user.roles
-            if (
-                not is_system_admin
-                and current_user.id != workspace.owner_id
-                and not await self.workspace_repo.is_member(
-                    workspace_id, current_user.id
-                )
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You are not a member of this workspace.",
-                )
+        await self._authorize_workspace_read(workspace_id, current_user)
 
         search_dto = BrandGuidelineSearchDto(workspace_id=workspace_id, limit=1)
         response = await self.repo.query(search_dto, workspace_id=workspace_id)
@@ -554,7 +541,7 @@ class BrandGuidelineService:
             return
 
         # 2. Authorization Check
-        is_system_admin = UserRoleEnum.ADMIN in current_user.roles
+        is_system_admin = UserRoleEnum.ADMIN in (current_user.roles or [])
 
         # Global guidelines can only be deleted by admins
         if not guideline.workspace_id:
@@ -564,24 +551,9 @@ class BrandGuidelineService:
                     detail="Only a system admin can delete global brand guidelines.",
                 )
         else:  # Workspace-specific guideline
-            workspace = await self.workspace_repo.get_by_id(
-                guideline.workspace_id
+            await self._authorize_workspace_manage(
+                guideline.workspace_id, current_user
             )
-            # If workspace doesn't exist, only admin can clean up the orphan guideline.
-            if not workspace and not is_system_admin:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Parent workspace for this guideline not found.",
-                )
-
-            is_workspace_owner = (
-                workspace and current_user.id == workspace.owner_id
-            )
-            if not (is_system_admin or is_workspace_owner):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the workspace owner or a system admin can delete this brand guideline.",
-                )
 
         # 3. Perform deletion
         await self._delete_guideline_and_assets(guideline)

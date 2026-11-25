@@ -32,7 +32,6 @@ from src.brand_guidelines.dto.generate_upload_url_dto import (
     GenerateUploadUrlResponseDto,
 )
 from src.users.user_model import UserModel, UserRoleEnum
-from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
 
@@ -57,17 +56,10 @@ async def generate_upload_url(
     request_dto: GenerateUploadUrlDto,
     current_user: UserModel = Depends(get_current_user),
     service: BrandGuidelineService = Depends(),
-    workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Generates a secure, short-lived URL that the client can use to upload a
     brand guideline PDF directly to Google Cloud Storage.
     """
-    # If a workspace ID is provided, ensure the user has access to it.
-    if request_dto.workspace_id:
-        await workspace_auth.authorize(
-            workspace_id=request_dto.workspace_id,
-            user=current_user,
-        )
 
     if not request_dto.content_type == "application/pdf":
         raise HTTPException(

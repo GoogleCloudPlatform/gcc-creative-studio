@@ -42,6 +42,7 @@ import {
   GalleryFolderLocation,
 } from '../../common/models/folder.model';
 import {WorkspaceService} from '../../services/workspace/workspace.service';
+import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
@@ -58,6 +59,27 @@ const mockWorkspaces: Workspace[] = [
     name: 'Private',
     ownerId: '7',
     scope: WorkspaceScope.PRIVATE,
+  } as Workspace,
+  {
+    id: 3,
+    name: 'Private Admin Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.ADMIN,
+  } as Workspace,
+  {
+    id: 4,
+    name: 'Private Viewer Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.VIEWER,
+  } as Workspace,
+  {
+    id: 5,
+    name: 'Private Editor Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.EDITOR,
   } as Workspace,
 ];
 
@@ -168,11 +190,20 @@ describe('MediaGalleryComponent', () => {
         },
         {
           provide: WorkspaceStateService,
-          useValue: {
-            activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
-            getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
-            setActiveWorkspaceId: (id: number | null) =>
-              activeWorkspaceIdSubject.next(id),
+          useFactory: () => {
+            const real = new WorkspaceStateService();
+            real.setWorkspaces(mockWorkspaces);
+            return {
+              activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
+              getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
+              setActiveWorkspaceId: (id: number | null) =>
+                activeWorkspaceIdSubject.next(id),
+              syncUser: real.syncUser.bind(real),
+              setWorkspaces: real.setWorkspaces.bind(real),
+              workspaces: real.workspaces,
+              canEditWorkspace: real.canEditWorkspace.bind(real),
+              canManageWorkspace: real.canManageWorkspace.bind(real),
+            };
           },
         },
         {
@@ -1249,6 +1280,26 @@ describe('MediaGalleryComponent', () => {
       expect(component.canManageFolder(folderOwnedBy(99, 1))).toBeFalse();
     });
 
+    it('grants folder management parity to PRIVATE ADMIN members on folders created by others', () => {
+      expect(component.canManageFolder(folderOwnedBy(99, 3))).toBeTrue();
+    });
+
+    it('denies folder management and edit controls for PRIVATE VIEWER members', () => {
+      expect(component.canManageFolder(folderOwnedBy(5, 4))).toBeFalse();
+
+      activeWorkspaceIdSubject.next(4);
+      component.showAdvancedFilters = true;
+      component.selectedItems.add('media_item:1');
+      fixture.detectChanges();
+
+      expect(component.canEditActiveWorkspace).toBeFalse();
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector('#gallery-bulk-move-btn')).toBeNull();
+      expect(host.querySelector('#gallery-bulk-tag-btn')).toBeNull();
+      expect(host.querySelector('#gallery-bulk-delete-btn')).toBeNull();
+      expect(host.querySelector('#gallery-manage-tags-btn')).toBeNull();
+    });
+
     it('denies when the current user id is unknown', () => {
       component.userId = undefined;
       expect(component.canManageFolder(folderOwnedBy(5))).toBeFalse();
@@ -1477,6 +1528,112 @@ describe('MediaGalleryComponent', () => {
       component.searchTerm();
       expect(component.images).toEqual([]);
       expect(component.groups).toEqual([]);
+    });
+
+    it('fails closed when active workspace is unknown and blocks VIEWER drag-moves and tag deletion', () => {
+      activeWorkspaceIdSubject.next(999);
+      expect(component.canEditActiveWorkspace).toBeFalse();
+
+      activeWorkspaceIdSubject.next(4);
+      component.isAdmin = false;
+      component.availableTags = [
+        {id: 77, name: 'draft', color: '#ccc', workspaceId: 4, userId: 7},
+      ];
+      const tagsService = TestBed.inject(TagsService);
+      const deleteSpy = spyOn(tagsService, 'deleteTag').and.callThrough();
+
+      const dropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {
+          types: ['application/json'],
+          getData: () =>
+            JSON.stringify({
+              mediaItemIds: [11],
+              sourceAssetIds: [],
+              itemCount: 1,
+            }),
+        },
+      } as unknown as DragEvent;
+      component.onBreadcrumbDragOver(dropEvent, 5);
+      expect(dropEvent.preventDefault).not.toHaveBeenCalled();
+
+      component.onBreadcrumbDrop(dropEvent, 5);
+      component.onItemDroppedOnFolder(
+        {id: 5, name: 'F', workspaceId: 4} as Folder,
+        {mediaItemIds: [11], sourceAssetIds: [], itemCount: 1},
+      );
+      expect(folderService.moveItems).not.toHaveBeenCalled();
+
+      component.onTagDelete({label: 'draft', value: 'draft'});
+      expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
+    it('gates Manage Tags button on canEditActiveWorkspace and per-tag deletable on creator or manager', () => {
+      component.isAdmin = false;
+      component.userId = 7;
+      component.showAdvancedFilters = true;
+      activeWorkspaceIdSubject.next(5);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 5, userId: 7},
+        {id: 2, name: 'theirs', color: '#bbb', workspaceId: 5, userId: 99},
+      ];
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector('#gallery-manage-tags-btn')).not.toBeNull();
+      component.isSelectorMode = true;
+      fixture.detectChanges();
+      expect(host.querySelector('#gallery-manage-tags-btn')).toBeNull();
+      component.isSelectorMode = false;
+      fixture.detectChanges();
+      expect(
+        component.displayedTagOptions.map(o => [o.value, o.deletable]),
+      ).toEqual([
+        ['', false],
+        ['mine', true],
+        ['theirs', false],
+      ]);
+
+      activeWorkspaceIdSubject.next(3);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 3, userId: 7},
+        {id: 2, name: 'theirs', color: '#bbb', workspaceId: 3, userId: 99},
+      ];
+      fixture.detectChanges();
+      expect(
+        component.displayedTagOptions.map(o => [o.value, o.deletable]),
+      ).toEqual([
+        ['', false],
+        ['mine', true],
+        ['theirs', true],
+      ]);
+    });
+
+    it('shows error snackbar when deleting a tag fails', () => {
+      component.isAdmin = false;
+      component.userId = 7;
+      activeWorkspaceIdSubject.next(5);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 5, userId: 7},
+      ];
+      const dialogRef = {afterClosed: () => of(true)};
+      spyOn(component.dialog, 'open').and.returnValue(dialogRef as any);
+      const tagsService = TestBed.inject(TagsService);
+      spyOn(tagsService, 'deleteTag').and.returnValue(
+        throwError(() => ({
+          status: 403,
+          error: {detail: 'Only tag creator or workspace manager can delete.'},
+        })),
+      );
+      const snackBar = TestBed.inject(MatSnackBar);
+
+      component.onTagDelete({label: 'mine', value: 'mine'});
+
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'Only tag creator or workspace manager can delete.',
+        'Close',
+        jasmine.objectContaining({duration: 4000}),
+      );
     });
   });
 });
