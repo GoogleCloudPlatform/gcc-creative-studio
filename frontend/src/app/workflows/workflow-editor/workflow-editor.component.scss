@@ -111,6 +111,7 @@
   gap: 10px;
 
   .in-line-wrapper {
+    min-width: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -120,6 +121,17 @@
   .title-group {
     text-align: left;
     width: 100%;
+    min-width: 0;
+
+    .readonly-header {
+      min-width: 0;
+    }
+
+    .truncate-line {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .page-title {
       font-family: 'Google Sans', sans-serif;
@@ -236,7 +248,12 @@
     border-bottom: 1px solid var(--border-color, #333);
     border-top-left-radius: 0.5rem;
     border-top-right-radius: 0.5rem;
+    /* Same drag cursor as the editable step headers. */
     cursor: move;
+
+    &:active {
+      cursor: grabbing;
+    }
 
     .step-title {
       display: flex;
@@ -259,6 +276,16 @@
   .step-content {
     padding: 16px;
   }
+
+  &.readonly-node {
+    .step-header {
+      cursor: default;
+
+      &:active {
+        cursor: default;
+      }
+    }
+  }
 }
 
 .port.output-port {
@@ -274,9 +301,15 @@
   transform: translate(50%, -50%);
   top: 50%;
 
-  &:hover {
+  &:hover:not(.port-disabled) {
     background-color: #bee3f8;
     transform: translateY(-50%) scale(1.2);
+  }
+
+  &.port-disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
   }
 
   &::after {
@@ -327,9 +360,16 @@
       box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
       transition: all 0.2s ease;
 
-      &:hover {
+      &:hover:not(:disabled) {
         transform: scale(0.95);
         background-color: var(--background-hover);
+      }
+
+      &:disabled,
+      &[disabled] {
+        opacity: 0.4;
+        cursor: not-allowed;
+        pointer-events: none;
       }
     }
   }
@@ -340,6 +380,12 @@
 
     button {
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    studio-button[disabled] {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
     }
   }
 }
@@ -621,5 +667,48 @@
   to {
     box-shadow: 0 0 20px 4px rgba(56, 189, 248, 0.75);
     background: rgba(56, 189, 248, 0.14);
+  }
+}
+
+.workflow-edit-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/*
+ * Banners float in the top-left corner, beside the absolutely positioned
+ * header (right: 24px, max-width: 60vw, z-index: 100). Kept in normal flow
+ * they rendered at the top of the editor, underneath the header, and the
+ * canvas below them pushed them out of view. The width cap keeps them from
+ * overlapping the header; the z-index keeps them above canvas nodes and the
+ * header if the viewport is too narrow for both.
+ */
+.editor-banners {
+  position: absolute;
+  // Centered so it clears the global workspace switcher and avatar pinned
+  // at the top-left of the app shell.
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: min(560px, max(280px, calc(100% - 640px)));
+  pointer-events: none;
+
+  .snapshot-mismatch-banner {
+    pointer-events: auto;
+    background: rgba(40, 32, 16, 0.92);
+    backdrop-filter: blur(8px);
+
+    > div > mat-icon {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      font-size: 24px;
+      line-height: 1;
+    }
   }
 }

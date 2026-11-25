@@ -51,11 +51,11 @@ import {
   IMAGE_STEP_CONFIG,
 } from '../step-configs/image-step.config';
 import {
-  EditorMode,
   LoopItemType,
   NodeTypes,
   StepInputUnlinkEvent,
   StepOutputReference,
+  StepStatusEnum,
 } from '../../../workflow.models';
 import {StepConfig, StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
@@ -2412,11 +2412,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       fixture.detectChanges();
     }
 
-    function switchToRunMode(): void {
-      const previousMode = component.mode;
-      component.mode = EditorMode.Run;
+    function switchToReadOnlyMode(): void {
+      const previousReadonly = component.readonly;
+      component.readonly = true;
       component.ngOnChanges({
-        mode: new SimpleChange(previousMode, EditorMode.Run, false),
+        readonly: new SimpleChange(previousReadonly, true, false),
       });
       fixture.detectChanges();
     }
@@ -2567,8 +2567,8 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(queryMenuItems().length).toBe(0);
       }));
 
-      it('opens no menu in run mode', fakeAsync(() => {
-        switchToRunMode();
+      it('opens no menu in readonly mode', fakeAsync(() => {
+        switchToReadOnlyMode();
 
         queryPromptPort().click();
         settle();
@@ -2578,17 +2578,113 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       }));
     });
 
-    describe('run mode', () => {
+    describe('readonly mode', () => {
       it('canUnlink returns false for a linked input', () => {
-        component.mode = EditorMode.Run;
+        component.readonly = true;
 
         expect(component.canUnlink('prompt')).toBeFalse();
       });
 
-      it('removes the unlink attributes when the mode switches to run', () => {
-        switchToRunMode();
+      it('removes the unlink attributes when readonly is enabled', () => {
+        switchToReadOnlyMode();
 
         expectNoUnlinkAttributes(queryPromptPort());
+      });
+
+      it('shows status chip only when readonly and status is non-IDLE', () => {
+        const hostEl = fixture.nativeElement as HTMLElement;
+        component.stepForm.get('status')?.setValue(StepStatusEnum.COMPLETED);
+        component.readonly = false;
+        fixture.detectChanges();
+        expect(hostEl.querySelector('mat-chip')).toBeNull();
+
+        component.readonly = true;
+        fixture.detectChanges();
+        const completedChip = hostEl.querySelector('mat-chip');
+        expect(completedChip).not.toBeNull();
+
+        component.stepForm.get('status')?.setValue(StepStatusEnum.IDLE);
+        fixture.detectChanges();
+        expect(hostEl.querySelector('mat-chip')).toBeNull();
+      });
+
+      it('hides clone and delete controls in readonly mode', () => {
+        const hostEl = fixture.nativeElement as HTMLElement;
+        component.readonly = false;
+        fixture.detectChanges();
+
+        const editIcons = Array.from(
+          hostEl.querySelectorAll('.step-actions mat-icon'),
+        ).map(el => el.textContent?.trim());
+        expect(editIcons).toContain('content_copy');
+        expect(editIcons).toContain('delete');
+
+        component.readonly = true;
+        fixture.detectChanges();
+
+        const readonlyIcons = Array.from(
+          hostEl.querySelectorAll('.step-actions mat-icon'),
+        ).map(el => el.textContent?.trim());
+        expect(readonlyIcons).not.toContain('content_copy');
+        expect(readonlyIcons).not.toContain('delete');
+      });
+
+      it('hides the prompt variable form of a text step in readonly mode', () => {
+        const fb = TestBed.inject(FormBuilder);
+        const textFixture = TestBed.createComponent(GenericStepComponent);
+        const textComponent = textFixture.componentInstance;
+        textComponent.stepForm = fb.group({
+          stepId: ['text_step_readonly'],
+          type: [NodeTypes.GENERATE_TEXT],
+          status: ['idle'],
+          inputs: fb.group({
+            prompt: [''],
+            input_images: [null],
+            input_videos: [null],
+          }),
+          settings: fb.group({
+            model: ['gemini-3-flash-preview'],
+            temperature: [0.7],
+          }),
+          outputs: fb.group({
+            generated_text: [{type: 'text'}],
+          }),
+        });
+        textComponent.config = GENERATE_TEXT_STEP_CONFIG;
+        textComponent.stepIndex = 0;
+        textComponent.readonly = false;
+        textFixture.detectChanges();
+
+        const textHostEl = textFixture.nativeElement as HTMLElement;
+        expect(textHostEl.querySelector('.add-variable-form')).not.toBeNull();
+
+        textComponent.readonly = true;
+        textFixture.detectChanges();
+        expect(textHostEl.querySelector('.add-variable-form')).toBeNull();
+      });
+
+      it('blocks toggleInputMode, onInputPortMouseUp, and onOutputPortMouseDown in readonly mode', () => {
+        component.readonly = true;
+        const portDropSpy = spyOn(component.portDrop, 'emit');
+        const portDragStartSpy = spyOn(component.portDragStart, 'emit');
+
+        component.inputModes['prompt'] = 'fixed';
+        component.stepForm.get('inputs.prompt')?.setValue('keep me');
+        component.toggleInputMode('prompt', 'linked');
+        expect(component.inputModes['prompt']).toBe('fixed');
+        expect(component.stepForm.get('inputs.prompt')?.value).toBe('keep me');
+
+        const mouseUpEvent = new MouseEvent('mouseup', {bubbles: true});
+        const mouseUpStopSpy = spyOn(mouseUpEvent, 'stopPropagation');
+        component.onInputPortMouseUp(mouseUpEvent, 'prompt');
+        expect(mouseUpStopSpy).toHaveBeenCalled();
+        expect(portDropSpy).not.toHaveBeenCalled();
+
+        const mouseDownEvent = new MouseEvent('mousedown', {bubbles: true});
+        const mouseDownStopSpy = spyOn(mouseDownEvent, 'stopPropagation');
+        component.onOutputPortMouseDown(mouseDownEvent, 'generated_image');
+        expect(mouseDownStopSpy).toHaveBeenCalled();
+        expect(portDragStartSpy).not.toHaveBeenCalled();
       });
     });
 
@@ -2667,6 +2763,25 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(trigger.menuOpen).toBeFalse();
         expect(queryMenuItems().length).toBe(0);
       }));
+    });
+  });
+
+  describe('step header drag cursor', () => {
+    const queryHeader = (): HTMLElement =>
+      fixture.debugElement.query(By.css('.step-header')).nativeElement;
+
+    it('should show the move cursor on the header when editable', () => {
+      component.readonly = false;
+      fixture.detectChanges();
+
+      expect(getComputedStyle(queryHeader()).cursor).toBe('move');
+    });
+
+    it('should not show the move cursor on the header when read-only', () => {
+      component.readonly = true;
+      fixture.detectChanges();
+
+      expect(getComputedStyle(queryHeader()).cursor).not.toBe('move');
     });
   });
 });

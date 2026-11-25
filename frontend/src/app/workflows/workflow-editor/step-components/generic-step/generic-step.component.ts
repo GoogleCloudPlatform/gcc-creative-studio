@@ -145,6 +145,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() stepIndex!: number;
   @Input() availableOutputs: AvailableOutput[] = [];
   @Input() mode: EditorMode = EditorMode.Create;
+  @Input() readonly = false;
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
   @Input() mediaUrlMap!: Map<string, string>;
@@ -406,8 +407,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   canUnlink(inputName: string): boolean {
-    if (this.mode === EditorMode.Run || this.isInputDisabled(inputName))
-      return false;
+    if (this.readonly || this.isInputDisabled(inputName)) return false;
     return getLinkedRefs(this.getInputValue(inputName)).length > 0;
   }
 
@@ -506,12 +506,24 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   onInputPortMouseUp(event: MouseEvent, inputName: string): void {
     event.stopPropagation();
-    if (this.isInputDisabled(inputName)) {
+    if (this.readonly || this.isInputDisabled(inputName)) {
       return;
     }
     this.portDrop.emit({
       stepId: this.stepForm?.value?.stepId,
       inputName: inputName,
+    });
+  }
+
+  onOutputPortMouseDown(event: MouseEvent, outputName: string): void {
+    event.stopPropagation();
+    if (this.readonly) {
+      return;
+    }
+    this.portDragStart.emit({
+      stepId: this.stepForm.value.stepId,
+      outputName,
+      mouseEvent: event,
     });
   }
 
@@ -545,7 +557,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (changes['availableOutputs']) {
       this.updateCompatibleOutputs();
     }
-    if (changes['availableOutputs'] || changes['mode']) {
+    if (changes['availableOutputs'] || changes['readonly']) {
       this.refreshUnlinkStates();
     }
   }
@@ -1528,6 +1540,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
+    if (this.readonly) return;
     this.inputModes[inputName] = mode;
     this.stepForm.get('inputs')?.get(inputName)?.setValue(null);
   }

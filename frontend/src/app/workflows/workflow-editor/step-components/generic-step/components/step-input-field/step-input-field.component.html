@@ -44,6 +44,7 @@
       [compatibleOutputs]="compatibleOutputs"
       [showValidationErrors]="showValidationErrors"
       [disabledMessage]="disabledMessage"
+      [readonly]="readonly"
     >
     </app-step-media-input>
   </ng-container>
@@ -63,6 +64,7 @@
   >
     <mat-select
       [value]="mode"
+      [disabled]="readonly"
       (selectionChange)="toggleInputMode($event.value)"
     >
       <mat-option value="fixed">Fixed</mat-option>

@@ -362,6 +362,47 @@ describe('WorkflowFormService', () => {
       expect(service.stepsArray.at(0).get('collapsed')?.value).toBeTrue();
       expect(service.stepsArray.at(1).get('collapsed')?.value).toBeFalse();
     });
+
+    it('does not mutate the workflow data passed to patchData', () => {
+      const data = {
+        id: 'wf-1',
+        name: 'Test Workflow',
+        description: '',
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            status: StepStatusEnum.IDLE,
+            inputs: {},
+            outputs: {},
+            settings: {
+              definitions: [
+                {id: 'def-1', name: 'User_Text_Input', type: 'text'},
+              ],
+            },
+          },
+          {
+            stepId: 'step_1',
+            type: NodeTypes.GENERATE_TEXT,
+            status: StepStatusEnum.IDLE,
+            inputs: {
+              prompt: {step: 'user_input', output: 'User_Text_Input'},
+              extra: [{step: 'user_input', output: 'User_Text_Input'}],
+            },
+            outputs: {},
+            settings: {},
+          },
+        ],
+      };
+      const before = structuredClone(data);
+
+      service.patchData(data);
+
+      expect(data).toEqual(before);
+      const promptRef = service.stepsArray.at(0).get('inputs.prompt')?.value;
+      expect(promptRef.output).toBe('User Text Input');
+      expect(promptRef._definitionId).toBe('def-1');
+    });
   });
 
   describe('Loop source cleanup', () => {

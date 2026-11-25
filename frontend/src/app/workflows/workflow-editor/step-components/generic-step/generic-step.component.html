@@ -25,7 +25,7 @@
     stepForm.get('status')?.value === StepStatusEnum.RUNNING
   "
 >
-  <div class="step-header">
+  <div class="step-header" [class.step-header-draggable]="!readonly">
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
       <span>{{ localConfig.title }}</span>
@@ -38,7 +38,7 @@
       <span class="step-id-subtle">#{{ stepIndex + 1 }}</span>
       <!-- Status Chip -->
       <mat-chip
-        *ngIf="stepForm.get('status')?.value !== StepStatusEnum.IDLE"
+        *ngIf="readonly && stepForm.get('status')?.value !== StepStatusEnum.IDLE"
         [ngClass]="stepForm.get('status')?.value | workflowStatus: 'class'"
         class="ml-2"
       >
@@ -50,7 +50,7 @@
     </div>
     <div class="step-actions">
       <button
-        *ngIf="mode !== EditorMode.Run"
+        *ngIf="!readonly"
         mat-icon-button
         color="primary"
         (click)="$event.stopPropagation(); clone.emit()"
@@ -59,7 +59,7 @@
         <mat-icon>content_copy</mat-icon>
       </button>
       <button
-        *ngIf="mode !== EditorMode.Run"
+        *ngIf="!readonly"
         mat-icon-button
         color="warn"
         (click)="$event.stopPropagation(); delete.emit()"
@@ -151,6 +151,7 @@
             [control]="$any(stepForm.get('inputs')?.get(input.name))"
             [config]="input"
             [mode]="inputModes[input.name]"
+            [readonly]="readonly"
             [compatibleOutputs]="compatibleOutputs[input.name]"
             [showValidationErrors]="showValidationErrors"
             [maxMediaItems]="getMaxMediaItems(input)"
@@ -184,7 +185,7 @@
             </div>
             <div
               class="add-variable-form flex items-center gap-2 w-full"
-              *ngIf="mode !== EditorMode.Run"
+              *ngIf="!readonly"
             >
               <mat-form-field
                 appearance="outline"
@@ -265,6 +266,7 @@
                       "
                       [config]="variable"
                       [mode]="inputModes[variable.name]"
+                      [readonly]="readonly"
                       [compatibleOutputs]="compatibleOutputs[variable.name]"
                       [showValidationErrors]="showValidationErrors"
                       [disabledMessage]="getInputDisabledMessage(variable.name)"
@@ -397,19 +399,13 @@
           </div>
           <div
             class="port output-port"
+            [class.port-disabled]="readonly"
             [style.background-color]="getTypeColor(output.type)"
             [style.border-color]="getTypeColor(output.type)"
             [attr.data-node-id]="stepForm.value.stepId"
             [attr.data-port-name]="output.name"
             [attr.data-port-type]="'output'"
-            (mousedown)="
-              $event.stopPropagation();
-              portDragStart.emit({
-                stepId: stepForm.value.stepId,
-                outputName: output.name,
-                mouseEvent: $event,
-              })
-            "
+            (mousedown)="onOutputPortMouseDown($event, output.name)"
           ></div>
           <span
             class="port-type-chip output-chip"
