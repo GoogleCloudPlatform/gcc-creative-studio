@@ -344,6 +344,14 @@ class GeminiService:
             sections.append(f"Elements to avoid: {negative}")
         return "\n\n".join(sections)
 
+    @staticmethod
+    def _is_gemini_i2i(dto: CreateImagenDto | CreateVeoDto) -> bool:
+        return bool(
+            isinstance(dto, CreateImagenDto)
+            and dto.generation_model.is_gemini_image_model
+            and (dto.source_asset_ids or dto.source_media_items)
+        )
+
     async def enhance_prompt_from_dto(
         self,
         dto: CreateImagenDto | CreateVeoDto | CreateAudioDto,
@@ -393,15 +401,14 @@ class GeminiService:
                 "Invalid target_type. Must be IMAGE, VIDEO, or AUDIO."
             )
 
+        if not isinstance(dto, (CreateImagenDto, CreateVeoDto)):
+            return dto.prompt
+
         # --- Prompt Enhancement for Gemini Image-to-Image ---
         # This logic is placed here to ensure that any call to enhance a prompt
         # for Gemini Flash i2i will automatically include these critical
         # instructions, making the behavior consistent across the application.
-        is_gemini_i2i = (
-            isinstance(dto, CreateImagenDto)
-            and dto.generation_model.is_gemini_image_model
-            and (dto.source_asset_ids or dto.source_media_items)
-        )
+        is_gemini_i2i = self._is_gemini_i2i(dto)
 
         if is_gemini_i2i:
             dto.prompt = (
@@ -465,48 +472,9 @@ class GeminiService:
             return dto.prompt
 
         # --- Prepend Brand Guidelines if available ---
-        guideline_workspace_id = (
-            dto.context_workspace_id
-            if isinstance(dto, (CreateImagenDto, CreateVeoDto))
-            and dto.context_workspace_id
-            else dto.workspace_id
+        dto.prompt = await self.apply_brand_guidelines_to_dto(
+            dto, for_rewrite=True
         )
-        if (
-            dto.use_brand_guidelines
-            and guideline_workspace_id
-            and not is_gemini_i2i
-        ):
-            search_dto = BrandGuidelineSearchDto(
-                workspace_id=guideline_workspace_id, limit=1
-            )
-            guideline_response = await self.brand_guideline_repo.query(
-                search_dto,
-                workspace_id=guideline_workspace_id,
-            )
-
-            if guideline_response and guideline_response.data:
-                guideline = guideline_response.data[0]
-                # Construct a prefix to guide the prompt rewriter.
-                prefix_parts = [
-                    "Based on the following brand guidelines, "
-                    "enhance the user's prompt.",
-                ]
-                if guideline.visual_style_summary:
-                    prefix_parts.append(
-                        f"**Visual Style:** {guideline.visual_style_summary}",
-                    )
-                if guideline.tone_of_voice_summary:
-                    prefix_parts.append(
-                        f"**Tone of Voice:** {guideline.tone_of_voice_summary}",
-                    )
-                prefix_parts.append("\n---")
-                brand_guideline_prefix = "\n".join(prefix_parts) + "\n\n"
-                dto.prompt = brand_guideline_prefix + dto.prompt
-            else:
-                logger.info(
-                    "No brand guidelines found for workspace '%s'.",
-                    guideline_workspace_id,
-                )
 
         prompt_template = (
             REWRITE_IMAGE_JSON_PROMPT_TEMPLATE
@@ -522,6 +490,59 @@ class GeminiService:
             prompt_template=prompt_template,
             response_mime_type=response_mime_type,
         )
+
+    async def apply_brand_guidelines_to_dto(
+        self,
+        dto: CreateImagenDto | CreateVeoDto,
+        *,
+        for_rewrite: bool = False,
+    ) -> str:
+        """Returns prompt prefixed with workspace brand guidelines when active."""
+        guideline_workspace_id = (
+            dto.context_workspace_id
+            if isinstance(dto, (CreateImagenDto, CreateVeoDto))
+            and dto.context_workspace_id
+            else dto.workspace_id
+        )
+        if (
+            dto.use_brand_guidelines
+            and guideline_workspace_id
+            and not self._is_gemini_i2i(dto)
+        ):
+            search_dto = BrandGuidelineSearchDto(
+                workspace_id=guideline_workspace_id, limit=1
+            )
+            guideline_response = await self.brand_guideline_repo.query(
+                search_dto,
+                workspace_id=guideline_workspace_id,
+            )
+
+            if guideline_response and guideline_response.data:
+                guideline = guideline_response.data[0]
+                visual = (guideline.visual_style_summary or "").strip()
+                tone = (guideline.tone_of_voice_summary or "").strip()
+                if not visual and not tone:
+                    return dto.prompt
+                header = (
+                    "Based on the following brand guidelines, "
+                    "enhance the user's prompt."
+                    if for_rewrite
+                    else "Follow these brand guidelines when generating:"
+                )
+                prefix_parts = [header]
+                if visual:
+                    prefix_parts.append(f"**Visual Style:** {visual}")
+                if tone:
+                    prefix_parts.append(f"**Tone of Voice:** {tone}")
+                prefix_parts.append("\n---")
+                brand_guideline_prefix = "\n".join(prefix_parts) + "\n\n"
+                return brand_guideline_prefix + dto.prompt
+            else:
+                logger.info(
+                    "No brand guidelines found for workspace '%s'.",
+                    guideline_workspace_id,
+                )
+        return dto.prompt
 
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=10),

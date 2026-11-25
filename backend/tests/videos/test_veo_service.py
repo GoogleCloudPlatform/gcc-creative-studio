@@ -2612,6 +2612,350 @@ class TestBackgroundWorkers:
                 failed_update.get("error_message") or ""
             )
 
+    @patch("src.database.WorkerDatabase")
+    @patch("src.multimodal.gemini_service.GeminiModelSetup.init")
+    @patch("src.videos.veo_service.GenAIModelSetup.init")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_applies_brand_guidelines_without_enhance_prompt(
+        self,
+        mock_thumb,
+        mock_genai_init,
+        mock_gemini_model_init,
+        mock_worker_db_class,
+    ):
+        sample_dto = CreateVeoDto(
+            workspace_id=10,
+            context_workspace_id=20,
+            prompt="A modern desk lamp in motion",
+            generation_model=GenerationModelEnum.VEO_3_QUALITY,
+            aspect_ratio="16:9",
+            duration_seconds=5,
+            use_brand_guidelines=True,
+            enhance_prompt=False,
+            metadata_generation_model=None,
+        )
+
+        mock_worker_db_class.return_value.__aenter__.return_value = MagicMock(
+            return_value=AsyncMock()
+        )
+        mock_client = MagicMock()
+        mock_genai_init.return_value = mock_client
+        mock_gemini_model_init.return_value = MagicMock()
+
+        from src.config.config_service import config_service as cfg
+
+        mock_generated_video = MagicMock()
+        mock_generated_video.video.uri = (
+            f"gs://{cfg.GENMEDIA_BUCKET}/output_0.mp4"
+        )
+        mock_operation = MagicMock(done=True, error=None)
+        mock_operation.response.generated_videos = [mock_generated_video]
+        mock_client.models.generate_videos.return_value = mock_operation
+        mock_client.operations.get.return_value = mock_operation
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        mock_guideline = MagicMock(
+            visual_style_summary="Warm cinematic editorial lighting",
+            tone_of_voice_summary="Confident minimalist",
+        )
+        mock_brand_repo = AsyncMock()
+        mock_brand_repo.query.return_value = MagicMock(data=[mock_guideline])
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_media_cls,
+            patch("src.videos.veo_service.SourceAssetRepository"),
+            patch(
+                "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository",
+                return_value=mock_brand_repo,
+            ),
+            patch("src.videos.veo_service.GcsService") as mock_gcs_cls,
+            patch(
+                "src.multimodal.gemini_service.GeminiService.generate_structured_prompt"
+            ) as mock_structured,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_cls.return_value = mock_media_repo
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_cls.return_value = mock_gcs_service
+            mock_gcs_service.download_from_gcs.return_value = "/tmp/local.mp4"
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/thumb.png"
+            )
+
+            _process_video_in_background(
+                media_item_id=126,
+                request_dto=sample_dto,
+                user_email="user@example.com",
+            )
+
+        mock_structured.assert_not_called()
+        mock_brand_repo.query.assert_awaited_once()
+        assert mock_brand_repo.query.call_args.kwargs["workspace_id"] == 20
+        assert mock_brand_repo.query.call_args.args[0].workspace_id == 20
+
+        gen_prompt = mock_client.models.generate_videos.call_args.kwargs[
+            "prompt"
+        ]
+        saved_prompt = mock_media_repo.update.call_args.args[1]["prompt"]
+        for actual in (gen_prompt, saved_prompt):
+            assert actual.startswith(
+                "Follow these brand guidelines when generating:"
+            )
+            assert "Warm cinematic editorial lighting" in actual
+            assert "Confident minimalist" in actual
+            assert actual.endswith("\n---\n\nA modern desk lamp in motion")
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.multimodal.gemini_service.GeminiModelSetup.init")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_omni_9_16_brand_guidelines_preserves_directive(
+        self,
+        mock_thumb,
+        mock_gemini_init,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import MimeTypeEnum
+
+        mock_gemini_init.return_value = MagicMock()
+        sample_dto = CreateVeoDto(
+            workspace_id=10,
+            context_workspace_id=20,
+            prompt="A sleek ceramic mug",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="9:16",
+            duration_seconds=5,
+            enhance_prompt=False,
+            use_brand_guidelines=True,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_interaction = MagicMock(id="interaction-916")
+        mock_step = MagicMock(type="model_output")
+        mock_content = MagicMock(
+            type="video",
+            data="ZmFrZS1vbW5pLXZpZGVvLWJ5dGVz",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+        )
+        mock_step.content = [mock_content]
+        mock_interaction.steps = [mock_step]
+        mock_vertex_client.interactions.create.return_value = mock_interaction
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        mock_guideline = MagicMock(
+            visual_style_summary="Warm portrait photography",
+            tone_of_voice_summary="",
+        )
+        mock_brand_repo = AsyncMock()
+        mock_brand_repo.query.return_value = MagicMock(data=[mock_guideline])
+
+        brand_repo_target = (
+            "src.brand_guidelines.repository."
+            "brand_guideline_repository.BrandGuidelineRepository"
+        )
+        structured_target = (
+            "src.multimodal.gemini_service."
+            "GeminiService.generate_structured_prompt"
+        )
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_media_cls,
+            patch("src.videos.veo_service.SourceAssetRepository"),
+            patch(brand_repo_target, return_value=mock_brand_repo),
+            patch("src.videos.veo_service.GcsService") as mock_gcs_cls,
+            patch(structured_target) as mock_structured,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_cls.return_value = mock_media_repo
+            mock_gcs_service = MagicMock()
+            mock_gcs_cls.return_value = mock_gcs_service
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/thumb.png"
+            )
+
+            _process_video_in_background(
+                media_item_id=127,
+                request_dto=sample_dto,
+                user_email="user@example.com",
+            )
+
+        mock_structured.assert_not_called()
+        call_kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        omni_text = call_kwargs["input"][0]["text"]
+        assert omni_text.startswith(
+            "Follow these brand guidelines when generating:"
+        )
+        assert "Warm portrait photography" in omni_text
+        assert omni_text.endswith(
+            "\n---\n\nA sleek ceramic mug\n"
+            "Aspect ratio: 9:16 vertical portrait format. Resolution: 720p."
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.multimodal.gemini_service.GeminiModelSetup.init")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_empty_extension_with_brand_guidelines(
+        self,
+        mock_thumb,
+        mock_gemini_init,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import (
+            AssetRoleEnum,
+            MimeTypeEnum,
+            SourceMediaItemLink,
+        )
+
+        mock_gemini_init.return_value = MagicMock()
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            duration_seconds=5,
+            enhance_prompt=False,
+            use_brand_guidelines=True,
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=33,
+                    media_index=0,
+                    role=AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
+                ),
+            ],
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_interaction = MagicMock(id="interaction-ext")
+        mock_step = MagicMock(type="model_output")
+        mock_content = MagicMock(
+            type="video",
+            data="ZmFrZS1vbW5pLXZpZGVvLWJ5dGVz",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+        )
+        mock_step.content = [mock_content]
+        mock_interaction.steps = [mock_step]
+        mock_vertex_client.interactions.create.return_value = mock_interaction
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        mock_guideline = MagicMock(
+            visual_style_summary="Crisp natural daylight",
+            tone_of_voice_summary="",
+        )
+        mock_brand_repo = AsyncMock()
+        mock_brand_repo.query.return_value = MagicMock(data=[mock_guideline])
+
+        brand_repo_target = (
+            "src.brand_guidelines.repository."
+            "brand_guideline_repository.BrandGuidelineRepository"
+        )
+        structured_target = (
+            "src.multimodal.gemini_service."
+            "GeminiService.generate_structured_prompt"
+        )
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_media_cls,
+            patch("src.videos.veo_service.SourceAssetRepository"),
+            patch(brand_repo_target, return_value=mock_brand_repo),
+            patch("src.videos.veo_service.GcsService") as mock_gcs_cls,
+            patch(structured_target) as mock_structured,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_cls.return_value = mock_media_repo
+            mock_media_repo.get_by_id.return_value = _build_video_media_item(33)
+            mock_gcs_service = MagicMock()
+            mock_gcs_cls.return_value = mock_gcs_service
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/thumb.png"
+            )
+
+            _process_video_in_background(
+                media_item_id=128,
+                request_dto=sample_dto,
+                user_email="user@example.com",
+            )
+
+        mock_structured.assert_not_called()
+        call_kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        omni_text = call_kwargs["input"][0]["text"]
+        saved_prompt = mock_media_repo.update.call_args.args[1]["prompt"]
+        for actual in (omni_text, saved_prompt):
+            assert actual.startswith(
+                "Follow these brand guidelines when generating:"
+            )
+            assert "Crisp natural daylight" in actual
+            assert actual.endswith("\n---\n\nContinue the video seamlessly.")
+
+    def test_process_video_in_background_empty_extension_without_guidelines_preserves_empty_prompt(
+        self,
+    ):
+        from src.config.config_service import config_service as cfg
+
+        db_cls = MagicMock()
+        db_cls.return_value.__aenter__.return_value = MagicMock(
+            return_value=AsyncMock()
+        )
+        op = MagicMock(done=True, error=None)
+        op.response.generated_videos = [
+            MagicMock(video=MagicMock(uri=f"gs://{cfg.GENMEDIA_BUCKET}/o.mp4"))
+        ]
+        client = MagicMock()
+        client.models.generate_videos.return_value = op
+        client.operations.get.return_value = op
+        media_repo = AsyncMock()
+        media_repo.get_by_id.return_value = _build_video_media_item(5)
+        brand_repo = AsyncMock()
+        brand_repo.query.return_value = MagicMock(data=[])
+        gcs = MagicMock()
+        gcs.download_from_gcs.return_value = "/tmp/local.mp4"
+        gcs.upload_file_to_gcs.return_value = "gs://b/t.png"
+        dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            enhance_prompt=False,
+            use_brand_guidelines=True,
+            source_video_asset_id={"id": 5, "type": "media_item"},
+        )
+        bg_path = "src.brand_guidelines.repository.brand_guideline_repository.BrandGuidelineRepository"
+        with (
+            patch("src.database.WorkerDatabase", db_cls),
+            patch("src.multimodal.gemini_service.GeminiModelSetup.init"),
+            patch.multiple(
+                "src.videos.veo_service",
+                GenAIModelSetup=MagicMock(init=MagicMock(return_value=client)),
+                MediaRepository=MagicMock(return_value=media_repo),
+                SourceAssetRepository=MagicMock(),
+                GcsService=MagicMock(return_value=gcs),
+                generate_thumbnail=MagicMock(return_value="/tmp/t/thumb.png"),
+                shutil=MagicMock(),
+            ),
+            patch(bg_path, return_value=brand_repo),
+        ):
+            _process_video_in_background(
+                media_item_id=129,
+                request_dto=dto,
+                user_email="user@example.com",
+            )
+        assert client.models.generate_videos.call_args.kwargs["prompt"] == ""
+        assert media_repo.update.call_args.args[1]["prompt"] == ""
+
 
 def _build_video_media_item(item_id: int, **overrides) -> MediaItemModel:
     """Builds a same-workspace video MediaItem, applying unvalidated overrides."""

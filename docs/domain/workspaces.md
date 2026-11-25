@@ -35,6 +35,7 @@ Source files:
 ## Brand Guidelines (Shared Workspaces Only)
 
 - Brand Guidelines belong strictly to shared (`PUBLIC` or `PRIVATE`) workspaces (`400` if targeting a `PERSONAL` workspace). Management (`generate_signed_upload_url`, create, update, delete) requires `is_workspace_manager`; reads require workspace membership (`authorize`).
+- When `use_brand_guidelines` is enabled on image or video generation (`CreateImagenDto` / `CreateVeoDto`), `GeminiService.apply_brand_guidelines_to_dto` resolves `context_workspace_id` before `workspace_id` and injects non-blank brand guideline summaries directly even when `enhance_prompt` is off (skipping Gemini image-to-image targeted edits).
 
 ## Workbench Projects, Timelines & Private Clip Access
 
