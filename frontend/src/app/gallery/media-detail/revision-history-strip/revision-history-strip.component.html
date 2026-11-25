@@ -56,7 +56,7 @@
 
   @if (activeTake; as currentTake) {
     <div class="take-actions">
-      @if (!(currentTake.mimeType || '').startsWith('audio/')) {
+      @if (canEditTake(currentTake)) {
         <button
           id="revision-edit-btn"
           mat-stroked-button

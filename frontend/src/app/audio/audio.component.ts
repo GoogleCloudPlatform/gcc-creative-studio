@@ -170,6 +170,7 @@ export class AudioComponent implements OnInit {
   enhancePrompt = false;
   referenceImages: ReferenceImage[] = [];
   referenceAudio: AudioReferenceSelection | null = null;
+  parentMediaItemId: number | null = null;
 
   readonly selectedLanguage = signal<LanguageEnum>(LanguageEnum.EN_US);
   readonly selectedVoice = signal<VoiceEnum | string>(VoiceEnum.PUCK);
@@ -305,6 +306,7 @@ export class AudioComponent implements OnInit {
   private pendingRemixState?: {
     lyriaModel?: string;
     referenceAudio?: AudioReferenceSelection;
+    parentMediaItemId?: number | null;
   };
 
   constructor(
@@ -332,13 +334,17 @@ export class AudioComponent implements OnInit {
   ngOnInit() {
     this.restoreState();
     if (this.pendingRemixState?.referenceAudio) {
-      const {referenceAudio, lyriaModel} = this.pendingRemixState;
+      const {referenceAudio, lyriaModel, parentMediaItemId} =
+        this.pendingRemixState;
       this.pendingRemixState = undefined;
       if (typeof history !== 'undefined' && history.state?.remixState) {
         const {remixState: _, ...restState} = history.state;
         history.replaceState(restState, '');
       }
-      this.applyAudioIteration(referenceAudio, lyriaModel);
+      const resolvedParentId =
+        parentMediaItemId ??
+        (referenceAudio.type === 'media_item' ? referenceAudio.id : null);
+      this.applyAudioIteration(referenceAudio, lyriaModel, resolvedParentId);
     }
   }
 
@@ -623,6 +629,7 @@ export class AudioComponent implements OnInit {
       if (!res) return;
 
       if ('gcsUri' in res) {
+        this.parentMediaItemId = null;
         this.referenceAudio = {
           id: res.id,
           type: 'source_asset',
@@ -634,6 +641,7 @@ export class AudioComponent implements OnInit {
           index: 0,
         };
       } else if (res.mediaItem?.id) {
+        this.parentMediaItemId = null;
         const index = res.selectedIndex ?? 0;
         this.referenceAudio = {
           id: res.mediaItem.id,
@@ -692,6 +700,7 @@ export class AudioComponent implements OnInit {
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
           if (asset?.id && this.selectedModel === 'lyria') {
+            this.parentMediaItemId = null;
             this.referenceAudio = {
               id: asset.id,
               type: 'source_asset',
@@ -712,6 +721,7 @@ export class AudioComponent implements OnInit {
   clearReferenceAudio(event: Event): void {
     event.stopPropagation();
     this.referenceAudio = null;
+    this.parentMediaItemId = null;
   }
 
   private normalizeDroppedAudioFile(file: File): File | null {
@@ -803,6 +813,14 @@ export class AudioComponent implements OnInit {
       }
     }
 
+    const parentMediaItemId =
+      isLyria &&
+      this.parentMediaItemId !== null &&
+      this.referenceAudio?.type === 'media_item' &&
+      this.referenceAudio.id === this.parentMediaItemId
+        ? this.parentMediaItemId
+        : undefined;
+
     const request: CreateAudioDto = {
       model: backendModel,
       prompt: this.prompt,
@@ -824,6 +842,7 @@ export class AudioComponent implements OnInit {
               index: this.referenceAudio.index,
             }
           : undefined,
+      ...(parentMediaItemId !== undefined ? {parentMediaItemId} : {}),
       languageCode: !isLyria ? this.selectedLanguage() : undefined,
       voiceName: !isLyria ? (this.selectedVoice() as VoiceEnum) : undefined,
     };
@@ -892,11 +911,16 @@ export class AudioComponent implements OnInit {
     selectedIndex: number;
   }): void {
     if (!event.mediaItem?.id) return;
-    const {referenceAudio, lyriaModel} = buildAudioIterationRemixState(
-      event.mediaItem as any,
-      event.selectedIndex,
+    const {referenceAudio, lyriaModel, parentMediaItemId} =
+      buildAudioIterationRemixState(
+        event.mediaItem as any,
+        event.selectedIndex,
+      );
+    this.applyAudioIteration(
+      referenceAudio,
+      lyriaModel,
+      parentMediaItemId ?? null,
     );
-    this.applyAudioIteration(referenceAudio, lyriaModel);
     handleInfoSnackbar(
       this.snackBar,
       `Attached "${referenceAudio.name}" as Audio Ref — describe your next change below.`,
@@ -906,12 +930,17 @@ export class AudioComponent implements OnInit {
   private applyAudioIteration(
     referenceAudio: AudioReferenceSelection,
     lyriaModel?: string,
+    parentMediaItemId: number | null = null,
   ): void {
     this.selectedModel = 'lyria';
     if (lyriaModel && this.lyriaModels.some(m => m.value === lyriaModel)) {
       this.onLyriaModelChange(lyriaModel);
     }
     this.referenceAudio = referenceAudio;
+    this.parentMediaItemId =
+      referenceAudio.type === 'media_item'
+        ? (parentMediaItemId ?? referenceAudio.id)
+        : null;
     this.referenceImages = [];
     this.prompt = '';
     this.seed = undefined;

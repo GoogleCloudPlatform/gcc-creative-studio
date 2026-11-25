@@ -389,9 +389,14 @@ export function buildAudioIterationRemixState(
     gcsUris?: string[];
   },
   selectedIndex = 0,
-): {lyriaModel?: string; referenceAudio: ReferenceAudio} {
+): {
+  lyriaModel?: string;
+  referenceAudio: ReferenceAudio;
+  parentMediaItemId?: number;
+} {
   const index = selectedIndex ?? 0;
   const totalTracks = item.presignedUrls?.length || item.gcsUris?.length || 1;
+  const isSourceAsset = item.itemType === 'source_asset';
   const baseName =
     item.titles?.[index] ||
     item.titles?.[0] ||
@@ -400,9 +405,10 @@ export function buildAudioIterationRemixState(
     'Audio Reference';
   return {
     lyriaModel: item.model?.startsWith('lyria') ? item.model : undefined,
+    ...(isSourceAsset ? {} : {parentMediaItemId: item.id}),
     referenceAudio: {
       id: item.id,
-      type: item.itemType === 'source_asset' ? 'source_asset' : 'media_item',
+      type: isSourceAsset ? 'source_asset' : 'media_item',
       index,
       name: totalTracks > 1 ? `${baseName} (Track ${index + 1})` : baseName,
     },

@@ -115,14 +115,42 @@ describe('RevisionHistoryStripComponent', () => {
     expect(deleteBtn.disabled).toBeTrue();
   });
 
-  it('hides Edit from vN button for audio takes', () => {
-    component.takes = [
-      {...takes[0], mimeType: 'audio/wav'},
-      {...takes[1], mimeType: 'audio/wav'},
-    ];
-    component.selectedTakeId = 102;
+  it('shows Edit from vN for Lyria audio takes and hides it for non-Lyria or unknown-model audio takes', () => {
+    const editSpy = spyOn(component.editFromRequested, 'emit');
+    const lyriaTake: GalleryItem = {
+      ...takes[0],
+      mimeType: 'audio/wav',
+      model: 'lyria-3-clip-preview',
+    };
+    const ttsTake: GalleryItem = {
+      ...takes[1],
+      mimeType: 'audio/wav',
+      model: 'chirp_3',
+    };
+    const unknownAudioTake: GalleryItem = {
+      ...takes[2],
+      mimeType: 'audio/wav',
+      model: undefined,
+    };
+    component.takes = [lyriaTake, ttsTake, unknownAudioTake];
+    component.selectedTakeId = lyriaTake.id;
     fixture.detectChanges();
 
+    const lyriaEditBtn = fixture.nativeElement.querySelector(
+      '#revision-edit-btn',
+    ) as HTMLButtonElement | null;
+    expect(lyriaEditBtn).not.toBeNull();
+    lyriaEditBtn!.click();
+    expect(editSpy).toHaveBeenCalledOnceWith(lyriaTake);
+
+    component.selectedTakeId = ttsTake.id;
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('#revision-edit-btn'),
+    ).toBeNull();
+
+    component.selectedTakeId = unknownAudioTake.id;
+    fixture.detectChanges();
     expect(
       fixture.nativeElement.querySelector('#revision-edit-btn'),
     ).toBeNull();

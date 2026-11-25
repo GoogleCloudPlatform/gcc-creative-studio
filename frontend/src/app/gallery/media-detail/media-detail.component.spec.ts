@@ -505,6 +505,7 @@ describe('MediaDetailComponent', () => {
         state: {
           remixState: {
             lyriaModel: 'lyria-3-pro-preview',
+            parentMediaItemId: 502,
             referenceAudio: {
               id: 502,
               type: 'media_item',
@@ -865,6 +866,7 @@ describe('MediaDetailComponent', () => {
         jasmine.objectContaining({
           state: {
             remixState: jasmine.objectContaining({
+              parentMediaItemId: 130,
               referenceAudio: jasmine.objectContaining({id: 130}),
             }),
           },

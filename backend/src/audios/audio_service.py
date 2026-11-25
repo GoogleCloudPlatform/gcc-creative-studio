@@ -1372,11 +1372,25 @@ class AudioService:
             user,
             requested_folder_id=request_dto.folder_id,
         )
+        audio_ref_source_media = (
+            [
+                SourceMediaItemLink(
+                    media_item_id=request_dto.reference_audio.id,
+                    media_index=request_dto.reference_audio.index or 0,
+                    role=AssetRoleEnum.AUDIO_REFERENCE,
+                )
+            ]
+            if is_music
+            and request_dto.reference_audio is not None
+            and request_dto.reference_audio.type == "media_item"
+            else None
+        )
         lineage = await resolve_revision_lineage(
             self.media_repo.db,
             user,
             ctx.output_workspace_id,
             explicit_parent_id=request_dto.parent_media_item_id,
+            source_media_items=audio_ref_source_media,
             requested_folder_id=request_dto.folder_id,
             resolved_folder_id=ctx.resolved_folder_id,
         )

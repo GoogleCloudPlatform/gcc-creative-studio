@@ -118,4 +118,11 @@ export class RevisionHistoryStripComponent implements OnChanges {
   getTakePreviewUrl(take: GalleryItem): string | null {
     return take.presignedThumbnailUrls?.[0] || take.presignedUrls?.[0] || null;
   }
+
+  canEditTake(take: GalleryItem): boolean {
+    if (!(take.mimeType || '').startsWith('audio/')) {
+      return true;
+    }
+    return (take.model || '').toLowerCase().startsWith('lyria');
+  }
 }
