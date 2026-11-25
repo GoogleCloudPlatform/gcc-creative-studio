@@ -69,10 +69,10 @@ GitHub Actions checks every PR to `develop`, `test` or `main`:
 
 | Check | Rule |
 | --- | --- |
-| Pre-commit | Style and license headers pass |
-| Backend tests | Coverage 80% or more (`pytest-cov`) |
-| Backend lint | `pylint` score 9.0/10 or more |
-| Frontend lint | `gts` passes |
+| License check | Apache 2.0 headers pass (`addlicense`) |
+| Backend format & lint | `black --check` and `pylint` score 9.0/10 or more |
+| Backend tests | Alembic migrations and `pytest` coverage 80% or more (`pytest-cov`) |
+| Frontend quality | `gts lint`, `npm run compile` and Karma unit tests pass |
 
 ### AI review (on demand)
 
