@@ -34,6 +34,8 @@ import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialo
 import {MediaItem} from '../../models/media-item.model';
 import {TagModel} from '../../services/tags.service';
 import {GalleryDragPayload} from '../../models/folder.model';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 
 @Component({
   selector: 'app-gallery-card',
@@ -48,11 +50,33 @@ export class GalleryCardComponent implements OnDestroy {
     private userService: UserService,
     public dialog: MatDialog,
     @Inject(PLATFORM_ID) private platformId: Object,
+    private workspaceStateService: WorkspaceStateService,
+    private promoteLauncher: PromoteLauncherService,
   ) {
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
   }
-  @Input() item!: GalleryItem;
+  private _item!: GalleryItem;
+  private visitedIndices = new Set<number>([0]);
+
+  @Input()
+  set item(value: GalleryItem) {
+    const isSameItem =
+      this._item?.id === value?.id && this._item?.itemType === value?.itemType;
+    this._item = value;
+    if (!isSameItem) {
+      this.resetCarouselState();
+    }
+  }
+  get item(): GalleryItem {
+    return this._item;
+  }
+
+  private resetCarouselState(): void {
+    this.currentImageIndex = 0;
+    this.visitedIndices = new Set<number>([0]);
+    this.loadedMedia = {};
+  }
   @Input() isSelectionMode = false;
   @Input() isSelectorMode = false;
   @Input() isSelected = false;
@@ -75,6 +99,7 @@ export class GalleryCardComponent implements OnDestroy {
 
   @Output() mediaItemSelected = new EventEmitter<MediaItemSelection>();
   @Output() mediaSelected = new EventEmitter<GalleryItem>();
+  @Output() promoted = new EventEmitter<void>();
   @Output() selectionToggled = new EventEmitter<{
     item: GalleryItem;
     event: MouseEvent;
@@ -87,6 +112,78 @@ export class GalleryCardComponent implements OnDestroy {
   loadedMedia: Record<number, boolean> = {};
   hoveredVideoId: number | null = null;
   hoveredAudioId: number | null = null;
+
+  get isInPersonalWorkspace(): boolean {
+    return this.workspaceStateService.isPersonalItem(this.item);
+  }
+
+  get cardStatusText(): string {
+    if (!this.item) {
+      return '';
+    }
+    const revCount = this.item.revisionCount ?? 1;
+    const revNum = this.item.revisionNumber ?? revCount;
+    const promos = this.item.promotions ?? [];
+    const maxPromotedRev =
+      promos.length > 0
+        ? Math.max(...promos.map(p => p.promotedRevisionNumber ?? 0))
+        : 0;
+    const targetNames = Array.from(
+      new Set(
+        promos
+          .map(p => p.targetWorkspaceName)
+          .filter((name): name is string => !!name),
+      ),
+    );
+    const sharedLabel =
+      targetNames.length === 1
+        ? `in ${targetNames[0]}`
+        : targetNames.length > 1
+          ? `in ${targetNames.length} workspaces`
+          : promos.length > 1
+            ? `in ${promos.length} workspaces`
+            : 'shared';
+
+    if (
+      promos.length > 0 &&
+      maxPromotedRev > 0 &&
+      revCount > 1 &&
+      revNum > maxPromotedRev
+    ) {
+      return `${revCount} versions · v${maxPromotedRev} ${sharedLabel} · v${revNum} latest`;
+    }
+
+    const parts: string[] = [];
+    if (revCount > 1) {
+      parts.push(`v${revNum} · ${revCount} versions`);
+    }
+    if (promos.length > 0) {
+      parts.push(
+        targetNames.length === 1
+          ? `Shared to ${targetNames[0]}`
+          : targetNames.length > 1
+            ? `Shared to ${targetNames.join(', ')}`
+            : 'Promoted',
+      );
+    }
+    return parts.join(' · ');
+  }
+
+  openQuickPromote(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.item?.id) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: this.item.workspaceId,
+        items: [{id: this.item.id, type: this.item.itemType || 'media_item'}],
+        itemLabel:
+          this.item.titles?.[0] || this.getShortPrompt(this.item.prompt),
+      })
+      .subscribe(() => this.promoted.emit());
+  }
 
   get displayUrls(): string[] {
     if (
@@ -198,14 +295,26 @@ export class GalleryCardComponent implements OnDestroy {
     event.stopPropagation();
     event.preventDefault();
     const total = this.displayUrls.length;
+    if (total <= 0) return;
     this.currentImageIndex = (this.currentImageIndex + 1) % total;
+    this.visitedIndices.add(this.currentImageIndex);
   }
 
   prevImageItem(event: Event) {
     event.stopPropagation();
     event.preventDefault();
     const total = this.displayUrls.length;
+    if (total <= 0) return;
     this.currentImageIndex = (this.currentImageIndex - 1 + total) % total;
+    this.visitedIndices.add(this.currentImageIndex);
+  }
+
+  shouldRenderSlide(index: number): boolean {
+    return index === this.currentImageIndex || this.visitedIndices.has(index);
+  }
+
+  trackByIndex(index: number): number {
+    return index;
   }
 
   onMediaLoad(index = 0): void {

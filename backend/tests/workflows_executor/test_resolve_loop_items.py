@@ -89,6 +89,9 @@ def fixture_deps():
             3,
         )
     )
+    gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={}
+    )
     workspace_auth = MagicMock()
     workspace_auth.authorize = AsyncMock(return_value=None)
     return SimpleNamespace(
@@ -109,13 +112,14 @@ def _guard(cached=None):
     return guard
 
 
-def _request(**config):
+def _request(folder_id=42, **config):
     body = {
         "run_id": "run-1",
         "step_id": "loop_1",
         "execution_id": "exec-1",
         "workspace_id": 1,
-        "config": {"mode": "folder", "folder_id": 42, **config},
+        "inputs": {"folder": folder_id},
+        "config": {"mode": "folder", **config},
     }
     return body
 
@@ -163,7 +167,7 @@ async def test_folder_mode_lists_scalar_items_and_checkpoints_inputs(
         outputs,
         step_inputs={
             "mode": "folder",
-            "folder_id": 42,
+            "folder": 42,
             "folder_name": "Product Photos",
             "item_type": "image",
         },
@@ -266,8 +270,18 @@ async def test_folder_mode_requires_folder_id(service, deps):
     with pytest.raises(StepError) as exc_info:
         await _resolve(service, deps, _request(folder_id=None))
 
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.error_category is ErrorCategory.INVALID_INPUT
+    _assert_invalid_input(
+        exc_info, "A Media Gallery folder is required in folder mode."
+    )
+    deps.workspace_auth.authorize.assert_not_awaited()
+    deps.folder_repository.get_folder_by_id.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_folder_mode_reads_folder_from_inputs(service, deps):
+    await _resolve(service, deps, _request(folder_id=42))
+
+    deps.folder_repository.get_folder_by_id.assert_awaited_once_with(42)
 
 
 @pytest.mark.anyio
@@ -583,6 +597,50 @@ async def test_linked_mode_inaccessible_gallery_pick_is_422(
         exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
     )
     guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_allows_cross_workspace_items_when_authorized(
+    service, deps
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND - _found(("source_asset", 7))
+    )
+    deps.gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={("source_asset", 7): 22}
+    )
+
+    outputs = await _resolve(service, deps, _linked_request(GALLERY_PICKS))
+
+    assert outputs["items"] == GALLERY_PICK_VALUES
+    deps.workspace_auth.authorize.assert_any_await(
+        workspace_id=22, user=deps.user
+    )
+
+
+@pytest.mark.anyio
+async def test_linked_mode_denies_unauthorized_cross_workspace_item(
+    service, deps
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND - _found(("source_asset", 7))
+    )
+    deps.gallery_repository.lookup_linked_loop_item_workspaces = AsyncMock(
+        return_value={("source_asset", 7): 22}
+    )
+
+    async def _auth(*, workspace_id, user):
+        if workspace_id == 22:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    deps.workspace_auth.authorize.side_effect = _auth
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request(GALLERY_PICKS))
+
+    _assert_invalid_input(
+        exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
+    )
 
 
 @pytest.mark.anyio

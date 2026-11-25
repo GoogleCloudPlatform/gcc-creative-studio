@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 import datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 from sqlalchemy import (
     Boolean,
@@ -135,6 +136,7 @@ class SourceMediaItemLink(BaseModel):
         populate_by_name=True,
         from_attributes=True,
         alias_generator=to_camel,
+        extra="forbid",
     )
 
 
@@ -234,6 +236,34 @@ class MediaItem(Base):
         nullable=True,
     )
 
+    # Revision stack & promotion lineage
+    revision_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    revision_parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    revision_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    promoted_from_media_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    promoted_from_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         insert_default=func.now(),
@@ -307,6 +337,26 @@ class MediaItemModel(BaseDocument):
     media item. It links to parent items from the 'media_library' collection.
     """
 
+    @field_validator("source_media_items", mode="before")
+    @classmethod
+    def _strip_unknown_source_media_link_keys(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        allowed: set[str] = set()
+        for fname, finfo in SourceMediaItemLink.model_fields.items():
+            allowed.add(fname)
+            if finfo.alias:
+                allowed.add(finfo.alias)
+            allowed.add(to_camel(fname))
+        return [
+            (
+                {k: v for k, v in item.items() if k in allowed}
+                if isinstance(item, Mapping)
+                else item
+            )
+            for item in value
+        ]
+
     gcs_uris: Annotated[
         list[str],
         Field(
@@ -354,5 +404,16 @@ class MediaItemModel(BaseDocument):
         default=None,
         description="The ID of the template used to generate this item, if any.",
     )
+    revision_root_id: int | None = None
+    revision_parent_id: int | None = None
+    revision_number: int = 1
+    promoted_from_media_item_id: int | None = None
+    promoted_from_root_id: int | None = None
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None
+
+    @field_validator("revision_number", mode="before")
+    @classmethod
+    def default_revision_number(cls, v: int | None) -> int:
+        """Defaults unpopulated/None revision_number values to 1."""
+        return 1 if v is None else v

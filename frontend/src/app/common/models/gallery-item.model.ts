@@ -14,18 +14,74 @@
  * limitations under the License.
  */
 
+import {PromotionSummary} from './media-item.model';
 import {PaginatedResponse} from './paginated-response.model';
 import {TagModel} from '../services/tags.service';
+
+export type {PromotionSummary};
+
+export interface BulkCopyItem {
+  id: number;
+  type: string;
+}
+
+export interface PromoteTargetWorkspace {
+  workspaceId: number;
+  workspaceName: string;
+  scope: string;
+  currentUserRole?: string | null;
+  existingCount: number;
+  newCount: number;
+  existingPromotion?: PromotionSummary | null;
+}
+
+export interface PromoteItemsRequest {
+  items: BulkCopyItem[];
+  sourceWorkspaceId: number;
+  targetWorkspaceId: number;
+  targetFolderId?: number | null;
+  clearTargetFolder?: boolean;
+  mode?: 'update_or_create' | 'create_new';
+}
+
+export interface PromoteResultItem {
+  sourceId: number;
+  sourceType: string;
+  targetId: number;
+  targetWorkspaceId: number;
+  targetFolderId?: number | null;
+  action: string;
+}
+
+export interface PromoteResponse {
+  promotedCount: number;
+  updatedCount: number;
+  createdCount: number;
+  targetWorkspaceId: number;
+  targetFolderId?: number | null;
+  promotedItems: PromoteResultItem[];
+}
 
 export interface BaseGalleryItem {
   id: number;
   workspaceId: number;
+  workspaceName?: string;
+  workspaceScope?: string;
   folderId?: number;
   userId?: number;
   createdAt: string;
   status?: string;
   deletedAt?: string;
   tags?: TagModel[];
+
+  revisionRootId?: number | null;
+  revisionParentId?: number | null;
+  revisionNumber?: number;
+  revisionCount?: number;
+  isLatestRevision?: boolean;
+  promotedFromMediaItemId?: number | null;
+  promotedFromRootId?: number | null;
+  promotions?: PromotionSummary[];
 
   // Display fields
   titles?: string[];
@@ -132,3 +188,10 @@ export interface SourceAssetGallery extends BaseGalleryItem {
 
 export type GalleryItem = MediaItemGallery | SourceAssetGallery;
 export type PaginatedGalleryResponse = PaginatedResponse<GalleryItem>;
+
+export interface RevisionHistoryResponse {
+  rootId: number;
+  revisionCount: number;
+  takes: GalleryItem[];
+  promotions?: PromotionSummary[];
+}

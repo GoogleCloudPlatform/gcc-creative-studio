@@ -23,7 +23,29 @@ from pydantic import (
     model_validator,
 )
 from pydantic.alias_generators import to_camel
+from src.common.base_dto import BaseDto
+from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.tags.schema.tags_model import TagModel
+
+
+class PromotionSummaryDto(BaseDto):
+    """Summary of an active promoted copy in a shared workspace."""
+
+    target_workspace_id: int
+    target_workspace_name: str
+    target_item_id: int
+    target_folder_id: int | None = None
+    promoted_revision_number: int | None = None
+    promoted_from_media_item_id: int | None = None
+
+
+class RevisionHistoryResponseDto(BaseDto):
+    """Full revision history for a gallery item."""
+
+    root_id: int
+    revision_count: int
+    takes: list[MediaItemResponse]
+    promotions: list[PromotionSummaryDto] = Field(default_factory=list)
 
 
 class UnifiedGalleryItemResponse(BaseModel):
@@ -40,6 +62,8 @@ class UnifiedGalleryItemResponse(BaseModel):
     tags: list[TagModel] = []
     deleted_at: datetime | None = None  # To support frontend filters
     workspace_name: str | None = None
+    workspace_scope: str | None = None
+    is_latest_revision: bool = True
     user_picture: str | None = None
     user_email: str | None = None
     titles: list[str] | None = Field(default_factory=list)

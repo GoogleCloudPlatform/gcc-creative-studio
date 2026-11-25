@@ -198,7 +198,27 @@
             </div>
           </div>
 
-          <div class="flex justify-center gap-4 mt-6" *ngIf="assetPair.upscaled && !isLoadingUpscale">
+          <div class="flex flex-wrap justify-center items-center gap-4 mt-6" *ngIf="assetPair.upscaled && !isLoadingUpscale">
+            <span
+              *ngIf="isCompletedInPersonalWorkspace"
+              class="text-xs text-neutral-400 tabular-nums"
+            >
+              Saved to My Workspace
+            </span>
+
+            <button
+              *ngIf="isCompletedInPersonalWorkspace && completedJobId"
+              id="upscale-promote-btn"
+              mat-flat-button
+              color="primary"
+              type="button"
+              class="!min-h-[40px]"
+              (click)="openPromoteDialog()"
+            >
+              <mat-icon class="mr-1">publish</mat-icon>
+              <span>{{ promoteButtonLabel }}</span>
+            </button>
+
             <button mat-raised-button class="download-btn-upscaler" (click)="downloadUpscaled()">
               <mat-icon class="mr-2">download</mat-icon>Download
             </button>

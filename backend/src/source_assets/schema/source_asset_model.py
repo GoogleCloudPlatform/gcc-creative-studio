@@ -91,6 +91,11 @@ class SourceAsset(Base):
     thumbnail_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     original_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     external_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    promoted_from_source_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_assets.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -145,5 +150,6 @@ class SourceAssetModel(BaseDocument):
     asset_type: AssetTypeEnum = AssetTypeEnum.GENERIC_IMAGE
     thumbnail_gcs_uri: str | None = None  # In case of uploading a video
     external_url: str | None = None
+    promoted_from_source_asset_id: int | None = None
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None

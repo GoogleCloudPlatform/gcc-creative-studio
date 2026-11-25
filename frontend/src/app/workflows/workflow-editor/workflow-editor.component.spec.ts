@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA, PLATFORM_ID} from '@angular/core';
+import {Component, Input, NO_ERRORS_SCHEMA, PLATFORM_ID} from '@angular/core';
 import {
   ComponentFixture,
   TestBed,
@@ -39,16 +39,21 @@ import {MatTooltip, MatTooltipModule} from '@angular/material/tooltip';
 import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
-import {of, throwError} from 'rxjs';
+import {Observable, Subject, of, throwError} from 'rxjs';
 import {MediaResolutionService} from '../shared/media-resolution.service';
+import {RunFolderService} from '../shared/run-folder.service';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
+import {FolderPathMap} from '../utils/folder-path.util';
 import {collectReferenceEdges} from '../utils/workflow-loop.util';
 import {
   DynamicStepRecord,
   EditorMode,
   NodeTypes,
   StepInputUnlinkEvent,
+  StepEntry,
   StepOutputReference,
   StepStatusEnum,
+  WorkflowRunModel,
   WorkflowTemplate,
   WorkflowRunStatusEnum,
 } from '../workflow.models';
@@ -64,8 +69,18 @@ import {WorkflowFormService} from './workflow-form.service';
 import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
 import {FolderService} from '../../common/services/folder.service';
 
+/** Captures the folder paths the editor forwards to the history sidebar. */
+@Component({selector: 'app-step-history-sidebar', template: ''})
+class StepHistorySidebarStubComponent {
+  @Input() folderPaths: FolderPathMap | null = null;
+}
+
 describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   let component: WorkflowEditorComponent;
+  let runFolderServiceSpy: jasmine.SpyObj<RunFolderService>;
+  let workspaceStateStub: {
+    getActiveWorkspaceId: jasmine.Spy<() => number | null>;
+  };
   let fixture: ComponentFixture<WorkflowEditorComponent>;
   let formService: WorkflowFormService;
   let fb: FormBuilder;
@@ -141,8 +156,19 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       resolveMediaUrls: jasmine.createSpy('resolveMediaUrls'),
     };
 
+    runFolderServiceSpy = jasmine.createSpyObj<RunFolderService>(
+      'RunFolderService',
+      ['resolveFolderPaths'],
+    );
+    runFolderServiceSpy.resolveFolderPaths.and.returnValue(of(new Map()));
+    workspaceStateStub = {
+      getActiveWorkspaceId: jasmine
+        .createSpy<() => number | null>('getActiveWorkspaceId')
+        .and.returnValue(null),
+    };
+
     await TestBed.configureTestingModule({
-      declarations: [WorkflowEditorComponent],
+      declarations: [WorkflowEditorComponent, StepHistorySidebarStubComponent],
       imports: [
         ReactiveFormsModule,
         MatFormFieldModule,
@@ -163,6 +189,8 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         {provide: MatDialog, useValue: dialogMock},
         {provide: MatSnackBar, useValue: snackBarMock},
         {provide: MediaResolutionService, useValue: mediaResolutionMock},
+        {provide: RunFolderService, useValue: runFolderServiceSpy},
+        {provide: WorkspaceStateService, useValue: workspaceStateStub},
         {
           provide: FolderService,
           useValue: jasmine.createSpyObj<FolderService>('FolderService', [
@@ -861,12 +889,13 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         stepId,
         type: NodeTypes.LOOP,
         inputs: {
+          folder: null,
           items_text: null,
           linked_items: null,
           loop_ending: null,
           ...inputs,
         },
-        settings: {mode, folder_id: null, item_type: 'image'},
+        settings: {mode, item_type: 'image'},
       });
       return findStep(stepId);
     }
@@ -1565,7 +1594,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
             },
           },
           outputs: {generated_text: {type: 'text'}},
-          settings: {model: 'gemini-2.5-flash'},
+          settings: {model: 'gemini-4-hydrogen'},
         },
         {
           stepId: 'inserted_step_2',
@@ -2195,9 +2224,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           stepId: 'loop_1',
           type: NodeTypes.LOOP,
           status: StepStatusEnum.IDLE,
-          inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+          inputs: {
+            folder: 42,
+            loop_ending: {step: 'gen_image', output: 'loop_ending'},
+          },
           outputs: {},
-          settings: {mode: 'folder', folder_id: 42, item_type: 'image'},
+          settings: {mode: 'folder', item_type: 'image'},
         });
         formService.addStep(NodeTypes.IMAGE, {
           stepId: 'gen_image',
@@ -2345,6 +2377,167 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           expect(component.loopEndingVisibleStepMap()).toEqual({});
         });
       });
+    });
+  });
+
+  describe('history sidebar folder paths', () => {
+    const RUN_WORKSPACE_ID = 42;
+    const ACTIVE_WORKSPACE_ID = 7;
+    const STEP_ID = 'gen_image';
+
+    const buildEntry = (folderIds: number[]): StepEntry => ({
+      step_id: STEP_ID,
+      state: 'COMPLETED',
+      history: folderIds.map(id => ({
+        step_inputs: {output_folder: id},
+        step_outputs: {},
+      })),
+    });
+
+    /** Opens the sidebar on `entry` and lets the folder id watcher react. */
+    const inspect = (entry: StepEntry): void => {
+      component.executionEntries.set([entry]);
+      component.historySidebarStep.set({
+        stepId: STEP_ID,
+        type: NodeTypes.IMAGE,
+        title: STEP_ID,
+        mode: null,
+      });
+      refresh();
+    };
+
+    const refresh = (): void => {
+      TestBed.flushEffects();
+      fixture.detectChanges();
+    };
+
+    const sidebarStub = (): StepHistorySidebarStubComponent | null => {
+      const debugEl = fixture.debugElement.query(
+        By.directive(StepHistorySidebarStubComponent),
+      );
+      return (
+        (debugEl?.componentInstance as StepHistorySidebarStubComponent) ?? null
+      );
+    };
+
+    const selectRun = (workspaceId: number | null): void => {
+      component.workflowId = 'wf-1';
+      (
+        TestBed.inject(WorkflowService).getRunDetails as jasmine.Spy
+      ).and.returnValue(
+        of({
+          id: 'run-1',
+          workflow_id: 'wf-1',
+          workspace_id: workspaceId,
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_entries: [],
+        }),
+      );
+      component.onExecutionSelected('run-1');
+    };
+
+    beforeEach(() => {
+      component.workflowRun = null;
+      workspaceStateStub.getActiveWorkspaceId.and.returnValue(
+        ACTIVE_WORKSPACE_ID,
+      );
+      selectRun(RUN_WORKSPACE_ID);
+    });
+
+    it('resolves sorted unique folder ids in the loaded run workspace', () => {
+      const resolved: FolderPathMap = new Map([
+        [3, 'Shoes'],
+        [9, 'Shoes / Summer'],
+      ]);
+      runFolderServiceSpy.resolveFolderPaths.and.returnValue(of(resolved));
+
+      inspect(buildEntry([9, 3, 9]));
+
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledOnceWith(
+        [3, 9],
+        RUN_WORKSPACE_ID,
+      );
+      const folderPaths = component.folderPaths();
+      expect(folderPaths).toEqual(resolved);
+      expect(sidebarStub()?.folderPaths).toBe(folderPaths);
+    });
+
+    it('does not request folder paths when the step has no folder ids', () => {
+      inspect(buildEntry([]));
+
+      expect(runFolderServiceSpy.resolveFolderPaths).not.toHaveBeenCalled();
+      expect(component.folderPaths().size).toBe(0);
+    });
+
+    it('does not refetch when a polling update keeps the same folder ids', () => {
+      inspect(buildEntry([3]));
+      component.executionEntries.set([buildEntry([3, 3])]);
+      refresh();
+
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels a pending request when the folder ids change', () => {
+      const firstResponse = new Subject<FolderPathMap>();
+      const secondResponse = new Subject<FolderPathMap>();
+      let firstSubscribed = false;
+      const firstRequest = new Observable<FolderPathMap>(subscriber => {
+        firstSubscribed = true;
+        const subscription = firstResponse.subscribe(subscriber);
+        return () => {
+          firstSubscribed = false;
+          subscription.unsubscribe();
+        };
+      });
+      runFolderServiceSpy.resolveFolderPaths.and.returnValues(
+        firstRequest,
+        secondResponse,
+      );
+
+      inspect(buildEntry([3]));
+      expect(firstSubscribed).toBeTrue();
+
+      component.executionEntries.set([buildEntry([3, 5])]);
+      refresh();
+      expect(firstSubscribed).toBeFalse();
+
+      const secondPaths: FolderPathMap = new Map([
+        [3, 'Shoes'],
+        [5, 'Hats'],
+      ]);
+      firstResponse.next(new Map([[3, 'Stale']]));
+      secondResponse.next(secondPaths);
+
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledTimes(2);
+      expect(component.folderPaths()).toEqual(secondPaths);
+    });
+
+    it('keeps the existing folder paths when the request fails', () => {
+      const knownPaths: FolderPathMap = new Map([[3, 'Shoes']]);
+      component.folderPaths.set(knownPaths);
+      runFolderServiceSpy.resolveFolderPaths.and.returnValue(
+        throwError(() => new Error('boom')),
+      );
+
+      inspect(buildEntry([5]));
+
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledTimes(1);
+      expect(component.folderPaths()).toBe(knownPaths);
+    });
+
+    it('falls back to the active workspace without an opened run', () => {
+      selectRun(null);
+      component.workflowRun = null;
+      workspaceStateStub.getActiveWorkspaceId.and.returnValue(
+        ACTIVE_WORKSPACE_ID,
+      );
+
+      inspect(buildEntry([3]));
+
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledOnceWith(
+        [3],
+        ACTIVE_WORKSPACE_ID,
+      );
     });
   });
 });

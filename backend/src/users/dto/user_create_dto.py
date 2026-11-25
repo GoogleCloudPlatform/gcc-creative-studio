@@ -13,13 +13,15 @@
 # limitations under the License.
 
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from src.users.user_model import UserRoleEnum
 
 
 class UserCreateDto(BaseModel):
     """Data Transfer Object for creating a new user."""
+
+    model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
     name: str = Field(..., min_length=2)
@@ -30,6 +32,8 @@ class UserCreateDto(BaseModel):
 
 class UserUpdateRoleDto(BaseModel):
     """Data Transfer Object for updating a user's role."""
+
+    model_config = ConfigDict(extra="forbid")
 
     roles: list[UserRoleEnum] = Field(
         description="A list of new roles to assign to the user.",

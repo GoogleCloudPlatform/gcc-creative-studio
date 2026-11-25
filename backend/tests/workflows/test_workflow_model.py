@@ -173,36 +173,88 @@ MEDIA_STEP_PAYLOADS = [
 ]
 
 
-def _media_step(payload: dict, **settings) -> dict:
+def _media_step(payload: dict, **inputs) -> dict:
     return {
         "stepId": f"{payload['type']}_1",
         **payload,
-        "settings": {**payload["settings"], **settings},
+        "inputs": {**payload["inputs"], **inputs},
     }
+
+
+INVALID_FOLDER_IDS = ["42", True, 0, -1, 1.5]
 
 
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
 def test_media_step_without_output_folder_defaults_to_root(payload):
-    """Saved workflows from before the setting existed keep using root."""
+    """Steps without an output folder input save to the root folder."""
     step = TypeAdapter(WorkflowStep).validate_python(_media_step(payload))
-    assert step.settings.output_folder_id is None
+    assert step.inputs.output_folder is None
 
 
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
 def test_media_step_parses_output_folder(payload):
     step = TypeAdapter(WorkflowStep).validate_python(
-        _media_step(payload, output_folder_id=42)
+        _media_step(payload, output_folder=42)
     )
-    assert step.settings.output_folder_id == 42
+    assert step.inputs.output_folder == 42
 
 
-@pytest.mark.parametrize("folder_id", [0, -3])
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
-def test_media_step_rejects_non_positive_output_folder(payload, folder_id):
+def test_media_step_parses_linked_output_folder(payload):
+    step = TypeAdapter(WorkflowStep).validate_python(
+        _media_step(
+            payload, output_folder={"step": "user_input", "output": "Target"}
+        )
+    )
+    assert step.inputs.output_folder == StepOutputReference(
+        step="user_input", output="Target"
+    )
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+@pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
+def test_media_step_rejects_non_strict_output_folder(payload, folder_id):
     with pytest.raises(ValidationError):
         TypeAdapter(WorkflowStep).validate_python(
-            _media_step(payload, output_folder_id=folder_id)
+            _media_step(payload, output_folder=folder_id)
         )
+
+
+def test_loop_inputs_accept_folder_id_link_and_none():
+    from src.workflows.schema.workflow_model import LoopInputs
+
+    assert LoopInputs(folder=42).folder == 42
+    assert LoopInputs(folder=None).folder is None
+    assert LoopInputs(
+        folder={"step": "user_input", "output": "Target"}
+    ).folder == StepOutputReference(step="user_input", output="Target")
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+def test_loop_inputs_reject_non_strict_folder(folder_id):
+    from src.workflows.schema.workflow_model import LoopInputs
+
+    with pytest.raises(ValidationError):
+        LoopInputs(folder=folder_id)
+
+
+def test_resolve_loop_items_inputs_accept_positive_int_folder():
+    from src.workflows_executor.dto.workflows_executor_dto import (
+        ResolveLoopItemsInputs,
+    )
+
+    assert ResolveLoopItemsInputs(folder=42).folder == 42
+    assert ResolveLoopItemsInputs().folder is None
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+def test_resolve_loop_items_inputs_reject_non_strict_folder(folder_id):
+    from src.workflows_executor.dto.workflows_executor_dto import (
+        ResolveLoopItemsInputs,
+    )
+
+    with pytest.raises(ValidationError):
+        ResolveLoopItemsInputs(folder=folder_id)
 
 
 def test_workflow_base_translate_legacy_generate_image():
@@ -812,6 +864,57 @@ def test_generate_text_google_search_rejects_non_boolean_values(raw_value):
             temperature=0.7,
             google_search=raw_value,
         )
+
+
+@pytest.mark.parametrize(
+    ("raw_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+        ("gemini-4-argon", "gemini-4-argon"),
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-3.8-flash", "gemini-3.8-flash"),
+    ],
+)
+def test_generate_text_settings_normalizes_retired_gemini_2_5_models(
+    raw_model, expected_model
+):
+    settings = GenerateTextSettings(model=raw_model, temperature=0.7)
+    assert settings.model == expected_model
+
+
+@pytest.mark.parametrize(
+    ("raw_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+def test_translate_legacy_step_normalizes_text_models_without_mutating(
+    raw_model, expected_model
+):
+    from src.workflows.schema.workflow_model import (
+        WorkflowBase,
+        translate_legacy_step,
+    )
+
+    raw_settings = {"model": raw_model, "temperature": 0.7}
+    raw_step = _generate_text_step_dict(raw_settings)
+
+    translated = translate_legacy_step(raw_step)
+
+    assert translated["settings"]["model"] == expected_model
+    assert raw_settings["model"] == raw_model
+    assert raw_step["settings"]["model"] == raw_model
+
+    workflow = WorkflowBase.model_validate(
+        {
+            "name": "Legacy Gemini 2.5 Text Workflow",
+            "steps": [raw_step],
+        }
+    )
+    assert workflow.steps[0].settings.model == expected_model
+    assert raw_settings["model"] == raw_model
 
 
 # --- Workflow runs: statuses and queue / checkpoint columns -----

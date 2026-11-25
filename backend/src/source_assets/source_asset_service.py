@@ -33,8 +33,13 @@ from src.common.base_dto import (
 )
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     extract_youtube_video_id,
+    generate_image_thumbnail_bytes,
+    generate_image_thumbnail_from_gcs,
     generate_thumbnail,
+    generate_video_thumbnail_from_gcs,
     get_video_dimensions,
 )
 from src.common.storage_service import GcsService
@@ -64,8 +69,12 @@ from src.source_assets.schema.source_asset_model import (
 )
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
+from src.workspaces.generation_workspace import ensure_folder_in_workspace
+from src.workspaces.repository.workspace_repository import WorkspaceRepository
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 logger = logging.getLogger(__name__)
+MAX_INLINE_THUMBNAIL_BYTES = 50 * 1024 * 1024
 
 
 class SourceAssetService:
@@ -178,6 +187,36 @@ class SourceAssetService:
             return MimeTypeEnum.IMAGE_WEBP
         return MimeTypeEnum.IMAGE_PNG
 
+    async def _generate_image_thumbnail_from_bytes(
+        self,
+        user_id: int,
+        file_hash: str,
+        image_bytes: bytes,
+    ) -> str | None:
+        """Generates and uploads a WebP thumbnail from image bytes."""
+        try:
+
+            def _upload_from_bytes() -> str | None:
+                thumb_bytes = generate_image_thumbnail_bytes(image_bytes)
+                if not thumb_bytes:
+                    return None
+                return self.gcs_service.store_to_gcs(
+                    folder=f"source_assets/{user_id}/{file_hash}",
+                    file_name="thumbnail.webp",
+                    mime_type="image/webp",
+                    contents=thumb_bytes,
+                    decode=False,
+                )
+
+            return await asyncio.to_thread(_upload_from_bytes)
+        except Exception as thumb_err:
+            logger.warning(
+                "Failed to generate thumbnail for source asset %s: %s",
+                file_hash,
+                thumb_err,
+            )
+            return None
+
     async def _create_asset_response(
         self,
         asset: SourceAssetModel,
@@ -262,6 +301,7 @@ class SourceAssetService:
         metadata_generation_model: str | None = None,
         title: str | None = None,
         description: str | None = None,
+        folder_id: int | None = None,
     ) -> SourceAssetResponseDto:
         """Handles uploading, de-duplicating, upscaling, and saving a new user asset."""
         contents = file_bytes
@@ -270,6 +310,10 @@ class SourceAssetService:
                 status.HTTP_400_BAD_REQUEST,
                 "Cannot upload an empty file.",
             )
+
+        validated_folder_id = await ensure_folder_in_workspace(
+            self.repo.db, workspace_id, folder_id
+        )
 
         file_hash = hashlib.sha256(contents).hexdigest()
 
@@ -283,6 +327,19 @@ class SourceAssetService:
                 user.email,
                 file_hash[:8],
             )
+            if (
+                validated_folder_id is not None
+                and existing_asset.folder_id != validated_folder_id
+            ):
+                updated_asset = await self.repo.update(
+                    existing_asset.id, {"folder_id": validated_folder_id}
+                )
+                if updated_asset is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to update asset folder.",
+                    )
+                existing_asset = updated_asset
             return await self._create_asset_response(existing_asset)
 
         # 2. Handle file processing based on type (image vs. video vs. audio)
@@ -324,8 +381,8 @@ class SourceAssetService:
                 if thumbnail_path:
                     thumbnail_gcs_uri = self.gcs_service.upload_file_to_gcs(
                         local_path=thumbnail_path,
-                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail.png",
-                        mime_type="image/png",
+                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{VIDEO_THUMBNAIL_EXT}",
+                        mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                     )
             elif is_audio:
                 # --- Audio Upload Logic ---
@@ -457,6 +514,22 @@ class SourceAssetService:
                     # No upscale requested, use original
                     final_gcs_uri = original_gcs_uri
 
+                if final_gcs_uri:
+                    if original_gcs_uri and final_gcs_uri != original_gcs_uri:
+                        thumbnail_gcs_uri = await asyncio.to_thread(
+                            generate_image_thumbnail_from_gcs,
+                            self.gcs_service,
+                            final_gcs_uri,
+                        )
+                    else:
+                        thumbnail_gcs_uri = (
+                            await self._generate_image_thumbnail_from_bytes(
+                                user_id=user.id,
+                                file_hash=file_hash,
+                                image_bytes=png_contents,
+                            )
+                        )
+
             if not final_gcs_uri:
                 raise RuntimeError("Failed to process and upload asset.")
 
@@ -518,6 +591,7 @@ class SourceAssetService:
 
         new_asset = SourceAssetModel(
             workspace_id=workspace_id,
+            folder_id=validated_folder_id,
             user_id=user.id,
             aspect_ratio=final_aspect_ratio,
             original_gcs_uri=original_gcs_uri,
@@ -605,19 +679,64 @@ class SourceAssetService:
         final_aspect_ratio = (
             request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
         )
+        validated_folder_id = await ensure_folder_in_workspace(
+            self.repo.db,
+            request_dto.workspace_id,
+            request_dto.folder_id,
+        )
 
         # Fallback to hashing the GCS URI as a unique placeholder because the file content is not available on the server
         file_hash = hashlib.sha256(
             request_dto.gcs_uri.encode("utf-8")
         ).hexdigest()
 
+        thumbnail_gcs_uri: str | None = None
+        if content_type.startswith(("image/", "video/")):
+            try:
+                blob_size = await asyncio.to_thread(
+                    self._get_gcs_blob_size,
+                    request_dto.gcs_uri,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Could not inspect blob size for %s: %s",
+                    request_dto.gcs_uri,
+                    exc,
+                )
+                blob_size = request_dto.size
+
+            if blob_size is None:
+                blob_size = request_dto.size
+
+            if blob_size > MAX_INLINE_THUMBNAIL_BYTES:
+                logger.warning(
+                    "Skipping synchronous thumbnail generation for %s "
+                    "(%s bytes exceeds %s-byte limit).",
+                    request_dto.gcs_uri,
+                    blob_size,
+                    MAX_INLINE_THUMBNAIL_BYTES,
+                )
+            elif content_type.startswith("image/"):
+                thumbnail_gcs_uri = await asyncio.to_thread(
+                    generate_image_thumbnail_from_gcs,
+                    self.gcs_service,
+                    request_dto.gcs_uri,
+                )
+            else:
+                thumbnail_gcs_uri = await asyncio.to_thread(
+                    generate_video_thumbnail_from_gcs,
+                    self.gcs_service,
+                    request_dto.gcs_uri,
+                )
+
         new_asset = SourceAssetModel(
             workspace_id=request_dto.workspace_id,
+            folder_id=validated_folder_id,
             user_id=current_user.id,
             aspect_ratio=final_aspect_ratio,
             original_gcs_uri=request_dto.gcs_uri,
             gcs_uri=request_dto.gcs_uri,
-            thumbnail_gcs_uri=None,
+            thumbnail_gcs_uri=thumbnail_gcs_uri,
             original_filename=request_dto.filename or "untitled",
             mime_type=mime_type_enum,
             file_hash=file_hash,
@@ -629,6 +748,19 @@ class SourceAssetService:
         new_asset.id = created_asset.id
 
         return await self._create_asset_response(new_asset)
+
+    def _get_gcs_blob_size(self, gcs_uri: str) -> int | None:
+        """Returns GCS blob size in bytes, reloading metadata when absent."""
+        if not gcs_uri.startswith("gs://"):
+            return None
+        parts = gcs_uri[5:].split("/", 1)
+        if len(parts) != 2 or not parts[1]:
+            return None
+        bucket = self.gcs_service.client.bucket(parts[0])
+        blob = bucket.blob(parts[1])
+        if blob.size is None:
+            blob.reload()
+        return blob.size if isinstance(blob.size, int) else None
 
     async def convert_to_png(self, file: UploadFile) -> bytes:
         """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
@@ -699,16 +831,13 @@ class SourceAssetService:
     async def delete_asset(
         self,
         asset_id: int,
-        current_user_id: int | None = None,
+        current_user: UserModel,
     ) -> bool:
-        """Deletes an asset from Firestore and its corresponding file from GCS.
-        This is an admin-only operation.
+        """Soft-deletes a source asset after authorizing workspace write access.
 
         Returns:
             bool: True if deletion was successful, False if the asset was not found.
-
         """
-        # 1. Get the asset document from Firestore
         asset_to_delete = await self.repo.get_by_id(asset_id)
         if not asset_to_delete:
             logger.warning(
@@ -717,25 +846,30 @@ class SourceAssetService:
             )
             return False
 
-        # 2. Skip deleting the file from GCS for soft delete
-        # This allows for potential restoration of the asset in the future.
-        # logger.info("Skipping GCS file deletion for soft delete: %s", asset_to_delete.gcs_uri)
+        if asset_to_delete.scope != AssetScopeEnum.SYSTEM:
+            await WorkspaceAuth(
+                workspace_repo=WorkspaceRepository(db=self.repo.db)
+            ).authorize_write(asset_to_delete.workspace_id, current_user)
 
-        # 3. Mark the document as deleted in the database
         logger.info(
             "Soft deleting asset document from database with ID: %s by user: %s",
             asset_id,
-            current_user_id,
+            current_user.id,
         )
-        return await self.repo.soft_delete(asset_id, deleted_by=current_user_id)
+        return await self.repo.soft_delete(asset_id, deleted_by=current_user.id)
 
     async def list_assets_for_user(
         self,
         search_dto: SourceAssetSearchDto,
         target_user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> PaginationResponseDto[SourceAssetResponseDto]:
         """Performs a paginated search, scoped to a target_user_id if provided."""
-        assets_query_result = await self.repo.query(search_dto, target_user_id)
+        assets_query_result = await self.repo.query(
+            search_dto,
+            target_user_id,
+            requesting_user_id=requesting_user_id,
+        )
         assets = assets_query_result.data or []
 
         response_tasks = [
@@ -799,20 +933,24 @@ class SourceAssetService:
         asset_id: int,
         user: UserModel,
     ) -> SourceAssetResponseDto | None:
-        """Retrieves a single source asset by ID, ensuring the user has access."""
+        """Retrieves a single source asset by ID, ensuring workspace read access."""
         asset = await self.repo.get_by_id(asset_id)
         if not asset:
             return None
 
-        # Authorization check
-        is_admin = UserRoleEnum.ADMIN in user.roles
-        is_owner = asset.user_id == user.id
-        is_system = asset.scope in [
-            AssetScopeEnum.SYSTEM,
-        ]
-
-        if not (is_admin or is_owner or is_system):
-            return None
+        if asset.scope != AssetScopeEnum.SYSTEM:
+            try:
+                await WorkspaceAuth(
+                    workspace_repo=WorkspaceRepository(db=self.repo.db)
+                ).authorize(asset.workspace_id, user)
+            except HTTPException as exc:
+                # Preserve 404 anti-enumeration on single-asset ID lookups.
+                if exc.status_code in (
+                    status.HTTP_403_FORBIDDEN,
+                    status.HTTP_404_NOT_FOUND,
+                ):
+                    return None
+                raise
 
         # Fetch the owner's email and picture to display in the frontend
         owner_email = None
@@ -906,8 +1044,8 @@ class SourceAssetService:
                 if thumbnail_path:
                     thumbnail_gcs_uri = self.gcs_service.upload_file_to_gcs(
                         local_path=thumbnail_path,
-                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail.png",
-                        mime_type="image/png",
+                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{VIDEO_THUMBNAIL_EXT}",
+                        mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                     )
             else:
                 # --- Image Upload & Upscale Logic ---
@@ -941,6 +1079,14 @@ class SourceAssetService:
                     contents=png_contents,
                     decode=False,
                 )
+                if final_gcs_uri:
+                    thumbnail_gcs_uri = (
+                        await self._generate_image_thumbnail_from_bytes(
+                            user_id=user.id,
+                            file_hash=file_hash,
+                            image_bytes=png_contents,
+                        )
+                    )
 
             if not final_gcs_uri:
                 raise RuntimeError("Failed to upload processed asset.")

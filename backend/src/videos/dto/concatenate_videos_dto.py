@@ -14,13 +14,15 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 
 from src.common.base_dto import AspectRatioEnum, BaseDto
 
 
 class ConcatenationInput(BaseModel):
     """Defines a single item to be included in the concatenation, preserving order."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: int = Field(description="The ID of the asset or media item.")
     type: Literal["media_item", "source_asset"] = Field(
@@ -47,6 +49,10 @@ class ConcatenateVideosDto(BaseDto):
     aspect_ratio: AspectRatioEnum = Field(
         default=AspectRatioEnum.RATIO_16_9,
         description="Aspect ratio of the image.",
+    )
+    parent_media_item_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional parent media item ID to link this concatenation into its revision stack.",
     )
 
     @model_validator(mode="after")

@@ -161,6 +161,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           bottom_image: null,
           dress_image: null,
           shoes_image: null,
+          output_folder: null,
         },
         settings: {
           mode: 'generate_image',
@@ -171,7 +172,6 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           upscale_factor: 'x2',
           enhance_input_image: false,
           image_preservation_factor: null,
-          output_folder_id: null,
         },
         type: NodeTypes.IMAGE,
       },
@@ -328,6 +328,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           bottom_image: null,
           dress_image: null,
           shoes_image: null,
+          output_folder: null,
         },
         settings: {
           mode: 'generate_image',
@@ -338,7 +339,6 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           upscale_factor: 'x2',
           enhance_input_image: false,
           image_preservation_factor: null,
-          output_folder_id: null,
         },
         type: NodeTypes.IMAGE,
       },
@@ -502,6 +502,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           input_video: null,
           start_frame: null,
           end_frame: null,
+          output_folder: null,
         },
         settings: {
           model: 'gemini-omni-1.1-flash-preview',
@@ -510,7 +511,6 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           duration_seconds: 4,
           input_mode: 'Text to Video',
           resolution: '1K',
-          output_folder_id: null,
         },
         type: NodeTypes.GENERATE_VIDEO,
       },

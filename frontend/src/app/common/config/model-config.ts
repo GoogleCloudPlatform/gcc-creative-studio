@@ -40,6 +40,7 @@ export interface ModelCapability {
   supportsVoice?: boolean;
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
+  supportsAudioReference?: boolean;
   supportsVideoReference?: boolean;
 }
 
@@ -178,34 +179,6 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
 
   // --- Text Models ---
   {
-    value: 'gemini-2.5-pro',
-    viewValue: 'Gemini 2.5 Pro',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
-    value: 'gemini-2.5-flash',
-    viewValue: 'Gemini 2.5 Flash',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
     value: 'gemini-3-flash-preview',
     viewValue: 'Gemini 3 Flash Preview',
     type: 'TEXT',
@@ -320,6 +293,20 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   {
     value: 'gemini-4-argon',
     viewValue: 'Gemini 4 Argon',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-4-hydrogen',
+    viewValue: 'Gemini 4 Hydrogen',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -468,6 +455,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: true,
       supportsNegativePrompt: true,
       supportsVoice: false,
@@ -481,10 +469,11 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     icon: 'music_note',
     capabilities: {
       supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
+      maxReferenceImages: 10,
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,
@@ -498,10 +487,11 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     icon: 'music_note',
     capabilities: {
       supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
+      maxReferenceImages: 10,
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
+      supportsAudioReference: true,
       supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,
@@ -634,4 +624,18 @@ export function getSupportedModelDurations(
   }
 
   return [...baseDurations];
+}
+
+export const RETIRED_TEXT_MODEL_MAP: Record<string, string> = {
+  'gemini-2.5-pro': 'gemini-4-argon',
+  'gemini-2.5-flash': 'gemini-4-hydrogen',
+};
+
+export function normalizeTextModelId(
+  modelValue?: string | null,
+): string | null | undefined {
+  if (!modelValue) {
+    return modelValue;
+  }
+  return RETIRED_TEXT_MODEL_MAP[modelValue] ?? modelValue;
 }

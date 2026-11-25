@@ -16,11 +16,20 @@ import copy
 import re
 from datetime import datetime, timezone
 from fastapi import Depends
-from sqlalchemy import delete, func, insert, or_, select, text, update
+from sqlalchemy import (
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from src.common.base_repository import BaseRepository
-from src.common.schema.media_item_model import MediaItem
+from src.common.schema.media_item_model import JobStatusEnum, MediaItem
 from src.database import get_db
 from src.folders.dto.folder_dto import (
     ConflictStrategyEnum,
@@ -29,7 +38,17 @@ from src.folders.dto.folder_dto import (
     FolderTreeNodeDto,
 )
 from src.folders.schema.folder_model import Folder, FolderModel
-from src.source_assets.schema.source_asset_model import SourceAsset
+from src.galleries.revision_lineage import (
+    COPIED_ASSET_EXCLUDE_FIELDS,
+    COPIED_MEDIA_EXCLUDE_FIELDS,
+    latest_completed_take_predicate,
+    sanitize_copied_media_kwargs,
+    stack_root_expr,
+)
+from src.source_assets.schema.source_asset_model import (
+    AssetScopeEnum,
+    SourceAsset,
+)
 from src.tags.schema.tags_model import media_item_tags, source_asset_tags
 
 
@@ -135,6 +154,30 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(query)
         return result.scalars().first()
 
+    async def resolve_folder_path(
+        self, workspace_id: int, path: str
+    ) -> int | None:
+        """Id of the active folder at a '/'-separated path from the root.
+
+        Segments are trimmed and matched case-insensitively. Returns None for
+        non-string input, empty segments or any unmatched segment; database
+        errors propagate to the caller like in the sibling lookups.
+        """
+        if not isinstance(path, str):
+            return None
+        segments = [segment.strip() for segment in path.split("/")]
+        if any(not segment for segment in segments):
+            return None
+        parent_id: int | None = None
+        for segment in segments:
+            folder = await self.get_folder_by_name(
+                workspace_id=workspace_id, parent_id=parent_id, name=segment
+            )
+            if folder is None:
+                return None
+            parent_id = folder.id
+        return parent_id
+
     async def get_existing_folders_map(
         self,
         workspace_id: int,
@@ -212,10 +255,11 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             A tuple of (item_count, subfolder_count).
         """
         media_count_sq = (
-            select(func.count(MediaItem.id))
+            select(func.count(func.distinct(stack_root_expr(MediaItem))))
             .where(
                 MediaItem.folder_id == folder_id,
                 MediaItem.deleted_at.is_(None),
+                MediaItem.status == JobStatusEnum.COMPLETED.value,
             )
             .scalar_subquery()
         )
@@ -255,11 +299,14 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         media_count_sq = (
             select(
                 MediaItem.folder_id,
-                func.count(MediaItem.id).label("media_count"),
+                func.count(func.distinct(stack_root_expr(MediaItem))).label(
+                    "media_count"
+                ),
             )
             .where(
                 MediaItem.workspace_id == workspace_id,
                 MediaItem.deleted_at.is_(None),
+                MediaItem.status == JobStatusEnum.COMPLETED.value,
                 MediaItem.folder_id.is_not(None),
             )
             .group_by(MediaItem.folder_id)
@@ -383,7 +430,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 id=row.id,
                 name=row.name,
                 parent_id=row.parent_id,
-                workspace_id=getattr(row, "workspace_id", None),
+                workspace_id=row.workspace_id,
             )
             for row in rows
         ]
@@ -625,13 +672,24 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         destination_folder_id: int | None,
         commit: bool = True,
     ) -> int:
-        """Move multiple media items to a destination folder."""
+        """Move media items (and their revision stacks) to a folder."""
         if not media_item_ids:
             return 0
+
+        src_media = aliased(MediaItem, name="src_mi")
+        stack_roots = select(stack_root_expr(src_media)).where(
+            src_media.id.in_(media_item_ids),
+            src_media.workspace_id == workspace_id,
+            src_media.deleted_at.is_(None),
+        )
+        filter_clause = or_(
+            MediaItem.id.in_(media_item_ids),
+            stack_root_expr(MediaItem).in_(stack_roots),
+        )
         stmt = (
             update(MediaItem)
             .where(
-                MediaItem.id.in_(media_item_ids),
+                filter_clause,
                 MediaItem.workspace_id == workspace_id,
                 MediaItem.deleted_at.is_(None),
             )
@@ -766,21 +824,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if not items:
             return 0
 
-        media_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-            "user_email",
-        }
         media_columns = [
             c.key
             for c in MediaItem.__table__.columns
-            if c.key not in media_exclude
+            if c.key not in COPIED_MEDIA_EXCLUDE_FIELDS
         ]
 
         pairs: list[tuple[int, MediaItem]] = []
@@ -797,6 +844,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 folder_id=destination_folder_id,
                 user_id=user_id or item.user_id,
                 user_email=user_email or item.user_email,
+                revision_number=1,
                 **kwargs,
             )
             self.db.add(new_media)
@@ -849,20 +897,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if not assets:
             return 0
 
-        asset_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-        }
         asset_columns = [
             c.key
             for c in SourceAsset.__table__.columns
-            if c.key not in asset_exclude
+            if c.key not in COPIED_ASSET_EXCLUDE_FIELDS
         ]
 
         pairs: list[tuple[int, SourceAsset]] = []
@@ -873,6 +911,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 if isinstance(val, (list, dict)):
                     val = copy.deepcopy(val)
                 kwargs[col] = val
+            kwargs["scope"] = AssetScopeEnum.PRIVATE.value
 
             new_asset = SourceAsset(
                 workspace_id=workspace_id,
@@ -1183,29 +1222,26 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             return {key_f: 0, key_m: 0, key_a: 0}
 
         # 1. Media items directly in source_folder
+        cross_workspace_copy = (
+            is_copy and source_folder.workspace_id != target_workspace_id
+        )
         media_stmt = select(MediaItem).where(
             MediaItem.folder_id == source_folder_id,
             MediaItem.deleted_at.is_(None),
         )
+        if is_copy:
+            media_stmt = media_stmt.where(
+                MediaItem.status == JobStatusEnum.COMPLETED.value,
+                latest_completed_take_predicate(MediaItem),
+            )
         media_res = await self.db.execute(media_stmt)
         source_media_items = media_res.scalars().all()
         media_count = 0
 
-        media_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-            "user_email",
-        }
         media_columns = [
             c.key
             for c in MediaItem.__table__.columns
-            if c.key not in media_exclude
+            if c.key not in COPIED_MEDIA_EXCLUDE_FIELDS
         ]
 
         if is_copy:
@@ -1219,11 +1255,16 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     )
                     for col in media_columns
                 }
+                if cross_workspace_copy:
+                    await sanitize_copied_media_kwargs(
+                        self.db, kwargs, target_workspace_id
+                    )
                 new_media = MediaItem(
                     workspace_id=target_workspace_id,
                     folder_id=target_folder_id,
                     user_id=user_id or source_folder.user_id,
                     user_email=user_email or item.user_email,
+                    revision_number=1,
                     **kwargs,
                 )
                 self.db.add(new_media)
@@ -1285,20 +1326,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         source_assets = asset_res.scalars().all()
         assets_count = 0
 
-        asset_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-        }
         asset_columns = [
             c.key
             for c in SourceAsset.__table__.columns
-            if c.key not in asset_exclude
+            if c.key not in COPIED_ASSET_EXCLUDE_FIELDS
         ]
 
         if is_copy:
@@ -1312,6 +1343,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     )
                     for col in asset_columns
                 }
+                kwargs["scope"] = AssetScopeEnum.PRIVATE.value
                 new_asset = SourceAsset(
                     workspace_id=target_workspace_id,
                     folder_id=target_folder_id,
@@ -1539,28 +1571,23 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         old_folder_ids = list(id_map.keys())
 
         # Copy media items in any of the copied folders
+        cross_workspace_copy = (
+            source_workspace_id is not None
+            and source_workspace_id != target_workspace_id
+        )
         media_stmt = select(MediaItem).where(
             MediaItem.folder_id.in_(old_folder_ids),
             MediaItem.deleted_at.is_(None),
+            MediaItem.status == JobStatusEnum.COMPLETED.value,
+            latest_completed_take_predicate(MediaItem),
         )
         media_res = await self.db.execute(media_stmt)
         media_items = media_res.scalars().all()
 
-        media_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-            "user_email",
-        }
         media_columns = [
             c.key
             for c in MediaItem.__table__.columns
-            if c.key not in media_exclude
+            if c.key not in COPIED_MEDIA_EXCLUDE_FIELDS
         ]
 
         media_copied_count = 0
@@ -1572,12 +1599,17 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 if isinstance(val, (list, dict)):
                     val = copy.deepcopy(val)
                 kwargs[col] = val
+            if cross_workspace_copy:
+                await sanitize_copied_media_kwargs(
+                    self.db, kwargs, target_workspace_id
+                )
 
             new_media = MediaItem(
                 workspace_id=target_workspace_id,
                 folder_id=id_map[item.folder_id],
                 user_id=user_id,
                 user_email=user_email or item.user_email,
+                revision_number=1,
                 **kwargs,
             )
             self.db.add(new_media)
@@ -1592,20 +1624,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         asset_res = await self.db.execute(asset_stmt)
         assets = asset_res.scalars().all()
 
-        asset_exclude = {
-            "id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-            "deleted_by",
-            "workspace_id",
-            "folder_id",
-            "user_id",
-        }
         asset_columns = [
             c.key
             for c in SourceAsset.__table__.columns
-            if c.key not in asset_exclude
+            if c.key not in COPIED_ASSET_EXCLUDE_FIELDS
         ]
 
         assets_copied_count = 0
@@ -1617,6 +1639,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 if isinstance(val, (list, dict)):
                     val = copy.deepcopy(val)
                 kwargs[col] = val
+            kwargs["scope"] = AssetScopeEnum.PRIVATE.value
 
             new_asset = SourceAsset(
                 workspace_id=target_workspace_id,

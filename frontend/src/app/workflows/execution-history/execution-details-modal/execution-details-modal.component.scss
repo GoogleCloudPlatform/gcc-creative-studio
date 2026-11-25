@@ -284,6 +284,68 @@ div {
       background: rgba(242, 139, 130, 0.08);
     }
 
+    .resume-folder-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px dashed rgba(255, 255, 255, 0.18);
+      color: #c4c7c5;
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      transition:
+        border-color 0.2s ease,
+        background-color 0.2s ease;
+
+      mat-icon {
+        flex-shrink: 0;
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: #9aa0a6;
+      }
+
+      &:hover:not(:disabled),
+      &:focus-visible {
+        outline: none;
+        border-color: #8ab4f8;
+        background: rgba(138, 180, 248, 0.08);
+      }
+
+      &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      &.has-folder {
+        border-style: solid;
+        color: #f1f3f4;
+
+        mat-icon {
+          color: #d69e2e;
+        }
+      }
+    }
+
+    .resume-folder-path {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    &.has-field-error .resume-folder-btn {
+      border-color: #f28b82;
+      background: rgba(242, 139, 130, 0.08);
+    }
+
     .resume-field-error {
       font-size: 11px;
       color: #f28b82;

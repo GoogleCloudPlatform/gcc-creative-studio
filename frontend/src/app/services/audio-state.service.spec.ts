@@ -119,4 +119,39 @@ describe('AudioStateService', () => {
     service.clearState();
     expect(localStorage.getItem('audio_generation_state')).toBeNull();
   });
+
+  it('should normalize legacy concrete model IDs in localStorage to UI model families', () => {
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({model: 'lyria-002', prompt: 'legacy instrumental'}),
+    );
+    const lyriaState = service.getState();
+    expect(lyriaState.model).toBe('lyria');
+    expect(lyriaState.lyriaModel).toBe('lyria-002');
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({model: 'chirp_3', prompt: 'legacy chirp'}),
+    );
+    const chirpState = service.getState();
+    expect(chirpState.model).toBe('chirp');
+    expect(chirpState.ttsModel).toBe('chirp_3');
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({
+        model: 'gemini-3.1-flash-tts-preview',
+        prompt: 'legacy gemini tts',
+      }),
+    );
+    const geminiTtsState = service.getState();
+    expect(geminiTtsState.model).toBe('gemini-tts');
+    expect(geminiTtsState.ttsModel).toBe('gemini-3.1-flash-tts-preview');
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({model: 'unknown-legacy-id'}),
+    );
+    expect(service.getState().model).toBe('lyria');
+  });
 });

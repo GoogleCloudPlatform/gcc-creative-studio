@@ -257,7 +257,12 @@ async def test_list_by_workflow_and_compute_queue_positions():
     db.execute.side_effect = [count_res, items_res]
 
     items, total = await repository.list_by_workflow(
-        "wf-1", user_id=7, status="queued", limit=10, offset=0
+        "wf-1",
+        user_id=7,
+        status="queued",
+        limit=10,
+        offset=0,
+        workspace_id=1,
     )
     assert total == 1
     assert len(items) == 1
@@ -271,6 +276,29 @@ async def test_list_by_workflow_and_compute_queue_positions():
     assert positions == {RUN_ID: 2}
     positions_sql = str(_compiled(db))
     assert "row_number" in positions_sql
+
+
+async def test_list_by_workflow_filters_count_and_page_by_workspace():
+    repository, db = _repository()
+    count_res = MagicMock()
+    count_res.scalar_one.return_value = 0
+    items_res = MagicMock()
+    items_res.scalars.return_value.all.return_value = []
+    db.execute.side_effect = [count_res, items_res]
+
+    items, total = await repository.list_by_workflow(
+        "wf-1", user_id=7, workspace_id=42
+    )
+
+    assert (items, total) == ([], 0)
+    count_call, page_call = db.execute.await_args_list
+    for call in (count_call, page_call):
+        compiled = call.args[0].compile(dialect=postgresql.dialect())
+        where_clause = str(compiled).split("WHERE", 1)[1]
+        # Equality excludes other workspaces and NULL workspace_id rows.
+        assert "workflow_runs.workspace_id = " in where_clause
+        assert "IS NULL" not in where_clause
+        assert 42 in compiled.params.values()
 
 
 async def test_find_active_for_reconciliation_excludes_session_waits():

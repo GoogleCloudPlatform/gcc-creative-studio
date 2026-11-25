@@ -35,7 +35,10 @@ from src.workbench.dto.workbench_dto import (
     VideoTimeline,
 )
 from src.workbench.ffmpeg_service import FFmpegService
-from src.workbench.workbench_service import WorkbenchService
+from src.workbench.workbench_service import (
+    WorkbenchService,
+    _process_timeline_in_background,
+)
 from src.common.schema.media_item_model import (
     MediaItemModel,
     MimeTypeEnum,
@@ -121,13 +124,14 @@ async def test_enrich_timeline(service):
 @pytest.mark.anyio
 async def test_create_get_list_update_delete_timeline(service):
     timeline = VideoTimeline(timeline_id=1, workspace_id="1", title="T")
+    mock_user = MagicMock(id=1, email="user@test.com", roles=[])
     service.mock_timeline_repo.create_timeline.return_value = timeline
     service.mock_timeline_repo.get_by_id_with_details.return_value = timeline
     service.mock_timeline_repo.find_by_storyboard.return_value = [timeline]
     service.mock_timeline_repo.update_timeline.return_value = timeline
     service.mock_timeline_repo.delete_timeline.return_value = True
 
-    c = await service.create_timeline(timeline)
+    c = await service.create_timeline(timeline, current_user=mock_user)
     assert c.title == "T"
 
     g = await service.get_timeline(1)
@@ -136,7 +140,7 @@ async def test_create_get_list_update_delete_timeline(service):
     l = await service.list_timelines(1)
     assert len(l) == 1
 
-    u = await service.update_timeline(1, timeline)
+    u = await service.update_timeline(1, timeline, current_user=mock_user)
     assert u.title == "T"
 
     d = await service.delete_timeline(1)
@@ -145,6 +149,11 @@ async def test_create_get_list_update_delete_timeline(service):
 
 @pytest.mark.anyio
 async def test_create_timeline_reuse_replaces_newest_storyboard_cut(service):
+    mock_user = MagicMock(id=1, email="user@test.com", roles=[])
+    sb_res = MagicMock()
+    sb_res.scalar_one_or_none.return_value = 1
+    service.mock_timeline_repo.db.execute = AsyncMock(return_value=sb_res)
+
     older = VideoTimeline(
         timeline_id=9, storyboard_id=5, workspace_id="1", title="v1"
     )
@@ -158,7 +167,9 @@ async def test_create_timeline_reuse_replaces_newest_storyboard_cut(service):
     service.mock_timeline_repo.find_by_storyboard.return_value = [older, newer]
     service.mock_timeline_repo.update_timeline.return_value = replaced
 
-    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+    res = await service.create_timeline(
+        incoming, reuse_for_storyboard=True, current_user=mock_user
+    )
 
     assert res.timeline_id == 10
     service.mock_timeline_repo.update_timeline.assert_awaited_once_with(
@@ -169,6 +180,11 @@ async def test_create_timeline_reuse_replaces_newest_storyboard_cut(service):
 
 @pytest.mark.anyio
 async def test_create_timeline_reuse_falls_back_to_create(service):
+    mock_user = MagicMock(id=1, email="user@test.com", roles=[])
+    sb_res = MagicMock()
+    sb_res.scalar_one_or_none.return_value = 1
+    service.mock_timeline_repo.db.execute = AsyncMock(return_value=sb_res)
+
     incoming = VideoTimeline(storyboard_id=5, workspace_id="1", title="First")
     created = VideoTimeline(
         timeline_id=1, storyboard_id=5, workspace_id="1", title="First"
@@ -177,7 +193,9 @@ async def test_create_timeline_reuse_falls_back_to_create(service):
 
     # No cut yet for this storyboard.
     service.mock_timeline_repo.find_by_storyboard.return_value = []
-    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+    res = await service.create_timeline(
+        incoming, reuse_for_storyboard=True, current_user=mock_user
+    )
     assert res.timeline_id == 1
     service.mock_timeline_repo.update_timeline.assert_not_called()
 
@@ -188,18 +206,21 @@ async def test_create_timeline_reuse_falls_back_to_create(service):
         )
     ]
     service.mock_timeline_repo.update_timeline.return_value = None
-    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+    res = await service.create_timeline(
+        incoming, reuse_for_storyboard=True, current_user=mock_user
+    )
     assert res.timeline_id == 1
 
     # A human request never looks for an existing cut.
     service.mock_timeline_repo.find_by_storyboard.reset_mock()
-    await service.create_timeline(incoming)
+    await service.create_timeline(incoming, current_user=mock_user)
     service.mock_timeline_repo.find_by_storyboard.assert_not_called()
 
     # No storyboard on the payload: nothing to reuse.
     await service.create_timeline(
         VideoTimeline(workspace_id="1", title="loose"),
         reuse_for_storyboard=True,
+        current_user=mock_user,
     )
     service.mock_timeline_repo.find_by_storyboard.assert_not_called()
     assert service.mock_timeline_repo.create_timeline.await_count == 4
@@ -247,11 +268,24 @@ async def test_render_timeline_by_id_success(service):
 
     mock_executor = MagicMock()
 
-    res = await service.render_timeline_by_id(1, mock_user, mock_executor)
+    from src.workspaces.generation_workspace import GenerationContext
+
+    with patch(
+        "src.workbench.workbench_service.resolve_generation_context",
+        new=AsyncMock(
+            return_value=GenerationContext(
+                output_workspace_id=10,
+                brand_workspace_id=1,
+                resolved_folder_id=None,
+            )
+        ),
+    ):
+        res = await service.render_timeline_by_id(1, mock_user, mock_executor)
 
     assert res is not None
     assert res.id == 55
     assert res.status == JobStatusEnum.PROCESSING
+    assert service.mock_media_repo.create.call_args.args[0].workspace_id == 10
     mock_executor.submit.assert_called_once()
 
 
@@ -396,3 +430,194 @@ async def test_render_timeline_ffmpeg_failure(service):
 
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
                 await service.render_timeline(request)
+
+
+@patch("src.database.WorkerDatabase")
+def test_background_render_upload_failure_marks_the_item_failed(
+    mock_worker_db_class, tmp_path
+):
+    """The real upload error reaches the FAILED update: the ``finally``
+    must not die on an unbound ``thumbnail_path`` first."""
+    mock_db_factory = MagicMock(return_value=AsyncMock())
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+    temp_dir = tmp_path / "render"
+    temp_dir.mkdir()
+
+    with (
+        patch(
+            "src.workbench.workbench_service.MediaRepository"
+        ) as media_repo_cls,
+        patch("src.workbench.workbench_service.GcsService") as gcs_cls,
+        patch("src.workbench.workbench_service.FFmpegService"),
+        patch(
+            "src.workbench.workbench_service.WorkbenchService"
+        ) as service_cls,
+        patch(
+            "src.workbench.repository.timeline_repository.TimelineRepository"
+        ) as timeline_repo_cls,
+        patch(
+            "src.source_assets.repository.source_asset_repository."
+            "SourceAssetRepository"
+        ),
+        patch("src.auth.iam_signer_credentials_service.IamSignerCredentials"),
+    ):
+        media_repo = AsyncMock()
+        media_repo_cls.return_value = media_repo
+        timeline_repo_cls.return_value.get_by_id_with_details = AsyncMock(
+            return_value=MagicMock()
+        )
+        worker_service = service_cls.return_value
+        worker_service._enrich_timeline = AsyncMock()
+        worker_service._stitch_timeline = AsyncMock(
+            return_value=(str(temp_dir / "output.mp4"), str(temp_dir))
+        )
+        gcs_cls.return_value.upload_file_to_gcs.side_effect = RuntimeError(
+            "bucket unavailable"
+        )
+
+        _process_timeline_in_background(media_item_id=55, timeline_id=9)
+
+    media_repo.update.assert_awaited_once()
+    media_item_id, update = media_repo.update.await_args.args
+    assert media_item_id == 55
+    assert update["status"] == JobStatusEnum.FAILED
+    assert update["error_message"] == "Render failed: bucket unavailable"
+    assert not temp_dir.exists()
+
+
+@pytest.mark.anyio
+async def test_colleague_can_read_shared_timeline_with_authors_private_clips(
+    service,
+):
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    # Timeline lives in shared workspace 5, authored by user 10, referencing clip 901
+    # from the author's private/personal workspace.
+    shared_timeline = VideoTimeline(
+        timeline_id=7,
+        workspace_id="5",
+        title="Author's Shared Timeline",
+        video_clips=[VideoClip(asset_ref=AssetRef(id=901, type="media_item"))],
+        audio_clips=[],
+    )
+    service.mock_timeline_repo.get_by_id_with_details.return_value = (
+        shared_timeline
+    )
+    service.mock_timeline_repo.find_by_storyboard.return_value = [
+        shared_timeline
+    ]
+    media_clip = MagicMock(
+        gcs_uris=["gs://b/private_clip.mp4"], thumbnail_uris=[]
+    )
+    service.mock_media_repo.get_by_id.return_value = media_clip
+    service.media_repo.db = AsyncMock(spec=AsyncSession)
+
+    # Reading/opening the shared timeline must succeed and sign clip URLs even if
+    # the caller cannot authorize against the author's personal workspace.
+    with patch(
+        "src.workspaces.generation_workspace.WorkspaceAuth.authorize",
+        new=AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Denied")
+        ),
+    ):
+        opened = await service.get_timeline(7, enrich=True)
+        listed = await service.list_timelines(3, enrich=True)
+
+    assert opened is not None
+    assert opened.video_clips[0].presigned_url == "http://presigned.url"
+    assert len(listed) == 1
+    assert listed[0].video_clips[0].presigned_url == "http://presigned.url"
+
+
+@pytest.mark.anyio
+async def test_colleague_save_and_render_refuse_authors_private_clips_403(
+    service,
+):
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    service.media_repo.db = AsyncMock(spec=AsyncSession)
+    colleague = MagicMock(id=20, email="colleague@example.com", roles=[])
+    foreign_ws_res = MagicMock()
+    foreign_ws_res.all.return_value = [(99,)]
+    service.media_repo.db.execute = AsyncMock(return_value=foreign_ws_res)
+
+    payload = VideoTimeline(
+        timeline_id=7,
+        workspace_id="5",
+        title="Colleague Edit",
+        video_clips=[
+            VideoClip(
+                asset_ref=AssetRef(id=901, type="media_item"),
+                first_frame_asset_ref=AssetRef(id=902, type="source_asset"),
+                last_frame_asset_ref=AssetRef(id=903, type="media_item"),
+            )
+        ],
+        audio_clips=[
+            AudioClip(
+                start_at=AudioPlacement(video_clip_index=0, offset_seconds=0),
+                asset_ref=AssetRef(id=904, type="source_asset"),
+            )
+        ],
+    )
+    mock_executor = MagicMock()
+
+    with patch(
+        "src.workspaces.generation_workspace.WorkspaceAuth.authorize",
+        new=AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Forbidden")
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_create:
+            await service.create_timeline(payload, current_user=colleague)
+        assert exc_create.value.status_code == 403
+        service.mock_timeline_repo.create_timeline.assert_not_awaited()
+
+        with pytest.raises(HTTPException) as exc_update:
+            await service.update_timeline(7, payload, current_user=colleague)
+        assert exc_update.value.status_code == 403
+        service.mock_timeline_repo.update_timeline.assert_not_awaited()
+
+        with pytest.raises(HTTPException) as exc_render:
+            await service.render_timeline_by_id(
+                7, colleague, mock_executor, timeline=payload
+            )
+        assert exc_render.value.status_code == 403
+        service.mock_media_repo.create.assert_not_awaited()
+        mock_executor.submit.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_and_update_timeline_reject_foreign_storyboard_403(
+    service,
+):
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    service.timeline_repo.db = AsyncMock(spec=AsyncSession)
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = 99
+    service.timeline_repo.db.execute = AsyncMock(return_value=mock_res)
+
+    user = MagicMock(id=5, email="me@example.com", roles=[])
+    payload = VideoTimeline(
+        storyboard_id=5,
+        workspace_id="10",
+        title="Cross-WS Storyboard Cut",
+        video_clips=[],
+        audio_clips=[],
+        transitions=[],
+    )
+
+    with pytest.raises(HTTPException) as exc_create:
+        await service.create_timeline(
+            payload, reuse_for_storyboard=True, current_user=user
+        )
+    assert exc_create.value.status_code == 403
+    service.mock_timeline_repo.create_timeline.assert_not_awaited()
+
+    with pytest.raises(HTTPException) as exc_update:
+        await service.update_timeline(1, payload, current_user=user)
+    assert exc_update.value.status_code == 403
+    service.mock_timeline_repo.update_timeline.assert_not_awaited()

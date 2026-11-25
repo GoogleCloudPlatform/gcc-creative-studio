@@ -25,7 +25,7 @@ import {WorkspaceStateService} from '../../services/workspace/workspace-state.se
 import {MatDialog} from '@angular/material/dialog';
 import {DomSanitizer} from '@angular/platform-browser';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
-import {of, throwError} from 'rxjs';
+import {of, Subject, throwError} from 'rxjs';
 import {GalleryItem} from '../../common/models/gallery-item.model';
 import {FolderService} from '../../common/services/folder.service';
 import {FolderBreadcrumb} from '../../common/models/folder.model';
@@ -95,6 +95,13 @@ describe('MediaDetailComponent', () => {
       bulkDelete: jasmine
         .createSpy('bulkDelete')
         .and.returnValue(of({deleted_count: 1})),
+      getItemRevisions: jasmine.createSpy('getItemRevisions').and.returnValue(
+        of({
+          rootId: 123,
+          revisionCount: 1,
+          takes: [],
+        }),
+      ),
     };
 
     mockLoadingService = {
@@ -114,6 +121,22 @@ describe('MediaDetailComponent', () => {
       getActiveWorkspaceId: jasmine
         .createSpy('getActiveWorkspaceId')
         .and.returnValue(1),
+      personalWorkspaceId: jasmine
+        .createSpy('personalWorkspaceId')
+        .and.returnValue(1),
+      activeWorkspace: jasmine
+        .createSpy('activeWorkspace')
+        .and.returnValue(null),
+      canEditActiveWorkspace: jasmine
+        .createSpy('canEditActiveWorkspace')
+        .and.returnValue(false),
+      isPersonalItem: jasmine
+        .createSpy('isPersonalItem')
+        .and.callFake(
+          (item: {workspaceId?: number; workspaceScope?: string} | null) =>
+            !!item &&
+            (item.workspaceScope === 'personal' || item.workspaceId === 1),
+        ),
     };
 
     mockDialog = {
@@ -375,6 +398,661 @@ describe('MediaDetailComponent', () => {
         'B',
         'C',
       ]);
+    });
+  });
+
+  const loadItem = (
+    overrides: Partial<GalleryItem>,
+    detect = true,
+  ): HTMLElement => {
+    const item = {
+      id: 500,
+      workspaceId: 1,
+      createdAt: '2026-07-08T22:20:10Z',
+      itemType: 'media_item',
+      status: 'COMPLETED',
+      mimeType: 'audio/mpeg',
+      gcsUris: ['gs://b/0.mp3'],
+      presignedUrls: ['https://example.com/0.mp3'],
+      presignedThumbnailUrls: [],
+      metadata: {},
+      ...overrides,
+    } as GalleryItem;
+    mockGalleryService.getMedia.and.returnValue(of(item));
+    component.fetchMediaDetails(item.id, false);
+    if (detect) fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  };
+
+  describe('audio details & iteration actions', () => {
+    it('does not duplicate Lyrics & Song Structure in the right-hand Details tab (rendered in lightbox)', () => {
+      const host = loadItem({
+        id: 500,
+        prompt: 'Dream pop ballad',
+        gcsUris: ['gs://b/0.mp3', 'gs://b/1.mp3'],
+        presignedUrls: [
+          'https://example.com/0.mp3',
+          'https://example.com/1.mp3',
+        ],
+        audioAnalysis: {
+          tracks: [
+            {
+              raw_text: '[Chorus]\nStarlight fading',
+              lyrics: '[Chorus]\nStarlight fading',
+              structure: {
+                key: 'F major',
+                sections: [{name: 'Chorus', bars: 8}],
+              },
+            },
+            {raw_text: '[Verse]\nSecond take', lyrics: '[Verse]\nSecond take'},
+          ],
+        },
+      });
+
+      const lightboxDebug = fixture.debugElement.query(
+        el => el.name === 'app-media-lightbox',
+      );
+      const detailsTab = host.querySelector(
+        'mat-tab[label="Details"]',
+      ) as HTMLElement;
+      expect(lightboxDebug).not.toBeNull();
+      expect(
+        lightboxDebug.properties['mediaItem']?.audioAnalysis?.tracks?.[0]
+          ?.lyrics,
+      ).toContain('Starlight fading');
+      expect(detailsTab).not.toBeNull();
+      expect(detailsTab.textContent).toContain('Dream pop ballad');
+      expect(detailsTab.textContent).not.toContain('Starlight fading');
+      expect(detailsTab.textContent).not.toContain('Lyrics');
+      expect(detailsTab.textContent).not.toContain('Song Structure');
+    });
+
+    it('renders seed parameter when seed is 0 and switches per-take seed on slide change', () => {
+      const host = loadItem({
+        id: 501,
+        mimeType: 'audio/wav',
+        prompt: 'Deterministic instrumental',
+        seed: 0,
+        gcsUris: ['gs://b/0.wav', 'gs://b/1.wav'],
+        presignedUrls: [
+          'https://example.com/0.wav',
+          'https://example.com/1.wav',
+        ],
+        audioAnalysis: {tracks: [{seed: 0}, {seed: 1}]},
+      });
+
+      const seedEl = () =>
+        host.querySelector('[data-testid="media-detail-seed"]');
+      expect(seedEl()?.textContent?.trim()).toBe('0');
+
+      component.currentImageIndex = 1;
+      fixture.detectChanges();
+      expect(seedEl()?.textContent?.trim()).toBe('1');
+    });
+
+    it('navigates to /audio with referenceAudio remixState on handleIterateAudio and ignores audio in handleEditWithOmni', () => {
+      loadItem(
+        {
+          id: 502,
+          model: 'lyria-3-pro-preview',
+          titles: ['Midnight Drive', 'Midnight Drive Alt'],
+          presignedUrls: [
+            'https://example.com/0.mp3',
+            'https://example.com/1.mp3',
+          ],
+        },
+        false,
+      );
+
+      component.handleEditWithOmni({
+        mediaItem: component.mediaItem,
+        selectedIndex: 1,
+      });
+      expect(mockRouter.navigate).not.toHaveBeenCalled();
+
+      component.handleIterateAudio({
+        mediaItem: component.mediaItem as any,
+        selectedIndex: 1,
+      });
+      expect(mockRouter.navigate).toHaveBeenCalledWith(['/audio'], {
+        state: {
+          remixState: {
+            lyriaModel: 'lyria-3-pro-preview',
+            parentMediaItemId: 502,
+            referenceAudio: {
+              id: 502,
+              type: 'media_item',
+              index: 1,
+              name: 'Midnight Drive Alt (Track 2)',
+            },
+          },
+        },
+      });
+    });
+
+    it('renders per-take musical profile and updates when currentImageIndex changes', () => {
+      const host = loadItem({
+        id: 700,
+        originalPrompt: ' Indie synthwave track ',
+        gcsUris: ['gs://b/0.mp3', 'gs://b/1.mp3'],
+        presignedUrls: [
+          'https://example.com/0.mp3',
+          'https://example.com/1.mp3',
+        ],
+        audioAnalysis: {
+          tracks: [
+            {
+              musical_profile: {
+                bpm: 118,
+                key_signature: 'A minor',
+                time_signature: '4/4',
+                vocal_profile: 'breathy female alto lead',
+                instrumentation: ['Analog Juno pad', 'Punchy gated snare'],
+                chord_progression: 'Am - F - C - G',
+                groove: 'Driving sixteenth-note arpeggio pulse',
+              },
+            },
+            {
+              musical_profile: {
+                bpm: 124,
+                key_signature: 'D minor',
+                instrumentation: ['Distorted bass'],
+              },
+            },
+          ],
+        },
+      });
+
+      const profileText = () =>
+        host.querySelector('[data-testid="track-musical-profile-section"]')
+          ?.textContent ?? '';
+      for (const expected of [
+        'BPM:',
+        '118',
+        'Key:',
+        'A minor',
+        'Meter:',
+        '4/4',
+        'Vocals:',
+        'breathy female alto lead',
+        'Analog Juno pad',
+        'Punchy gated snare',
+        'Am - F - C - G',
+        'Driving sixteenth-note arpeggio pulse',
+      ]) {
+        expect(profileText()).toContain(expected);
+      }
+
+      component.currentImageIndex = 1;
+      fixture.detectChanges();
+
+      expect(profileText()).toContain('124');
+      expect(profileText()).toContain('D minor');
+      expect(profileText()).not.toContain('Analog Juno pad');
+    });
+
+    it('renders Iteration History only when multi-step or derived from an Audio Ref', () => {
+      const host = loadItem({
+        id: 701,
+        originalPrompt: 'Warm acoustic folk intro',
+        audioAnalysis: {
+          iteration_steps: ['Warm acoustic folk intro'],
+          tracks: [null],
+        },
+      });
+      expect(
+        host.querySelector('[data-testid="audio-iteration-history-section"]'),
+      ).toBeNull();
+
+      loadItem({
+        id: 702,
+        originalPrompt: 'Add upright bass and brushed snare in chorus',
+        audioAnalysis: {
+          iteration_steps: [
+            'Warm acoustic folk intro',
+            'Add upright bass and brushed snare in chorus',
+          ],
+          tracks: [null],
+        },
+      });
+
+      const historySection = host.querySelector(
+        '[data-testid="audio-iteration-history-section"]',
+      );
+      expect(historySection).not.toBeNull();
+      const items = historySection?.querySelectorAll('li') ?? [];
+      expect(items.length).toBe(2);
+      expect(items[0].textContent).toContain('Warm acoustic folk intro');
+      expect(items[1].textContent).toContain(
+        'Add upright bass and brushed snare in chorus',
+      );
+    });
+
+    it('separates originalPrompt, synthesizedPrompt, and negativePrompt for non-JSON audio items', () => {
+      const host = loadItem({
+        id: 703,
+        originalPrompt: 'Make the chorus heavier with brass',
+        prompt:
+          '120 BPM cinematic funk.\n[0:00 - 0:15] Verse groove.\n[0:15 - 0:30] Heavy brass chorus.',
+        negativePrompt: 'muddy low-end, clipping',
+      });
+
+      const origBox = host.querySelector('[data-testid="original-prompt-box"]');
+      const synthBox = host.querySelector(
+        '[data-testid="synthesized-prompt-box"]',
+      );
+      const negBox = host.querySelector('[data-testid="negative-prompt-box"]');
+
+      expect(origBox?.textContent).toContain(
+        'Make the chorus heavier with brass',
+      );
+      expect(origBox?.textContent).not.toContain('[0:15 - 0:30]');
+      expect(synthBox?.textContent).toContain(
+        '[0:15 - 0:30] Heavy brass chorus.',
+      );
+      expect(negBox?.textContent).toContain('muddy low-end, clipping');
+    });
+
+    it('renders Audio Ref and Track N badges on referenced assets and resolves assetId or sourceAssetId', () => {
+      const host = loadItem({
+        id: 704,
+        originalPrompt: 'Add strings over uploaded demo',
+        enrichedSourceAssets: [
+          {
+            assetId: 88,
+            gcsUri: 'gs://b/demo.wav',
+            presignedUrl: 'https://example.com/demo.wav',
+            presignedThumbnailUrl: '',
+            role: 'audio_reference',
+            mimeType: 'audio/wav',
+          },
+        ],
+        enrichedSourceMediaItems: [
+          {
+            mediaItemId: 650,
+            mediaIndex: 1,
+            gcsUri: 'gs://b/parent_1.mp3',
+            presignedUrl: 'https://example.com/parent_1.mp3',
+            presignedThumbnailUrl: '',
+            role: 'audio_reference',
+            mimeType: 'audio/mpeg',
+          },
+        ],
+        audioAnalysis: {
+          iteration_steps: ['Add strings over uploaded demo'],
+        },
+      });
+
+      const refSection = host.querySelector(
+        '[data-testid="referenced-assets-section"]',
+      );
+      expect(refSection).not.toBeNull();
+      expect(refSection?.textContent).toContain('Audio Ref');
+      expect(refSection?.textContent).toContain('Track 2');
+      expect(
+        host.querySelector('[data-testid="audio-iteration-history-section"]'),
+      ).not.toBeNull();
+
+      expect(component.getSourceAssetRouteId({assetId: 88})).toBe(88);
+      expect(
+        component.getSourceAssetRouteId({sourceAssetId: 'legacy-99'}),
+      ).toBe('legacy-99');
+    });
+
+    it('hides irrelevant TTS/image default fields on Lyria music items while keeping Voice and Language on TTS items', () => {
+      const host = loadItem({
+        id: 705,
+        model: 'lyria-3-pro-preview',
+        originalPrompt: 'Lush orchestral overture',
+        voiceName: 'Puck',
+        languageCode: 'en-US',
+        aspectRatio: '16:9',
+        resolution: '1080p',
+        googleSearch: null as any,
+        numMedia: 2,
+        generationTime: 14.5,
+      });
+
+      expect(host.textContent).toContain('lyria-3-pro-preview');
+      expect(host.textContent).toContain('Number of Media:');
+      for (const hidden of [
+        'Voice:',
+        'Puck',
+        'Language:',
+        'en-US',
+        'Aspect Ratio:',
+        '16:9',
+        'Resolution:',
+        'Google Search:',
+        'Watermark:',
+      ]) {
+        expect(host.textContent).not.toContain(hidden);
+      }
+
+      loadItem({
+        id: 706,
+        mimeType: 'audio/wav',
+        model: 'chirp_3',
+        originalPrompt: 'Welcome to Creative Studio',
+        voiceName: 'Puck',
+        languageCode: 'en-US',
+        aspectRatio: '16:9',
+        googleSearch: null as any,
+      });
+
+      expect(host.textContent).toContain('Voice:');
+      expect(host.textContent).toContain('Puck');
+      expect(host.textContent).toContain('Language:');
+      expect(host.textContent).toContain('en-US');
+      expect(host.textContent).not.toContain('Aspect Ratio:');
+      expect(host.textContent).not.toContain('Google Search:');
+      expect(host.textContent).not.toContain('Watermark:');
+    });
+
+    it('recomputes promptJsonSignal and synthesizedPrompt reactively when mediaItem changes', () => {
+      loadItem({
+        id: 707,
+        originalPrompt: 'Short brief',
+        prompt: JSON.stringify({metadata: {prompt_name: 'Structured Video'}}),
+      });
+      expect(component.promptJsonSignal()).toEqual({
+        metadata: {prompt_name: 'Structured Video'},
+      });
+      expect(component.synthesizedPrompt()).toBeNull();
+
+      loadItem({
+        id: 708,
+        originalPrompt: 'Add sub-bass',
+        prompt: '110 BPM deep house groove with warm sub-bass.',
+      });
+      expect(component.promptJsonSignal()).toBeUndefined();
+      expect(component.synthesizedPrompt()).toBe(
+        '110 BPM deep house groove with warm sub-bass.',
+      );
+    });
+  });
+
+  describe('revision history and cold-load resilience', () => {
+    const makeTake = (id: number, rev: number): GalleryItem => ({
+      id,
+      workspaceId: 10,
+      itemType: 'media_item',
+      createdAt: `2026-07-08T22:2${rev}:10Z`,
+      status: 'COMPLETED',
+      mimeType: 'image/png',
+      prompt: `Prompt v${rev}`,
+      presignedUrls: [`http://example.com/v${rev}.png`],
+      presignedThumbnailUrls: [`http://example.com/v${rev}_thumb.png`],
+      revisionRootId: 120,
+      revisionNumber: rev,
+      revisionCount: 2,
+      metadata: {},
+    });
+
+    it('loads revision history on cold direct URL load even before workspaces resolve', () => {
+      mockWorkspaceStateService.personalWorkspaceId.and.returnValue(null);
+      const take1 = makeTake(120, 1);
+      const take2 = makeTake(121, 2);
+      mockGalleryService.getMedia.and.returnValue(of(take2));
+      mockGalleryService.getItemRevisions.and.returnValue(
+        of({
+          rootId: 120,
+          revisionCount: 2,
+          takes: [take1, take2],
+        }),
+      );
+
+      component.fetchMediaDetails(121, false);
+      fixture.detectChanges();
+
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledWith(121);
+      expect(component.revisionHistory?.takes.map(t => t.id)).toEqual([
+        120, 121,
+      ]);
+      const stripEl = (fixture.nativeElement as HTMLElement).querySelector(
+        'app-revision-history-strip',
+      );
+      expect(stripEl).not.toBeNull();
+    });
+
+    it('switches displayed take, branches with parentMediaItemId, and deletes a take', () => {
+      const take1 = makeTake(120, 1);
+      const take2 = makeTake(121, 2);
+      component.mediaItem = take2;
+      component.revisionHistory = {
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      };
+
+      component.onEditFromRevisionTake(take1);
+      expect(component.mediaItem?.id).toBe(120);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              parentMediaItemId: 120,
+              sourceMediaItems: [
+                {mediaItemId: 120, mediaIndex: 0, role: 'input'},
+              ],
+            }),
+          },
+        }),
+      );
+
+      mockGalleryService.getItemRevisions.and.returnValue(
+        of({
+          rootId: 120,
+          revisionCount: 1,
+          takes: [take1],
+        }),
+      );
+      component.onDeleteRevisionTake(take2);
+      expect(mockGalleryService.bulkDelete).toHaveBeenCalledWith(
+        [{id: 121, type: 'media_item'}],
+        10,
+      );
+      expect(component.mediaItem?.id).toBe(120);
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledWith(120);
+    });
+
+    it('routes Lyria audio revision takes to /audio and ignores non-Lyria TTS takes', () => {
+      const lyriaTake: GalleryItem = {
+        ...makeTake(130, 1),
+        mimeType: 'audio/wav',
+        model: 'lyria-3-clip-preview',
+        presignedUrls: ['https://example.com/audio-130.wav'],
+      };
+      const ttsTake: GalleryItem = {
+        ...makeTake(131, 1),
+        mimeType: 'audio/wav',
+        model: 'chirp-3-hd',
+        presignedUrls: ['https://example.com/audio-131.wav'],
+      };
+      component.mediaItem = lyriaTake;
+      mockRouter.navigate.calls.reset();
+
+      component.onEditFromRevisionTake(lyriaTake);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/audio'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              parentMediaItemId: 130,
+              referenceAudio: jasmine.objectContaining({id: 130}),
+            }),
+          },
+        }),
+      );
+
+      mockRouter.navigate.calls.reset();
+      component.mediaItem = ttsTake;
+      component.onEditFromRevisionTake(ttsTake);
+      expect(mockRouter.navigate).not.toHaveBeenCalled();
+    });
+
+    it('renders revisionHistoryError banner and retries loading on Retry click', () => {
+      spyOn(console, 'error');
+      mockGalleryService.getItemRevisions.calls.reset();
+      const take1 = makeTake(123, 1);
+      const take2 = makeTake(124, 2);
+      mockGalleryService.getItemRevisions.and.returnValues(
+        throwError(() => new Error('network down')),
+        of({
+          rootId: 123,
+          revisionCount: 2,
+          takes: [take1, take2],
+        }),
+      );
+
+      component.fetchMediaDetails(123, false);
+      fixture.detectChanges();
+
+      expect(component.revisionHistory).toBeNull();
+      expect(component.revisionHistoryError).toBeTrue();
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.textContent).toContain("Couldn't load version history");
+
+      const retryBtn = el.querySelector(
+        '#revision-history-retry-btn',
+      ) as HTMLButtonElement;
+      expect(retryBtn).not.toBeNull();
+      retryBtn.click();
+      fixture.detectChanges();
+
+      expect(mockGalleryService.getItemRevisions).toHaveBeenCalledTimes(2);
+      expect(component.revisionHistoryError).toBeFalse();
+      expect(component.revisionHistory?.takes.map(t => t.id)).toEqual([
+        123, 124,
+      ]);
+      expect(el.textContent).not.toContain("Couldn't load version history");
+    });
+
+    it('drops stale out-of-order revision responses, hides strip for single-take stacks, and keeps take references isolated', () => {
+      const firstRev$ = new Subject<any>();
+      const secondRev$ = new Subject<any>();
+      const take1: GalleryItem = {
+        ...makeTake(120, 1),
+        enrichedSourceAssets: undefined,
+        enrichedSourceMediaItems: undefined,
+      };
+      const take2: GalleryItem = {
+        ...makeTake(121, 2),
+        presignedUrls: [
+          'http://example.com/v2a.png',
+          'http://example.com/v2b.png',
+        ],
+        enrichedSourceAssets: [
+          {
+            assetId: 50,
+            role: 'input',
+            presignedUrl: 'http://example.com/ref.png',
+            presignedThumbnailUrl: 'http://example.com/ref_t.png',
+            mimeType: 'image/png',
+            originalFilename: 'ref.png',
+          },
+        ],
+      };
+      const singleItem = makeTake(200, 1);
+
+      mockGalleryService.getMedia.and.returnValues(of(take2), of(singleItem));
+      mockGalleryService.getItemRevisions.and.returnValues(
+        firstRev$.asObservable(),
+        secondRev$.asObservable(),
+      );
+
+      component.fetchMediaDetails(121, false);
+      component.currentImageIndex = 1;
+      component.onEditFromRevisionTake(take2);
+      expect(mockRouter.navigate).toHaveBeenCalledWith(
+        ['/'],
+        jasmine.objectContaining({
+          state: {
+            remixState: jasmine.objectContaining({
+              sourceMediaItems: [
+                {mediaItemId: 121, mediaIndex: 1, role: 'input'},
+              ],
+            }),
+          },
+        }),
+      );
+      component.onRevisionTakeSelected(take1);
+      expect(component.mediaItem?.enrichedSourceAssets).toBeUndefined();
+      expect(component.mediaItem?.enrichedSourceMediaItems).toBeUndefined();
+
+      component.revisionHistory = {
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      };
+      component.fetchMediaDetails(200, false);
+      expect(component.revisionHistory).toBeNull();
+
+      secondRev$.next({
+        rootId: 200,
+        revisionCount: 1,
+        takes: [singleItem],
+      });
+      firstRev$.next({
+        rootId: 120,
+        revisionCount: 2,
+        takes: [take1, take2],
+      });
+      fixture.detectChanges();
+
+      expect(component.revisionHistory?.rootId).toBe(200);
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          'app-revision-history-strip',
+        ),
+      ).toBeNull();
+
+      component.revisionHistory = {
+        rootId: 200,
+        revisionCount: 1,
+        takes: [singleItem],
+        promotions: [
+          {
+            targetWorkspaceId: 2,
+            targetWorkspaceName: 'Team Brand',
+            targetItemId: 902,
+          },
+        ],
+      };
+      fixture.detectChanges();
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          'app-revision-history-strip',
+        ),
+      ).not.toBeNull();
+    });
+
+    it('exposes canPromoteItem and refreshes details after openPromoteDialog', () => {
+      mockDialog.open.and.returnValue({
+        afterClosed: () =>
+          of({
+            response: {
+              promotedCount: 1,
+              createdCount: 1,
+              updatedCount: 0,
+              promotedItems: [],
+            },
+            targetWorkspaceName: 'Team Brand',
+          }),
+      });
+      const personalItem = {
+        ...makeTake(201, 2),
+        workspaceId: 1,
+        workspaceScope: 'personal',
+      } as unknown as GalleryItem;
+      component.mediaItem = personalItem;
+      expect(component.canPromoteItem).toBeTrue();
+
+      mockGalleryService.getMedia.and.returnValue(of(personalItem));
+      component.openPromoteDialog();
+      expect(mockDialog.open).toHaveBeenCalled();
+      expect(mockGalleryService.getMedia).toHaveBeenCalledWith(201);
     });
   });
 });

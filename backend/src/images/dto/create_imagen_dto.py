@@ -45,6 +45,13 @@ class CreateImagenDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+    context_workspace_id: PositiveInt | None = Field(
+        default=None,
+        description=(
+            "Optional shared workspace ID providing context such as brand "
+            "guidelines while outputting to the user's personal workspace."
+        ),
+    )
 
     metadata_generation_model: GenerationModelEnum | str | None = Field(
         default=GenerationModelEnum.GEMINI_3_5_FLASH,
@@ -141,6 +148,10 @@ class CreateImagenDto(BaseDto):
     folder_id: PositiveInt | None = Field(
         default=None,
         description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
+    )
+    parent_media_item_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional parent media item ID to link this generation into its revision stack.",
     )
 
     @field_validator("external_url")

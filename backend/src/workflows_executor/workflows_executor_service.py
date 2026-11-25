@@ -60,6 +60,7 @@ from src.workflows_executor.step_errors import (
     backend_error,
     invalid_input_error,
     job_failed_error,
+    job_item_deleted_error,
     step_in_progress_error,
     to_step_error,
 )
@@ -593,6 +594,11 @@ class WorkflowsExecutorService:
 
         while True:
             data = await self._fetch_job_status(url, headers, media_id)
+            if data and (data.get("deletedAt") or data.get("deleted_at")):
+                logger.warning(
+                    "Polled job %s: gallery item was deleted.", media_id
+                )
+                raise job_item_deleted_error()
             status = data.get("status") if data else None
             if status == "completed":
                 return True
@@ -849,8 +855,9 @@ class WorkflowsExecutorService:
     ) -> None:
         """Adds the node's output folder to a JSON generation body.
 
-        The key is omitted for the root folder (``None``), so root runs send
-        exactly the same body as before the setting existed.
+        The folder comes from the step's ``output_folder`` input. The key is
+        omitted for the root folder (``None``), so root runs send exactly the
+        same body as runs without an output folder.
         """
         if output_folder_id is not None:
             body["folder_id"] = output_folder_id
@@ -1156,7 +1163,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "duration_seconds": duration_seconds,
         }
-        self._add_output_folder(body, request.config.output_folder_id)
+        self._add_output_folder(body, request.inputs.output_folder)
 
         # Creates the job and polls it for completion.
         video_id = await self._submit_job(
@@ -1400,7 +1407,7 @@ class WorkflowsExecutorService:
             "language_code": request.config.language_code,
             "negative_prompt": request.config.negative_prompt,
             "seed": request.config.seed,
-            "folder_id": request.config.output_folder_id,
+            "folder_id": request.inputs.output_folder,
         }
 
         # Filter None values to let DTO defaults take over if needed
@@ -1488,7 +1495,7 @@ class WorkflowsExecutorService:
     ) -> StepOutputs:
         logger.info("Execute unified image step, mode: %s", request.config.mode)
         mode = request.config.mode or "generate_image"
-        output_folder_id = request.config.output_folder_id
+        output_folder_id = request.inputs.output_folder
 
         if mode == "generate_image":
             if not request.inputs.prompt:
@@ -1630,7 +1637,7 @@ class WorkflowsExecutorService:
             )
             step_inputs.update(
                 mode="folder",
-                folder_id=folder.id,
+                folder=folder.id,
                 folder_name=folder.name,
                 item_type=request.config.item_type,
             )
@@ -1661,7 +1668,8 @@ class WorkflowsExecutorService:
         not_found = StepError(
             422, ErrorCategory.INVALID_INPUT, FOLDER_NOT_FOUND_DETAIL
         )
-        if request.config.folder_id is None:
+        folder_id = request.inputs.folder
+        if folder_id is None:
             raise StepError(
                 422,
                 ErrorCategory.INVALID_INPUT,
@@ -1670,9 +1678,7 @@ class WorkflowsExecutorService:
         await WorkflowsExecutorService._authorize_loop_workspace(
             request, user, workspace_auth, denied=not_found
         )
-        folder = await folder_repository.get_folder_by_id(
-            request.config.folder_id
-        )
+        folder = await folder_repository.get_folder_by_id(folder_id)
         if folder is None or folder.workspace_id != request.workspace_id:
             raise not_found
         return folder
@@ -1758,7 +1764,42 @@ class WorkflowsExecutorService:
             ],
             mime_type_prefix=item_type,
         )
-        missing_count = len(requested - found)
+        missing = requested - found
+        if missing:
+            ws_map = (
+                await gallery_repository.lookup_linked_loop_item_workspaces(
+                    media_item_ids=[
+                        item_id
+                        for kind, item_id in missing
+                        if kind == LOOP_MEDIA_ITEM
+                    ],
+                    source_asset_ids=[
+                        item_id
+                        for kind, item_id in missing
+                        if kind == LOOP_SOURCE_ASSET
+                    ],
+                    mime_type_prefix=item_type,
+                )
+            )
+            if missing.issubset(ws_map.keys()):
+                checked_ws: set[int] = {request.workspace_id}
+                try:
+                    for key in missing:
+                        ws_id = ws_map[key]
+                        if ws_id not in checked_ws:
+                            await workspace_auth.authorize(
+                                workspace_id=ws_id, user=user
+                            )
+                            checked_ws.add(ws_id)
+                    missing = set()
+                except HTTPException as error:
+                    logger.warning(
+                        "Loop step %s cross-workspace linked item denied: %s",
+                        request.step_id,
+                        error.status_code,
+                    )
+
+        missing_count = len(missing)
         if missing_count:
             logger.warning(
                 "Loop step %s of run %s: %s of %s linked items are not "

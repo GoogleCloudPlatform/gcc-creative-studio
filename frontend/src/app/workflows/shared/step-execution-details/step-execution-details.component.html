@@ -178,9 +178,23 @@
         </div>
       </div>
 
+      <!-- Folder Input (path) -->
+      <div
+        *ngIf="folderInputLabels()[input.key] as folderLabel"
+        class="col-span-2 step-folder-input"
+        [id]="'step-folder-input-' + stepId + '-' + input.key"
+      >
+        <span class="text-xs text-neutral-500 block mb-1">{{ input.key }}</span>
+        <p class="step-folder-path">
+          <mat-icon class="step-folder-icon">folder</mat-icon>
+          <span>{{ folderLabel }}</span>
+        </p>
+      </div>
+
       <!-- Non-Image/Video/Audio Input -->
       <div
         *ngIf="
+          !folderInputLabels()[input.key] &&
           !isImageInput(input.key) &&
           !isVideoInput(input.key) &&
           !isAudioInput(input.key)

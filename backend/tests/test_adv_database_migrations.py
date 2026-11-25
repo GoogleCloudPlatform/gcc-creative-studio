@@ -13,11 +13,14 @@
 # limitations under the License.
 """Adversarial tests for Database Migrations Runner."""
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from src.database_migrations import run_pending_migrations, MIGRATION_LOCK_ID
+import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+from src.database_migrations import MIGRATION_LOCK_ID, run_pending_migrations
 
 
 @pytest.mark.anyio
@@ -149,3 +152,14 @@ async def test_migration_runner_exception_in_lock_release():
         )
         # Connection must still be closed
         mock_conn.close.assert_called_once()
+
+
+def test_alembic_single_head():
+    """Verifies Alembic migration history has a single non-divergent head."""
+    cfg = Config()
+    cfg.set_main_option(
+        "script_location",
+        str(Path(__file__).resolve().parent.parent / "alembic"),
+    )
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    assert len(heads) == 1

@@ -21,4 +21,6 @@ class CreateWorkspaceDto(BaseModel):
 
     name: str = Field(..., min_length=3, max_length=100)
 
-    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra="forbid"
+    )

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Service layer for gallery search, enrichment, and bulk asset operations."""
+
 import asyncio
 import logging
 import mimetypes
@@ -20,7 +22,7 @@ import zipfile
 
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
@@ -50,6 +52,12 @@ from src.galleries.dto.unified_gallery_response import (
 from src.galleries.repository.unified_gallery_repository import (
     UnifiedGalleryRepository,
 )
+from src.galleries.revision_lineage import (
+    COPIED_ASSET_EXCLUDE_FIELDS,
+    COPIED_MEDIA_EXCLUDE_FIELDS,
+    sanitize_copied_media_kwargs,
+    stack_root_expr,
+)
 from src.images.imagen_service import ImagenService
 from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
@@ -57,15 +65,28 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.common.media_utils import extract_youtube_video_id
 from src.source_assets.schema.source_asset_model import (
+    AssetScopeEnum,
     AssetTypeEnum,
     SourceAsset,
+    SourceAssetModel,
 )
 from src.users.repository.user_repository import UserRepository
-from src.users.user_model import UserModel, UserRoleEnum
+from src.users.user_model import User, UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
-from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.workspaces.schema.workspace_model import WorkspaceScopeEnum
+from src.workspaces.workspace_auth_guard import (
+    WorkspaceAuth,
+    get_accessible_shared_workspace_ids,
+    is_workspace_manager,
+)
 from src.tags.repository.tags_repository import TagsRepository
+from src.tags.schema.tags_model import Tag, TagModel, media_item_tags
 from src.folders.dto.folder_dto import ConflictStrategyEnum
+from src.folders.folder_service import (
+    FolderService,
+    ITEMS_NOT_OWNED_DETAIL,
+)
+from src.folders.schema.folder_model import Folder
 from src.folders.repository.folder_repository import FolderRepository
 
 logger = logging.getLogger(__name__)
@@ -103,9 +124,34 @@ class GalleryService:
         self.folder_repo = folder_repo
         self.db = db
 
+    async def _sign_uri(self, uri: str | None) -> str:
+        """Generates a presigned URL using the async signer."""
+        return await self.iam_signer_credentials.generate_presigned_url_async(
+            uri
+        )
+
+    async def _can_read_parent_workspace(
+        self,
+        parent_ws_id: int | None,
+        item_ws_id: int,
+        user: UserModel,
+        is_system: bool = False,
+    ) -> bool:
+        if is_system or parent_ws_id == item_ws_id:
+            return True
+        if parent_ws_id is None:
+            return False
+        try:
+            await self.workspace_auth.authorize(parent_ws_id, user)
+            return True
+        except HTTPException:
+            return False
+
     async def _enrich_source_asset_link(
         self,
         link: SourceAssetLink,
+        item_workspace_id: int,
+        current_user: UserModel,
     ) -> SourceAssetLinkResponse | None:
         """Fetches the source asset document and generates a presigned URL for it."""
         asset_doc = await self.source_asset_repo.get_by_id(link.asset_id)
@@ -113,14 +159,20 @@ class GalleryService:
         if not asset_doc:
             return None
 
-        is_youtube = False
-        if (
-            getattr(asset_doc, "asset_type", None)
-            == AssetTypeEnum.YOUTUBE_VIDEO
+        is_sys = asset_doc.scope == AssetScopeEnum.SYSTEM
+        if not await self._can_read_parent_workspace(
+            asset_doc.workspace_id,
+            item_workspace_id,
+            current_user,
+            is_system=is_sys,
         ):
+            return None
+
+        is_youtube = False
+        if asset_doc.asset_type == AssetTypeEnum.YOUTUBE_VIDEO:
             is_youtube = True
         elif isinstance(
-            getattr(asset_doc, "external_url", None), str
+            asset_doc.external_url, str
         ) and extract_youtube_video_id(asset_doc.external_url):
             is_youtube = True
 
@@ -142,20 +194,14 @@ class GalleryService:
             )
 
         tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url,
-                asset_doc.gcs_uri,
-            ),
+            self._sign_uri(asset_doc.gcs_uri),
         ]
 
         # Check if the asset has a thumbnail and create a task for it.
         # This requires the SourceAsset model to have a `thumbnail_gcs_uri` field.
         if asset_doc.thumbnail_gcs_uri:
             tasks.append(
-                asyncio.to_thread(
-                    self.iam_signer_credentials.generate_presigned_url,
-                    asset_doc.thumbnail_gcs_uri,
-                ),
+                self._sign_uri(asset_doc.thumbnail_gcs_uri),
             )
 
         results = await asyncio.gather(*tasks)
@@ -173,6 +219,8 @@ class GalleryService:
     async def _enrich_source_media_item_link(
         self,
         link: SourceMediaItemLink,
+        item_workspace_id: int,
+        current_user: UserModel,
     ) -> SourceMediaItemLinkResponse | None:
         """Fetches the parent MediaItem document and generates a presigned URL
         for the specific image that was used as input.
@@ -185,15 +233,19 @@ class GalleryService:
         ):
             return None
 
+        if not await self._can_read_parent_workspace(
+            parent_item.workspace_id,
+            item_workspace_id,
+            current_user,
+        ):
+            return None
+
         # Get the specific GCS URI of the parent image that was edited.
         parent_gcs_uri = parent_item.gcs_uris[link.media_index]
 
         # Prepare tasks for both the main media and its thumbnail
         tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url,
-                parent_gcs_uri,
-            ),
+            self._sign_uri(parent_gcs_uri),
         ]
 
         parent_thumbnail_gcs_uri = None
@@ -204,10 +256,7 @@ class GalleryService:
                 link.media_index
             ]
             tasks.append(
-                asyncio.to_thread(
-                    self.iam_signer_credentials.generate_presigned_url,
-                    parent_thumbnail_gcs_uri,
-                ),
+                self._sign_uri(parent_thumbnail_gcs_uri),
             )
 
         results = await asyncio.gather(*tasks)
@@ -223,7 +272,9 @@ class GalleryService:
         )
 
     async def _create_gallery_response(
-        self, item: MediaItemModel
+        self,
+        item: MediaItemModel,
+        current_user: UserModel,
     ) -> MediaItemResponse:
         """Helper function to convert a MediaItem into a GalleryItemResponse
         by generating presigned URLs in parallel for its GCS URIs.
@@ -231,38 +282,26 @@ class GalleryService:
         all_gcs_uris = item.gcs_uris or []
 
         # 1. Create tasks for main media URLs
-        main_url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in all_gcs_uris
-            if uri
-        ]
+        main_url_tasks = [self._sign_uri(uri) for uri in all_gcs_uris if uri]
 
         # 1.5 Create tasks for original media URLs
         all_original_gcs_uris = item.original_gcs_uris or []
         original_url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in all_original_gcs_uris
-            if uri
+            self._sign_uri(uri) for uri in all_original_gcs_uris if uri
         ]
 
         # 2. Create tasks for thumbnail URLs
         thumbnail_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in (item.thumbnail_uris or "")
-            if uri
+            self._sign_uri(uri) for uri in (item.thumbnail_uris or []) if uri
         ]
 
         # 3. Create tasks for source asset URLs
         source_asset_tasks = []
         if item.source_assets:
             source_asset_tasks = [
-                self._enrich_source_asset_link(link)
+                self._enrich_source_asset_link(
+                    link, item.workspace_id, current_user
+                )
                 for link in item.source_assets
             ]
 
@@ -270,7 +309,9 @@ class GalleryService:
         source_media_item_tasks = []
         if item.source_media_items:
             source_media_item_tasks = [
-                self._enrich_source_media_item_link(link)
+                self._enrich_source_media_item_link(
+                    link, item.workspace_id, current_user
+                )
                 for link in item.source_media_items
             ]
 
@@ -341,20 +382,10 @@ class GalleryService:
         thumbnail_uris_to_sign = item.thumbnail_uris or []
 
         # Create tasks
-        url_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in uris_to_sign
-            if uri
-        ]
+        url_tasks = [self._sign_uri(uri) for uri in uris_to_sign if uri]
 
         thumbnail_tasks = [
-            asyncio.to_thread(
-                self.iam_signer_credentials.generate_presigned_url, uri
-            )
-            for uri in thumbnail_uris_to_sign
-            if uri
+            self._sign_uri(uri) for uri in thumbnail_uris_to_sign if uri
         ]
 
         (presigned_urls, presigned_thumbnail_urls) = await asyncio.gather(
@@ -365,6 +396,49 @@ class GalleryService:
         item.presigned_urls = presigned_urls
         item.presigned_thumbnail_urls = presigned_thumbnail_urls
         return item
+
+    @staticmethod
+    def _extract_promotion_workspace_id(promo: object) -> int | None:
+        if not isinstance(promo, dict):
+            return None
+        raw = promo.get("target_workspace_id")
+        if raw is None:
+            raw = promo.get("targetWorkspaceId")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            return raw
+        return None
+
+    async def _filter_accessible_promotions(
+        self,
+        items: list[UnifiedGalleryItemResponse],
+        current_user: UserModel,
+    ) -> None:
+        """Strips promotions targeting workspaces the caller cannot read."""
+        target_ids: set[int] = set()
+        for item in items:
+            promos = item.metadata.get("promotions") if item.metadata else None
+            if not isinstance(promos, list):
+                continue
+            for promo in promos:
+                target_ws_id = self._extract_promotion_workspace_id(promo)
+                if target_ws_id is not None:
+                    target_ids.add(target_ws_id)
+        if not target_ids:
+            return
+
+        allowed_ids = await get_accessible_shared_workspace_ids(
+            self.db, target_ids, current_user
+        )
+        for item in items:
+            if not item.metadata or not isinstance(
+                item.metadata.get("promotions"), list
+            ):
+                continue
+            item.metadata["promotions"] = [
+                promo
+                for promo in item.metadata["promotions"]
+                if self._extract_promotion_workspace_id(promo) in allowed_ids
+            ]
 
     async def get_paginated_gallery(
         self,
@@ -397,8 +471,10 @@ class GalleryService:
         # We assume UnifiedGalleryRepository.query handles filtering
         unified_items_query = await self.unified_gallery_repo.query(
             search_dto,
+            requesting_user_id=current_user.id,
         )
         unified_items = unified_items_query.data or []
+        await self._filter_accessible_promotions(unified_items, current_user)
 
         # Convert each MediaItem to a GalleryItemResponse in parallel
         response_tasks = [
@@ -447,13 +523,69 @@ class GalleryService:
             user=current_user,
         )
 
-        response = await self._create_gallery_response(item)
-        response.tags = await self.tags_repo.get_tags_for_media_item(item_id)
+        return await self.hydrate_media_item(item, current_user)
+
+    async def hydrate_media_item(
+        self,
+        item: MediaItemModel,
+        current_user: UserModel,
+    ) -> MediaItemResponse:
+        """Enriches a MediaItemModel with presigned URLs, tags, and user picture."""
+        response = await self._create_gallery_response(item, current_user)
+        if item.id is not None:
+            response.tags = await self.tags_repo.get_tags_for_media_item(
+                item.id
+            )
         if item.user_id:
             user = await self.user_repo.get_by_id(item.user_id)
             if user:
                 response.user_picture = user.picture
         return response
+
+    async def hydrate_media_items(
+        self,
+        items: list[MediaItemModel],
+        current_user: UserModel,
+    ) -> list[MediaItemResponse]:
+        """Batch-enriches MediaItemModels with presigned URLs, tags, and pictures."""
+        if not items:
+            return []
+        if len(items) == 1:
+            return [await self.hydrate_media_item(items[0], current_user)]
+
+        item_ids = [m.id for m in items if m.id is not None]
+        tags_by_id: dict[int, list[TagModel]] = {}
+        if item_ids:
+            tag_res = await self.db.execute(
+                select(media_item_tags.c.media_item_id, Tag)
+                .join(Tag, media_item_tags.c.tag_id == Tag.id)
+                .where(media_item_tags.c.media_item_id.in_(item_ids))
+            )
+            for media_id, tag_row in tag_res.all():
+                tags_by_id.setdefault(media_id, []).append(
+                    TagModel.model_validate(tag_row)
+                )
+
+        user_ids = sorted({m.user_id for m in items if m.user_id})
+        pictures_by_uid: dict[int, str | None] = {}
+        if user_ids:
+            user_res = await self.db.execute(
+                select(User.id, User.picture).where(User.id.in_(user_ids))
+            )
+            for uid, pic in user_res.all():
+                pictures_by_uid[uid] = pic
+
+        responses = list(
+            await asyncio.gather(
+                *(self._create_gallery_response(m, current_user) for m in items)
+            )
+        )
+        for item, response in zip(items, responses, strict=True):
+            if item.id is not None:
+                response.tags = tags_by_id.get(item.id, [])
+            if item.user_id:
+                response.user_picture = pictures_by_uid.get(item.user_id)
+        return responses
 
     async def bulk_delete(
         self,
@@ -462,10 +594,11 @@ class GalleryService:
     ) -> dict[str, int]:
         """Deletes multiple gallery items after authorizing the workspace access."""
         # 1. Authorize workspace access
-        await self.workspace_auth.authorize(
+        workspace = await self.workspace_auth.authorize_write(
             workspace_id=bulk_delete_dto.workspace_id,
             user=current_user,
         )
+        is_admin = is_workspace_manager(current_user, workspace)
 
         deleted_count = 0
         for item in bulk_delete_dto.items:
@@ -481,10 +614,7 @@ class GalleryService:
                         )
                         continue
 
-                    is_admin = UserRoleEnum.ADMIN in current_user.roles
-                    is_owner = (
-                        getattr(media_item, "user_id", None) == current_user.id
-                    )
+                    is_owner = media_item.user_id == current_user.id
                     if not is_admin and not is_owner:
                         logger.warning(
                             f"User {current_user.id} unauthorized to delete media {item.id}",
@@ -507,10 +637,7 @@ class GalleryService:
                         )
                         continue
 
-                    is_admin = UserRoleEnum.ADMIN in current_user.roles
-                    is_owner = (
-                        getattr(asset, "user_id", None) == current_user.id
-                    )
+                    is_owner = asset.user_id == current_user.id
                     if not is_admin and not is_owner:
                         logger.warning(
                             f"User {current_user.id} unauthorized to delete asset {item.id}",
@@ -534,7 +661,7 @@ class GalleryService:
         current_user: UserModel,
     ) -> bool:
         """Restores a soft-deleted item (media_item or source_asset) after authorizing roles."""
-        is_admin = UserRoleEnum.ADMIN in current_user.roles
+        is_admin = UserRoleEnum.ADMIN in (current_user.roles or [])
         if not is_admin:
             raise HTTPException(
                 status_code=403,
@@ -542,15 +669,32 @@ class GalleryService:
             )
 
         if item_type == "media_item":
-            result = await self.media_repo.restore(item_id)
+            item = await self.media_repo.get_by_id(
+                item_id, include_deleted=True
+            )
+            repo = self.media_repo
         elif item_type == "source_asset":
-            result = await self.source_asset_repo.restore(item_id)
+            item = await self.source_asset_repo.get_by_id(
+                item_id, include_deleted=True
+            )
+            repo = self.source_asset_repo
         else:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid item_type: {item_type}",
             )
 
+        if not item:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{item_type} with ID {item_id} not found",
+            )
+
+        await self.workspace_auth.authorize_write(
+            workspace_id=item.workspace_id,
+            user=current_user,
+        )
+        result = await repo.restore(item_id)
         if not result:
             raise HTTPException(
                 status_code=404,
@@ -601,9 +745,7 @@ class GalleryService:
                             )
                             if media_item.gcs_uris:
                                 gcs_uri = media_item.gcs_uris[0]
-                                mime_type = getattr(
-                                    media_item, "mime_type", None
-                                )
+                                mime_type = media_item.mime_type
 
                                 # Use mimetypes library for guessing extension
                                 ext = "bin"
@@ -701,14 +843,44 @@ class GalleryService:
             temp_file.close()
             raise e
 
+    async def _authorize_move_source(
+        self,
+        src_ws_id: int,
+        tgt_ws_id: int,
+        entity: Folder | MediaItemModel | SourceAssetModel,
+        item_type: str,
+        user: UserModel,
+    ) -> None:
+        src_ws = await self.workspace_auth.authorize_write(
+            workspace_id=src_ws_id, user=user
+        )
+        if (
+            src_ws_id != tgt_ws_id
+            and src_ws.scope == WorkspaceScopeEnum.PERSONAL
+        ):
+            raise HTTPException(
+                400,
+                detail="Use Promote to share items from My Workspace.",
+            )
+        if item_type == "folder":
+            assert isinstance(entity, Folder)
+            await FolderService(
+                folder_repo=self.folder_repo
+            ).ensure_can_manage_folder(entity, user, src_ws, check_subtree=True)
+            return
+        if is_workspace_manager(user, src_ws):
+            return
+        if entity.user_id != user.id:
+            raise HTTPException(403, detail=ITEMS_NOT_OWNED_DETAIL)
+
     async def bulk_copy(
         self,
         bulk_copy_dto: BulkCopyDto,
         current_user: UserModel,
     ) -> dict:
         """Copies multiple gallery items to a target workspace."""
-        # 1. Authorize target workspace access
-        await self.workspace_auth.authorize(
+        # 1. Authorize target workspace write access
+        await self.workspace_auth.authorize_write(
             workspace_id=bulk_copy_dto.target_workspace_id,
             user=current_user,
         )
@@ -763,33 +935,35 @@ class GalleryService:
                             user=current_user,
                         )
 
-                        # Create a new MediaItem instance with updated workspace_id
-                        # exclude 'id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by', 'folder_id'
+                        # Create a clean copy excluding identity & stack/promotion lineage
                         new_item_data = media_item.model_dump(
-                            exclude={
-                                "id",
-                                "created_at",
-                                "updated_at",
-                                "deleted_at",
-                                "deleted_by",
-                                "workspace_id",
-                                "folder_id",
-                            },
+                            exclude=set(COPIED_MEDIA_EXCLUDE_FIELDS),
                         )
                         new_item_data["workspace_id"] = (
                             bulk_copy_dto.target_workspace_id
                         )
+                        new_item_data["revision_number"] = 1
 
                         # Ensure user_id and user_email are set to the current user copying
                         new_item_data["user_id"] = current_user.id
                         new_item_data["user_email"] = current_user.email
+
+                        if (
+                            media_item.workspace_id
+                            != bulk_copy_dto.target_workspace_id
+                        ):
+                            await sanitize_copied_media_kwargs(
+                                self.db,
+                                new_item_data,
+                                bulk_copy_dto.target_workspace_id,
+                            )
 
                         new_item = await self.media_repo.create(new_item_data)
                         if (
                             media_item.workspace_id
                             == bulk_copy_dto.target_workspace_id
                             and new_item
-                            and getattr(new_item, "id", None)
+                            and new_item.id
                         ):
                             existing_tags = (
                                 await self.tags_repo.get_tags_for_media_item(
@@ -813,21 +987,14 @@ class GalleryService:
                             user=current_user,
                         )
 
-                        # Create a new SourceAsset instance with updated workspace_id
+                        # Create a clean SourceAsset copy excluding promotion lineage
                         new_asset_data = asset.model_dump(
-                            exclude={
-                                "id",
-                                "created_at",
-                                "updated_at",
-                                "deleted_at",
-                                "deleted_by",
-                                "workspace_id",
-                                "folder_id",
-                            },
+                            exclude=set(COPIED_ASSET_EXCLUDE_FIELDS),
                         )
                         new_asset_data["workspace_id"] = (
                             bulk_copy_dto.target_workspace_id
                         )
+                        new_asset_data["scope"] = AssetScopeEnum.PRIVATE.value
 
                         # Ensure user_id is set to the current user copying
                         new_asset_data["user_id"] = current_user.id
@@ -839,7 +1006,7 @@ class GalleryService:
                             asset.workspace_id
                             == bulk_copy_dto.target_workspace_id
                             and new_asset
-                            and getattr(new_asset, "id", None)
+                            and new_asset.id
                         ):
                             existing_tags = (
                                 await self.tags_repo.get_tags_for_source_asset(
@@ -892,8 +1059,8 @@ class GalleryService:
         current_user: UserModel,
     ) -> dict:
         """Moves multiple gallery items to a target workspace."""
-        # 1. Authorize target workspace access
-        await self.workspace_auth.authorize(
+        # 1. Authorize target workspace write access
+        await self.workspace_auth.authorize_write(
             workspace_id=bulk_move_dto.target_workspace_id,
             user=current_user,
         )
@@ -905,6 +1072,14 @@ class GalleryService:
         if folder_ids:
             folders = await self.folder_repo.get_folders_by_ids(folder_ids)
             folder_map = {f.id: f for f in folders}
+            for f in folders:
+                await self._authorize_move_source(
+                    f.workspace_id,
+                    bulk_move_dto.target_workspace_id,
+                    f,
+                    "folder",
+                    current_user,
+                )
 
         if folder_ids and bulk_move_dto.conflict_strategy is None:
             existing_map = await self.folder_repo.get_existing_folders_map(
@@ -942,10 +1117,12 @@ class GalleryService:
                         if not media_item:
                             continue
 
-                        # Authorize source workspace access (where the item is currently)
-                        await self.workspace_auth.authorize(
-                            workspace_id=media_item.workspace_id,
-                            user=current_user,
+                        await self._authorize_move_source(
+                            media_item.workspace_id,
+                            bulk_move_dto.target_workspace_id,
+                            media_item,
+                            "media_item",
+                            current_user,
                         )
 
                         if (
@@ -956,9 +1133,24 @@ class GalleryService:
                                 item.id
                             )
 
+                        root_id = media_item.revision_root_id or media_item.id
+                        is_same_ws = (
+                            media_item.workspace_id
+                            == bulk_move_dto.target_workspace_id
+                        )
+                        target_where = (
+                            (
+                                MediaItem.workspace_id
+                                == media_item.workspace_id,
+                                MediaItem.deleted_at.is_(None),
+                                stack_root_expr(MediaItem) == root_id,
+                            )
+                            if is_same_ws
+                            else (MediaItem.id == item.id,)
+                        )
                         stmt = (
                             update(MediaItem)
-                            .where(MediaItem.id == item.id)
+                            .where(*target_where)
                             .values(
                                 workspace_id=bulk_move_dto.target_workspace_id,
                                 folder_id=None,
@@ -973,10 +1165,12 @@ class GalleryService:
                         if not asset:
                             continue
 
-                        # Authorize source workspace access
-                        await self.workspace_auth.authorize(
-                            workspace_id=asset.workspace_id,
-                            user=current_user,
+                        await self._authorize_move_source(
+                            asset.workspace_id,
+                            bulk_move_dto.target_workspace_id,
+                            asset,
+                            "source_asset",
+                            current_user,
                         )
 
                         if (
@@ -1004,10 +1198,12 @@ class GalleryService:
                         if not folder:
                             continue
 
-                        # Authorize source workspace access
-                        await self.workspace_auth.authorize(
-                            workspace_id=folder.workspace_id,
-                            user=current_user,
+                        await self._authorize_move_source(
+                            folder.workspace_id,
+                            bulk_move_dto.target_workspace_id,
+                            folder,
+                            "folder",
+                            current_user,
                         )
 
                         if (

@@ -235,6 +235,15 @@
     width: 100%;
     transition: background 0.2s ease;
 
+    .studio-menu-item-btn {
+      color: inherit !important;
+      font-family: inherit !important;
+      height: 100% !important;
+      padding: 0 !important;
+      min-width: 0;
+      text-align: left;
+    }
+
     ::ng-deep .mdc-button__label {
       width: 100%;
       text-align: left;
@@ -292,6 +301,31 @@
       font-weight: 400;
       flex-grow: 1;
       text-align: left;
+    }
+
+    .option-badge {
+      flex-shrink: 0;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 16px;
+      letter-spacing: 0.2px;
+    }
+
+    &.is-disabled {
+      cursor: not-allowed;
+
+      .option-label {
+        color: rgba(255, 255, 255, 0.5);
+      }
+
+      &:hover {
+        background-color: transparent !important;
+      }
     }
   }
 }

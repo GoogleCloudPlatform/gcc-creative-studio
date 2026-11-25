@@ -121,46 +121,48 @@
             </studio-button>
 
             <!-- Upload Media Button & Hidden Input -->
-            <input
-              #fileInput
-              type="file"
-              multiple
-              [accept]="acceptedMediaUploadFormats"
-              class="hidden"
-              (change)="onFilesSelected($event)"
-            />
-            <studio-button
-              variant="primary"
-              size="small"
-              [disabled]="uploadService.inProgressCount() > 0"
-              [matMenuTriggerFor]="uploadMenu"
-              title="Upload media files"
-            >
-              <mat-icon class="mr-1">add</mat-icon>
-              <span>Add to Gallery</span>
-            </studio-button>
-            <mat-menu #uploadMenu="matMenu">
-              <button mat-menu-item class="add-to-gallery-option" (click)="fileInput.click()">
-                <mat-icon>laptop</mat-icon>
-                <span>From this device</span>
-              </button>
-              <button mat-menu-item class="add-to-gallery-option" (click)="openGoogleDrivePicker()">
-                <mat-icon svgIcon="drive-icon"></mat-icon>
-                <span>From Google Drive</span>
-              </button>
-            </mat-menu>
+            <ng-container *ngIf="canEditActiveWorkspace">
+              <input
+                #fileInput
+                type="file"
+                multiple
+                [accept]="acceptedMediaUploadFormats"
+                class="hidden"
+                (change)="onFilesSelected($event)"
+              />
+              <studio-button
+                variant="primary"
+                size="small"
+                [disabled]="uploadService.inProgressCount() > 0"
+                [matMenuTriggerFor]="uploadMenu"
+                title="Upload media files"
+              >
+                <mat-icon class="mr-1">add</mat-icon>
+                <span>Add to Gallery</span>
+              </studio-button>
+              <mat-menu #uploadMenu="matMenu">
+                <button mat-menu-item class="add-to-gallery-option" (click)="fileInput.click()">
+                  <mat-icon>laptop</mat-icon>
+                  <span>From this device</span>
+                </button>
+                <button mat-menu-item class="add-to-gallery-option" (click)="openGoogleDrivePicker()">
+                  <mat-icon svgIcon="drive-icon"></mat-icon>
+                  <span>From Google Drive</span>
+                </button>
+              </mat-menu>
 
-            <!-- New Folder Button -->
-            <studio-button
-              variant="primary"
-              size="small"
-              [disabled]="breadcrumbs.length >= folderMaxDepth"
-              (click)="openCreateFolderDialog()"
-              [title]="breadcrumbs.length >= folderMaxDepth ? 'Maximum folder depth of ' + folderMaxDepth + ' reached' : 'Create a new folder'"
-            >
-              <mat-icon class="mr-1">create_new_folder</mat-icon>
-              <span>New Folder</span>
-            </studio-button>
+              <!-- New Folder Button -->
+              <studio-button
+                variant="primary"
+                size="small"
+                [disabled]="breadcrumbs.length >= folderMaxDepth"
+                (click)="openCreateFolderDialog()"
+                [title]="newFolderTooltip"
+              >
+                <mat-icon class="mr-1">create_new_folder</mat-icon>
+                <span>New Folder</span>
+              </studio-button>
+            </ng-container>
           </div>
 
           <!-- Select All Button -->
@@ -203,11 +205,11 @@
             <!-- Tags Filter -->
             <div class="flex items-center gap-2 w-56">
               <studio-dropdown class="flex-1" size="small" [options]="displayedTagOptions" [(value)]="tagsFilter" [multiple]="true"
-                [searchable]="true" [deletable]="true" [hasMore]="hasMoreTags()" [showCheckbox]="true" [checkboxChecked]="onlyMyTags"
+                [searchable]="true" [deletable]="canEditActiveWorkspace" [hasMore]="hasMoreTags()" [showCheckbox]="true" [checkboxChecked]="onlyMyTags"
                 [checkboxLabel]="'My tags'" (checkboxChange)="toggleOnlyMyTags($event)" (valueChange)="onTagChange($event)"
                 (searchChange)="onTagSearch($event)" (optionDeleted)="onTagDelete($event)" (loadMore)="loadMoreTags()"
                 placeholder="Tags" menuTitle="Tags"></studio-dropdown>
-              <button mat-icon-button (click)="openTagsManagement()" title="Manage Tags" *ngIf="isAdmin" class="settings-btn">
+              <button mat-icon-button id="gallery-manage-tags-btn" (click)="openTagsManagement()" title="Manage Tags" *ngIf="canEditActiveWorkspace && !isSelectorMode" class="settings-btn">
                 <mat-icon>settings</mat-icon>
               </button>
             </div>
@@ -229,6 +231,19 @@
         class="flex justify-end items-center gap-4 px-4 py-2 mt-2 w-full animate-fade-in"
       >
         <span class="text-white/60 text-sm mr-auto">{{ selectedItems.size }} items selected</span>
+
+        <studio-button
+          *ngIf="isPersonalEffectiveWorkspace && !isSelectorMode"
+          id="gallery-bulk-promote-btn"
+          variant="primary"
+          size="small"
+          (click)="openBulkPromoteDialog()"
+          title="Promote selected"
+          [disabled]="selectedItems.size === 0 || isCopying || isMoving || isDownloading || isDeleting"
+        >
+          <mat-icon class="mr-1">publish</mat-icon>
+          <span>Promote selected</span>
+        </studio-button>
         
         <studio-button
           variant="primary"
@@ -246,6 +261,8 @@
           ></mat-progress-spinner>
         </studio-button>
         <studio-button
+          *ngIf="canEditActiveWorkspace"
+          id="gallery-bulk-move-btn"
           variant="primary"
           size="small"
           shape="circle"
@@ -261,6 +278,8 @@
           ></mat-progress-spinner>
         </studio-button>
         <studio-button
+          *ngIf="canEditActiveWorkspace"
+          id="gallery-bulk-tag-btn"
           variant="primary"
           size="small"
           shape="circle"
@@ -287,6 +306,8 @@
         </studio-button>
 
         <studio-button
+          *ngIf="canEditActiveWorkspace"
+          id="gallery-bulk-delete-btn"
           variant="primary"
           size="small"
           shape="circle"
@@ -362,11 +383,13 @@
               [folder]="folder"
               [isSelectorMode]="isSelectorMode"
               [canManage]="canManageFolder(folder)"
+              [canPromote]="isPersonalEffectiveWorkspace && !isSelectorMode"
               (folderClicked)="navigateToFolder($event)"
               (editRequested)="openEditFolderDialog($event)"
               (deleteRequested)="openDeleteFolderDialog($event)"
               (moveRequested)="openMoveFolderDialog($event)"
               (copyRequested)="openCopyFolderDialog($event)"
+              (promoteRequested)="openPromoteFolderDialog($event)"
               (itemDropped)="onItemDroppedOnFolder($event.folder, $event.payload)"
             ></app-folder-card>
           }
@@ -394,6 +417,7 @@
               (mediaItemSelected)="mediaItemSelected.emit($event)"
               (mediaSelected)="mediaSelected.emit({mediaItem: $any($event), selectedIndex: 0})"
               (selectionToggled)="toggleSelection($event.item, $event.event, $event.selectedIndex)"
+              (promoted)="onCardPromoted()"
             ></app-gallery-card>
           </div>
         </div>
@@ -429,9 +453,57 @@
           <p>You've reached the end of the gallery</p>
         </div>
 
-        <!-- No media items found message -->
+        <!-- Shared workspace empty state -->
         <div
-          *ngIf="!isLoading && allImagesLoaded && images.length === 0"
+          *ngIf="
+            !isLoading &&
+            allImagesLoaded &&
+            images.length === 0 &&
+            folders.length === 0 &&
+            !isSelectorMode &&
+            !isPersonalEffectiveWorkspace &&
+            !hasActiveSearchFilter
+          "
+          id="shared-workspace-empty-state"
+          class="flex flex-col items-center justify-center text-center text-white py-12 px-4 gap-4"
+        >
+          <mat-icon class="!w-10 !h-10 !text-[40px] text-neutral-400">workspaces</mat-icon>
+          <h3 class="text-xl font-semibold !m-0">This shared workspace is empty</h3>
+          <p class="text-sm text-neutral-400 max-w-md !m-0">
+            Upload team assets directly or promote finished work from My Workspace.
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3 mt-2">
+            <studio-button
+              *ngIf="canEditActiveWorkspace"
+              id="empty-upload-team-btn"
+              variant="primary"
+              size="medium"
+              (click)="triggerUploadPicker()"
+            >
+              <mat-icon class="mr-1">upload_file</mat-icon>
+              <span>Upload Team Assets</span>
+            </studio-button>
+            <studio-button
+              *ngIf="canEditActiveWorkspace && personalWorkspaceId !== null"
+              id="empty-promote-personal-btn"
+              variant="primary"
+              size="medium"
+              (click)="promoteFromPersonalWorkspace()"
+            >
+              <mat-icon class="mr-1">publish</mat-icon>
+              <span>Promote from My Workspace</span>
+            </studio-button>
+          </div>
+        </div>
+
+        <!-- Default empty state -->
+        <div
+          *ngIf="
+            !isLoading &&
+            allImagesLoaded &&
+            images.length === 0 &&
+            (isSelectorMode || isPersonalEffectiveWorkspace || hasActiveSearchFilter || folders.length > 0)
+          "
           class="text-center text-white py-10"
         >
           <p *ngIf="!filterByType">No media items found</p>

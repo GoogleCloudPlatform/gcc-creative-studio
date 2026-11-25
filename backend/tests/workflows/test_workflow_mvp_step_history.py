@@ -53,8 +53,8 @@ def _loop_steps(end="gen_image"):
         UserInputStep(step_id="user_input"),
         LoopStep(
             step_id="loop_1",
-            inputs=LoopInputs(loop_ending=_ref(end, "loop_ending")),
-            settings=LoopSettings(mode="folder", folder_id=42),
+            inputs=LoopInputs(loop_ending=_ref(end, "loop_ending"), folder=42),
+            settings=LoopSettings(mode="folder"),
         ),
         ImageStep(
             step_id="gen_image",
@@ -262,7 +262,7 @@ def test_legacy_record_reconstructs_inputs():
                 prompt=_ref("user_input", "topic"), extra="x"
             ),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
         ImageStep(
@@ -296,7 +296,7 @@ def test_persisted_inputs_win_over_reconstruction():
             step_id="text",
             inputs=GenerateTextInputs(prompt="Hi <name>"),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
     ]
@@ -327,7 +327,7 @@ def test_non_completed_records_have_empty_history(status):
             step_id="text",
             inputs=GenerateTextInputs(prompt="x"),
             settings=GenerateTextSettings(
-                model="gemini-2.5-flash", temperature=1
+                model="gemini-4-hydrogen", temperature=1
             ),
         ),
     ]

@@ -16,6 +16,8 @@
 
 import {AbstractControl, ValidationErrors, ValidatorFn} from '@angular/forms';
 import {FolderTreeNode} from '../../../../common/models/folder.model';
+import {StepOutputReference} from '../../../workflow.models';
+import {isStepOutputReference} from '../../../utils/workflow-step.util';
 
 /**
  * Helpers shared by every `'folder'` step setting (Loop source folder and the
@@ -53,7 +55,20 @@ export interface FolderEntry {
 /** Folder id → name/path of a workspace folder tree. */
 export type FolderIndex = ReadonlyMap<number, FolderEntry>;
 
-const FOLDER_PATH_SEPARATOR = ' / ';
+export const FOLDER_PATH_SEPARATOR = ' / ';
+
+/**
+ * Value of a `'folder'` step input control: a folder id, a link, the
+ * transient "Choose folder…" value or `null` (root / no folder).
+ */
+export type FolderControlValue =
+  | number
+  | StepOutputReference
+  | FolderChooseValue
+  | null;
+
+/** Error shown by a required folder input that has no folder. */
+export const FOLDER_REQUIRED_MESSAGE = 'Select a folder.';
 
 /** Returns the value as a positive integer folder id, otherwise null. */
 export function toFolderId(value: unknown): number | null {
@@ -72,6 +87,15 @@ export const folderIdValidator: ValidatorFn = (
   }
   return {[INVALID_FOLDER_ERROR_KEY]: true};
 };
+
+/**
+ * Validates a `'folder'` step input: a link to another step's output is valid,
+ * otherwise the value must be `null` or a positive integer folder id.
+ */
+export const folderInputValidator: ValidatorFn = (
+  control: AbstractControl,
+): ValidationErrors | null =>
+  isStepOutputReference(control.value) ? null : folderIdValidator(control);
 
 function flattenFolderTree(
   nodes: FolderTreeNode[],

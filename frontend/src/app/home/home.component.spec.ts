@@ -88,8 +88,14 @@ describe('HomeComponent', () => {
     );
     mockWorkspaceStateService = jasmine.createSpyObj('WorkspaceStateService', [
       'getActiveWorkspaceId',
+      'personalWorkspaceId',
+      'getReferencedGenerationWorkspaceParams',
     ]);
     mockWorkspaceStateService.getActiveWorkspaceId.and.returnValue(1);
+    mockWorkspaceStateService.personalWorkspaceId.and.returnValue(1);
+    mockWorkspaceStateService.getReferencedGenerationWorkspaceParams.and.returnValue(
+      {workspaceId: 1},
+    );
     mockRouter = jasmine.createSpyObj('Router', [
       'navigate',
       'getCurrentNavigation',
@@ -444,5 +450,52 @@ describe('HomeComponent', () => {
     component.clearImage(0, event);
     expect(component.referenceImages.length).toBe(0);
     expect(event.stopPropagation).toHaveBeenCalled();
+  });
+
+  it('should send personal workspaceId and shared contextWorkspaceId on searchTerm', () => {
+    mockSearchService.startImagenGeneration.and.returnValue(of({} as any));
+    mockWorkspaceStateService.getReferencedGenerationWorkspaceParams.and.returnValue(
+      {
+        workspaceId: 11,
+        contextWorkspaceId: 22,
+      },
+    );
+    component.searchRequest.prompt = 'studio chair';
+
+    component.searchTerm();
+
+    expect(mockSearchService.startImagenGeneration).toHaveBeenCalled();
+    const payload =
+      mockSearchService.startImagenGeneration.calls.mostRecent().args[0];
+    expect(payload.workspaceId).toBe(11);
+    expect(payload.contextWorkspaceId).toBe(22);
+  });
+
+  it('tracks and forwards parentMediaItemId on result edit and clears it when removing the parent reference', () => {
+    mockWorkspaceStateService.getReferencedGenerationWorkspaceParams.and.returnValue(
+      {
+        workspaceId: 10,
+        contextWorkspaceId: 30,
+      },
+    );
+    mockSearchService.startImagenGeneration.and.returnValue(of({} as any));
+
+    component.imagenDocuments = {id: 123, presignedUrls: ['url1']} as any;
+    component.editResultImage(0);
+    expect(component.parentMediaItemId).toBe(123);
+
+    component.searchRequest.prompt = 'Refine edited output';
+    component.searchTerm();
+    const editedPayload =
+      mockSearchService.startImagenGeneration.calls.mostRecent().args[0];
+    expect(editedPayload.parentMediaItemId).toBe(123);
+
+    component.clearImage(0, new MouseEvent('click'));
+    expect(component.parentMediaItemId).toBeNull();
+
+    component.searchTerm();
+    const unlinkedPayload =
+      mockSearchService.startImagenGeneration.calls.mostRecent().args[0];
+    expect(unlinkedPayload.parentMediaItemId).toBeUndefined();
   });
 });

@@ -20,6 +20,7 @@ import {
   Component,
   HostListener,
   Inject,
+  OnDestroy,
   OnInit,
   PLATFORM_ID,
   signal,
@@ -83,7 +84,7 @@ import {NumPos} from '../common/components/flow-prompt-box/flow-prompt-box.compo
   templateUrl: './video.component.html',
   styleUrl: './video.component.scss',
 })
-export class VideoComponent implements OnInit, AfterViewInit {
+export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
   // This observable will always reflect the current job's state
   activeVideoJob$: Observable<MediaItem | null>;
   public readonly JobStatus = JobStatus; // Expose enum to the template
@@ -117,6 +118,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   referenceVideos: ReferenceVideo[] = [];
   parentMediaItemId: number | null = null;
+  private concatenateSelectorTimer: ReturnType<typeof setTimeout> | null = null;
   currentMode = 'Text to Video';
   modes = [
     {value: 'Text to Video', icon: 'description', label: 'Text to Video'},
@@ -280,6 +282,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  ngOnDestroy(): void {
+    if (this.concatenateSelectorTimer !== null) {
+      clearTimeout(this.concatenateSelectorTimer);
+      this.concatenateSelectorTimer = null;
+    }
+  }
+
   public saveState() {
     this.videoStateService.updateState({
       prompt: this.searchRequest.prompt,
@@ -353,12 +362,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
   ngAfterViewInit(): void {
     if (this.isBrowser) {
       const remixState = history.state?.remixState;
-      // Use a timeout to ensure the view is stable before opening a dialog.
-      setTimeout(() => {
-        if (remixState?.startConcatenation) {
-          this.openImageSelector(2); // Open selector for the second video
+      if (remixState?.startConcatenation) {
+        if (this.concatenateSelectorTimer !== null) {
+          clearTimeout(this.concatenateSelectorTimer);
         }
-      }, 1500);
+        // Use a timeout to ensure the view is stable before opening a dialog.
+        this.concatenateSelectorTimer = setTimeout(() => {
+          this.concatenateSelectorTimer = null;
+          this.openImageSelector(2); // Open selector for the second video
+        }, 1500);
+      }
     }
   }
 
@@ -589,8 +602,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   searchTerm() {
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (!activeWorkspaceId) {
+    const {workspaceId, contextWorkspaceId} =
+      this.workspaceStateService.getReferencedGenerationWorkspaceParams();
+    if (!workspaceId) {
       handleErrorSnackbar(
         this._snackBar,
         {message: 'Please select a workspace first.'},
@@ -598,17 +612,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
       );
       return;
     }
-    this.searchRequest.workspaceId = activeWorkspaceId;
+    this.searchRequest.workspaceId = workspaceId;
+    this.searchRequest.contextWorkspaceId = contextWorkspaceId;
 
     if (this.isConcatenateMode) {
-      if (!activeWorkspaceId) {
-        handleErrorSnackbar(
-          this._snackBar,
-          {message: 'Workspace ID is missing'},
-          'Concatenate videos',
-        );
-        return;
-      }
       const inputs: ConcatenationInput[] = [];
 
       // Input 1
@@ -641,11 +648,18 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
 
       const name = 'Concatenated Video';
+      const mediaInputs = inputs.filter(i => i.type === 'media_item');
+      const parentMediaItemId =
+        this.parentMediaItemId !== null &&
+        mediaInputs.some(i => i.id === this.parentMediaItemId)
+          ? this.parentMediaItemId
+          : mediaInputs[0]?.id;
 
       this.isLoading = true;
       this.service
         .concatenateVideos({
-          workspaceId: activeWorkspaceId,
+          workspaceId,
+          ...(parentMediaItemId !== undefined ? {parentMediaItemId} : {}),
           name,
           inputs,
           aspectRatio: this.searchRequest.aspectRatio,
@@ -1090,8 +1104,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   uploadImageDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     this.sourceAssetService
-      .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
+      .uploadAsset(
+        file,
+        {assetType: AssetTypeEnum.GENERIC_IMAGE},
+        uploadWorkspaceId,
+        null,
+      )
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
@@ -1106,23 +1128,31 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   openCropperDialog(file: File, imageNumber: NumPos) {
-    ImageCropperDialogComponent.open(this.dialog, {imageFile: file}).subscribe(
-      result => {
-        if (result && result.id) {
-          this.processInput(result, imageNumber);
-          this.updateModeAndNotify();
-          this.clearOtherImage(imageNumber);
-        }
-      },
-    );
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    ImageCropperDialogComponent.open(this.dialog, {
+      imageFile: file,
+      targetWorkspaceId,
+    }).subscribe(result => {
+      if (result && result.id) {
+        this.processInput(result, imageNumber);
+        this.updateModeAndNotify();
+        this.clearOtherImage(imageNumber);
+      }
+    });
   }
 
   onEditPromptImage(data: {num: NumPos}) {
     const previewUrl = data.num === 1 ? this.image1Preview : this.image2Preview;
     if (!previewUrl) return;
 
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     ImageCropperDialogComponent.open(this.dialog, {
       imageUrl: previewUrl,
+      targetWorkspaceId,
     }).subscribe(result => {
       if (result && result.id) {
         this.processInput(result, data.num);
@@ -1133,19 +1163,26 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   onEditPromptReferenceImage(data: {index: number; ref: ReferenceImage}) {
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     ImageCropperDialogComponent.openEditPromptReferenceImage(
       this.dialog,
       data,
       this.referenceImages,
       () => this.saveState(),
+      targetWorkspaceId,
     );
   }
 
   uploadVideoDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
-    // No aspectRatio is sent for videos, so we don't pass the second argument
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    // No aspectRatio is sent for videos
     this.sourceAssetService
-      .uploadAsset(file)
+      .uploadAsset(file, {}, uploadWorkspaceId, null)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
@@ -1190,6 +1227,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       if (this._input2IsVideo) {
         this.image1Preview = this.image2Preview;
         this.sourceMediaItems[0] = this.sourceMediaItems[1];
+        this.sourceMediaItems[1] = null;
         this.startImageAssetId = this.endImageAssetId;
         this._input1IsVideo = true;
         this.clearInput(2); // Clear the second slot now that it's moved
@@ -1224,6 +1262,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
   private clearSourceMediaItem(imageNumber: NumPos) {
     // Set the specific index to null to clear the slot for that image.
     if (this.sourceMediaItems.length >= imageNumber) {
+      const removed = this.sourceMediaItems[imageNumber - 1];
+      if (removed && removed.mediaItemId === this.parentMediaItemId) {
+        this.parentMediaItemId = null;
+      }
       this.sourceMediaItems[imageNumber - 1] = null;
     }
   }
@@ -1478,7 +1520,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
           this.currentMode = 'Concatenate Video';
           this.selectedMode.set('Concatenate Video');
           this.isConcatenateMode = true;
-          this.parentMediaItemId = null;
+          this.parentMediaItemId =
+            remixState.parentMediaItemId ?? item.mediaItemId ?? null;
           this.searchRequest.prompt = '';
         } else if (item.role === 'video_reference') {
           incomingRefVideos.push({
@@ -1540,10 +1583,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (
       remixState.isOmniMode ||
       this.referenceVideos.length > 0 ||
-      this.referenceImages.length > 0
+      this.referenceImages.length > 0 ||
+      this.isConcatenateMode
     ) {
-      this.currentMode = 'Ingredients to Video';
-      this.selectedMode.set('Ingredients to Video');
+      if (!this.isConcatenateMode) {
+        this.currentMode = 'Ingredients to Video';
+        this.selectedMode.set('Ingredients to Video');
+      }
       if (remixState.parentMediaItemId !== undefined) {
         this.parentMediaItemId = remixState.parentMediaItemId;
       }
@@ -1646,13 +1692,18 @@ export class VideoComponent implements OnInit, AfterViewInit {
           role: 'concatenation_source',
         },
       ],
+      parentMediaItemId: event.mediaItem.id,
       startImagePreviewUrl:
         event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
       startConcatenation: true,
     };
     this.applyRemixState(remixState);
     // Use a timeout to ensure the view is stable before opening a dialog.
-    setTimeout(() => {
+    if (this.concatenateSelectorTimer !== null) {
+      clearTimeout(this.concatenateSelectorTimer);
+    }
+    this.concatenateSelectorTimer = setTimeout(() => {
+      this.concatenateSelectorTimer = null;
       this.openImageSelector(2);
     }, 1500);
   }
@@ -1745,11 +1796,14 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (files.length === 0) return;
 
     this.isLoading = true;
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     let completed = 0;
     let notifiedSkip = false;
     files.forEach(file => {
       this.sourceAssetService
-        .uploadAsset(file)
+        .uploadAsset(file, {}, uploadWorkspaceId, null)
         .pipe(
           finalize(() => {
             completed += 1;
@@ -1896,9 +1950,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (this.referenceImages.length >= maxReferenceImages) return;
     const file = event.dataTransfer?.files[0];
     if (file && file.type.startsWith('image/')) {
+      const targetWorkspaceId =
+        this.workspaceStateService.personalWorkspaceId() ??
+        this.workspaceStateService.getActiveWorkspaceId();
       // For a direct drop, go straight to the cropper
       ImageCropperDialogComponent.open(this.dialog, {
         imageFile: file,
+        targetWorkspaceId,
       }).subscribe(result => {
         if (result && result.id) {
           this.referenceImages.push({
@@ -2131,8 +2189,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.activeVideoJob$.pipe(first()).subscribe(job => {
       if (!job?.id) return;
 
-      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      if (workspaceId === null) return;
+      const workspaceId =
+        job.workspaceId ?? this.workspaceStateService.getActiveWorkspaceId();
+      if (workspaceId === null || workspaceId === undefined) return;
 
       const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
         data: {

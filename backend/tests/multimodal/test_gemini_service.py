@@ -14,17 +14,24 @@
 """Tests for Gemini Service."""
 
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from google.genai import errors
 
+from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.common.base_dto import GenerationModelEnum
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.multimodal.gemini_service import (
     GeminiService,
     PromptTargetEnum,
     ResponseMimeTypeEnum,
+)
+from src.multimodal.rewriters import (
+    ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE,
+    REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE,
 )
 
 
@@ -113,6 +120,147 @@ def test_generate_text_success(gemini_service):
     assert res == "Plain text answer"
 
 
+def test_config_service_defaults_gemini_models_to_argon(monkeypatch):
+    from src.config.config_service import ConfigService
+
+    monkeypatch.delenv("GEMINI_MODEL_ID", raising=False)
+    monkeypatch.delenv("GEMINI_AUDIO_ANALYSIS_MODEL_ID", raising=False)
+
+    cfg = ConfigService(_env_file=None, PROJECT_ID="test-proj")
+
+    assert cfg.GEMINI_MODEL_ID == "gemini-4-argon"
+    assert cfg.GEMINI_AUDIO_ANALYSIS_MODEL_ID == "gemini-4-argon"
+
+
+def test_config_service_respects_gemini_model_id_env_override(monkeypatch):
+    from src.config.config_service import ConfigService
+
+    monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.8-flash")
+
+    cfg = ConfigService(_env_file=None, PROJECT_ID="test-proj")
+
+    assert cfg.GEMINI_MODEL_ID == "gemini-3.8-flash"
+
+
+def test_gemini_service_default_rewriter_and_pdf_extraction_use_argon(
+    gemini_service,
+):
+    mock_response = MagicMock()
+    mock_response.text = (
+        '{"color_palette": ["#000"], "tone_of_voice_summary": "cool",'
+        ' "visual_style_summary": "sleek", "workspace_id": "123"}'
+    )
+    gemini_service.client.models.generate_content.return_value = mock_response
+
+    assert gemini_service.rewriter_model == "gemini-4-argon"
+    gemini_service.extract_brand_info_from_pdf("gs://bucket/file.pdf")
+
+    call_kwargs = gemini_service.client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-4-argon"
+
+
+@pytest.mark.parametrize(
+    ("input_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+def test_generate_text_normalizes_retired_model_id_override(
+    gemini_service, input_model, expected_model
+):
+    mock_response = MagicMock()
+    mock_response.text = "Plain text answer"
+    gemini_service.client.models.generate_content.return_value = mock_response
+
+    res = gemini_service.generate_text("Hello", model_id=input_model)
+
+    assert res == "Plain text answer"
+    call_kwargs = gemini_service.client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == expected_model
+
+
+def test_generate_text_without_model_id_honors_rewriter_model_override(
+    gemini_service,
+):
+    mock_response = MagicMock()
+    mock_response.text = "Plain text answer"
+    gemini_service.client.models.generate_content.return_value = mock_response
+    gemini_service.rewriter_model = "gemini-3.8-flash"
+
+    res = gemini_service.generate_text("Hello")
+
+    assert res == "Plain text answer"
+    call_kwargs = gemini_service.client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-3.8-flash"
+
+
+@pytest.mark.parametrize(
+    ("input_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+def test_generate_media_metadata_normalizes_retired_models(
+    gemini_service, input_model, expected_model
+):
+    mock_response = MagicMock()
+    mock_response.text = '{"items": [{"title": "Media Title", "description": "Media Description"}]}'
+    gemini_service.client.models.generate_content.return_value = mock_response
+
+    gemini_service.generate_media_metadata(
+        prompt="Describe this asset",
+        media_uris=None,
+        model_name=input_model,
+    )
+
+    call_kwargs = gemini_service.client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == expected_model
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("input_model", "expected_model"),
+    [
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+async def test_generate_multimodal_normalizes_retired_models(
+    gemini_service, input_model, expected_model
+):
+    import inspect
+    from typing import Any
+
+    from src.multimodal.dto.multimodal_generation_request_dto import (
+        MultimodalGenerationRequestDto,
+    )
+    from src.users.user_model import UserModel
+
+    request = MultimodalGenerationRequestDto(
+        workspace_id=1,
+        prompt="Summarize this.",
+        model=input_model,
+    )
+    gemini_service.client.aio.models.generate_content = AsyncMock(
+        return_value=MagicMock(text="Summary")
+    )
+
+    generate_fn: Any = gemini_service.generate_multimodal
+    if "current_user" in inspect.signature(generate_fn).parameters:
+        current_user = UserModel(id=1, email="user@test.com", name="User")
+        res = await generate_fn(request, current_user=current_user)
+    else:
+        res = await generate_fn(request)
+
+    assert res == "Summary"
+    call_kwargs = (
+        gemini_service.client.aio.models.generate_content.call_args.kwargs
+    )
+    assert call_kwargs["model"] == expected_model
+
+
 def test_extract_brand_info_from_pdf_success(gemini_service):
     mock_response = MagicMock()
     mock_response.text = '{"color_palette": ["#000"], "tone_of_voice_summary": "cool", "visual_style_summary": "sleek", "workspace_id": "123"}'
@@ -173,6 +321,204 @@ async def test_enhance_prompt_from_dto_with_brand_guidelines(gemini_service):
         )
         assert res == '{"prompt": "enhanced"}'
         gemini_service.brand_guideline_repo.query.assert_called_once()
+        original_prompt = mock_gen.call_args.kwargs["original_prompt"]
+        assert (
+            "Based on the following brand guidelines, enhance the user's prompt."
+            in original_prompt
+        )
+        assert "Visual summary" in original_prompt
+        assert "Tone summary" in original_prompt
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_direct_and_pure(gemini_service):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        context_workspace_id=20,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_guideline = MagicMock()
+    mock_guideline.visual_style_summary = "  Visual summary  "
+    mock_guideline.tone_of_voice_summary = "  Tone summary  "
+    mock_data.data = [mock_guideline]
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert dto.prompt == "test prompt"
+    gemini_service.brand_guideline_repo.query.assert_awaited_once()
+    assert (
+        gemini_service.brand_guideline_repo.query.call_args.kwargs[
+            "workspace_id"
+        ]
+        == 20
+    )
+    assert res == (
+        "Follow these brand guidelines when generating:\n"
+        "**Visual Style:** Visual summary\n"
+        "**Tone of Voice:** Tone summary\n"
+        "\n---\n\n"
+        "test prompt"
+    )
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_missing_guideline_returns_unchanged(
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_data.data = []
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    assert "---" not in res
+    gemini_service.brand_guideline_repo.query.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("visual", "tone"),
+    [
+        (None, None),
+        ("", ""),
+        ("   ", "\n\t "),
+    ],
+)
+async def test_apply_brand_guidelines_to_dto_blank_summaries_skip_separator(
+    gemini_service,
+    visual,
+    tone,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=True,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_data = MagicMock()
+    mock_guideline = MagicMock()
+    mock_guideline.visual_style_summary = visual
+    mock_guideline.tone_of_voice_summary = tone
+    mock_data.data = [mock_guideline]
+    gemini_service.brand_guideline_repo.query.return_value = mock_data
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    assert "---" not in res
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_skips_gemini_i2i(gemini_service):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="make the sky brighter",
+        generation_model="gemini-3.1-flash-image-preview",
+        workspace_id=10,
+        use_brand_guidelines=True,
+        source_asset_ids=[1],
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "make the sky brighter"
+    gemini_service.brand_guideline_repo.query.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_apply_brand_guidelines_to_dto_skips_when_disabled(
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    dto = CreateImagenDto(
+        prompt="test prompt",
+        generation_model="gemini-3.1-flash-image",
+        workspace_id=10,
+        use_brand_guidelines=False,
+    )
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+
+    res = await gemini_service.apply_brand_guidelines_to_dto(dto)
+
+    assert res == "test prompt"
+    gemini_service.brand_guideline_repo.query.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("target_kind", ["image", "video"])
+async def test_enhance_prompt_from_dto_uses_context_workspace_for_guidelines(
+    target_kind,
+    gemini_service,
+):
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+    from src.videos.dto.create_veo_dto import CreateVeoDto
+
+    if target_kind == "image":
+        dto = CreateImagenDto(
+            prompt="test prompt",
+            generation_model="gemini-3.1-flash-image",
+            workspace_id=10,
+            context_workspace_id=30,
+            use_brand_guidelines=True,
+        )
+        target_type = PromptTargetEnum.IMAGE
+    else:
+        dto = CreateVeoDto(
+            prompt="test video prompt",
+            generation_model="veo-3.1-generate-001",
+            workspace_id=10,
+            context_workspace_id=30,
+            use_brand_guidelines=True,
+        )
+        target_type = PromptTargetEnum.VIDEO
+
+    gemini_service.brand_guideline_repo = AsyncMock()
+    mock_guideline = MagicMock(
+        visual_style_summary="Shared style",
+        tone_of_voice_summary="Shared tone",
+    )
+    gemini_service.brand_guideline_repo.query.return_value = MagicMock(
+        data=[mock_guideline]
+    )
+
+    with patch.object(
+        gemini_service, "generate_structured_prompt", return_value="ok"
+    ):
+        res = await gemini_service.enhance_prompt_from_dto(dto, target_type)
+
+    assert res == "ok"
+    search_arg = gemini_service.brand_guideline_repo.query.call_args.args[0]
+    kwargs = gemini_service.brand_guideline_repo.query.call_args.kwargs
+    assert search_arg.workspace_id == 30
+    assert kwargs["workspace_id"] == 30
 
 
 def test_generate_text_failure(gemini_service):
@@ -217,7 +563,14 @@ async def test_generate_multimodal_success(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -226,7 +579,26 @@ async def test_generate_multimodal_success(gemini_service):
         model="gemini-3.5-flash",
     )
 
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(1,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=1,
+        name="My Workspace",
+        owner_id=1,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(99, AssetScopeEnum.SYSTEM)]
+
     gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc, asset_rows]
+    )
     mock_media = MagicMock()
     mock_media.workspace_id = 1
     mock_media.gcs_uris = ["gs://bucket/media.png"]
@@ -236,7 +608,7 @@ async def test_generate_multimodal_success(gemini_service):
 
     gemini_service.source_asset_repo = AsyncMock()
     mock_asset = MagicMock()
-    mock_asset.workspace_id = 1
+    mock_asset.workspace_id = 99
     mock_asset.gcs_uri = "gs://bucket/asset.png"
     mock_asset.mime_type = "image/png"
     gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
@@ -248,7 +620,9 @@ async def test_generate_multimodal_success(gemini_service):
         mock_response
     )
 
-    res = await gemini_service.generate_multimodal(request)
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
 
     assert res == "This is a great image."
     gemini_service.media_item_repo.get_by_id.assert_called_once_with(1)
@@ -261,7 +635,9 @@ async def test_generate_multimodal_failure(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -276,66 +652,194 @@ async def test_generate_multimodal_failure(gemini_service):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
     assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Failed to generate multimodal content."
 
 
 @pytest.mark.anyio
-async def test_generate_multimodal_workspace_mismatch_media_item(
+async def test_generate_multimodal_allows_cross_workspace_shared_and_system_inputs(
     gemini_service,
 ):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
-        prompt="Describe the image.",
+        prompt="Combine team media and system asset.",
+        media_item_ids=[10],
+        source_asset_ids=[20],
+        model="gemini-3.5-flash",
+    )
+
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(2,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PUBLIC.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=2,
+        name="Public Team",
+        owner_id=50,
+        scope=WorkspaceScopeEnum.PUBLIC.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(99, AssetScopeEnum.SYSTEM)]
+
+    gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc, asset_rows]
+    )
+    mock_media = MagicMock()
+    mock_media.workspace_id = 2
+    mock_media.gcs_uris = ["gs://bucket/team_media.png"]
+    mock_media.mime_type = "image/png"
+    gemini_service.media_item_repo.get_by_id.return_value = mock_media
+
+    gemini_service.source_asset_repo = AsyncMock()
+    mock_asset = MagicMock()
+    mock_asset.workspace_id = 99
+    mock_asset.gcs_uri = "gs://bucket/system_asset.png"
+    mock_asset.mime_type = "image/png"
+    gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
+
+    gemini_service.client.aio.models.generate_content = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Cross-workspace success."
+    gemini_service.client.aio.models.generate_content.return_value = (
+        mock_response
+    )
+
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
+    assert res == "Cross-workspace success."
+    gemini_service.client.aio.models.generate_content.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_generate_multimodal_blocks_global_admin_foreign_personal_media_item(
+    gemini_service,
+):
+    from fastapi import HTTPException
+
+    from src.multimodal.dto.multimodal_generation_request_dto import (
+        MultimodalGenerationRequestDto,
+    )
+    from src.users.user_model import UserModel, UserRoleEnum
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
+
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
+    request = MultimodalGenerationRequestDto(
+        workspace_id=1,
+        prompt="Describe private image.",
         media_item_ids=[1],
         model="gemini-3.5-flash",
     )
 
-    gemini_service.media_item_repo = AsyncMock()
-    mock_media = MagicMock()
-    mock_media.workspace_id = 2  # Different workspace
-    gemini_service.media_item_repo.get_by_id.return_value = mock_media
+    media_rows = MagicMock()
+    media_rows.all.return_value = [(777,)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=777,
+        name="Colleague Personal",
+        owner_id=99,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
 
-    from fastapi import HTTPException
+    gemini_service.media_item_repo = AsyncMock()
+    gemini_service.media_item_repo.db.execute = AsyncMock(
+        side_effect=[media_rows, ws_scope, ws_doc]
+    )
+    gemini_service.client.aio.models.generate_content = AsyncMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=global_admin
+        )
     assert exc_info.value.status_code == 403
-    assert (
-        "Media item 1 does not belong to workspace 1" in exc_info.value.detail
-    )
+    gemini_service.client.aio.models.generate_content.assert_not_called()
 
 
 @pytest.mark.anyio
-async def test_generate_multimodal_workspace_mismatch_source_asset(
+async def test_generate_multimodal_blocks_foreign_personal_source_asset(
     gemini_service,
 ):
+    from fastapi import HTTPException
+
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.users.user_model import UserModel, UserRoleEnum
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
 
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
-        prompt="Describe the image.",
+        prompt="Describe private asset.",
         source_asset_ids=[2],
         model="gemini-3.5-flash",
     )
 
-    gemini_service.source_asset_repo = AsyncMock()
-    mock_asset = MagicMock()
-    mock_asset.workspace_id = 2  # Different workspace
-    gemini_service.source_asset_repo.get_by_id.return_value = mock_asset
+    asset_rows = MagicMock()
+    asset_rows.all.return_value = [(777, AssetScopeEnum.PRIVATE)]
+    ws_scope = MagicMock()
+    ws_scope.scalar_one_or_none.return_value = WorkspaceScopeEnum.PERSONAL.value
+    ws_doc = MagicMock()
+    ws_doc.scalar_one_or_none.return_value = Workspace(
+        id=777,
+        name="Colleague Personal",
+        owner_id=99,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
 
-    from fastapi import HTTPException
+    gemini_service.source_asset_repo = AsyncMock()
+    gemini_service.source_asset_repo.db.execute = AsyncMock(
+        side_effect=[asset_rows, ws_scope, ws_doc]
+    )
+    gemini_service.client.aio.models.generate_content = AsyncMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=global_admin
+        )
     assert exc_info.value.status_code == 403
-    assert "Asset 2 does not belong to workspace 1" in exc_info.value.detail
+    gemini_service.client.aio.models.generate_content.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -343,7 +847,9 @@ async def test_generate_multimodal_with_config(gemini_service):
     from src.multimodal.dto.multimodal_generation_request_dto import (
         MultimodalGenerationRequestDto,
     )
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -362,7 +868,9 @@ async def test_generate_multimodal_with_config(gemini_service):
         mock_response
     )
 
-    res = await gemini_service.generate_multimodal(request)
+    res = await gemini_service.generate_multimodal(
+        request, current_user=current_user
+    )
 
     assert res == "Configured response"
     gemini_service.client.aio.models.generate_content.assert_called_once()
@@ -664,7 +1172,9 @@ async def test_generate_multimodal_http_exception_propagation(gemini_service):
         MultimodalGenerationRequestDto,
     )
     from fastapi import HTTPException
+    from src.users.user_model import UserModel
 
+    current_user = UserModel(id=1, email="user@test.com", name="User")
     request = MultimodalGenerationRequestDto(
         workspace_id=1,
         prompt="Describe the image.",
@@ -677,7 +1187,9 @@ async def test_generate_multimodal_http_exception_propagation(gemini_service):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await gemini_service.generate_multimodal(request)
+        await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Propagated bad request"
 
@@ -852,3 +1364,250 @@ def test_l1_gives_up_after_three_attempts(gemini_service, method_name, invoke):
 
     assert generate_content.call_count == 3
     assert sleep.call_count == 2
+
+
+def test_generate_random_and_rewrite_audio_prompt(gemini_service):
+    mock_resp = MagicMock(
+        text="Warm lo-fi hip-hop beat at 82 BPM with Rhodes piano."
+    )
+    gemini_service.client.models.generate_content.return_value = mock_resp
+
+    assert (
+        gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.AUDIO)
+        == mock_resp.text
+    )
+    assert (
+        gemini_service.generate_random_or_rewrite_prompt(
+            PromptTargetEnum.AUDIO, original_prompt="lofi"
+        )
+        == mock_resp.text
+    )
+    assert gemini_service.client.models.generate_content.call_count == 2
+
+
+def test_audio_target_uses_audio_rewriter_model(gemini_service):
+    gemini_service.rewriter_model = "default-model"
+    gemini_service.audio_rewriter_model = "audio-model"
+    gemini_service.client.models.generate_content.return_value = MagicMock(
+        text="ok"
+    )
+
+    gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.AUDIO)
+    assert (
+        gemini_service.client.models.generate_content.call_args.kwargs["model"]
+        == "audio-model"
+    )
+
+    gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.IMAGE)
+    assert (
+        gemini_service.client.models.generate_content.call_args.kwargs["model"]
+        == "default-model"
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    (
+        "dto_kwargs",
+        "use_part",
+        "ref_ctx",
+        "expected_substrings",
+        "forbidden_substrings",
+    ),
+    [
+        (
+            {
+                "prompt": "jazz",
+                "model": GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+                "enhance_prompt": True,
+            },
+            False,
+            None,
+            ["jazz"],
+            [],
+        ),
+        (
+            {
+                "prompt": "Sing about neon city rain",
+                "negative_prompt": "harsh distortion",
+                "model": GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+                "enhance_prompt": True,
+            },
+            True,
+            None,
+            ["Elements to avoid: harsh distortion"],
+            [],
+        ),
+        (
+            {
+                "prompt": (
+                    "Build into an anthemic chorus with electric guitar"
+                    " harmonies"
+                ),
+                "negative_prompt": "muddy bass",
+                "model": GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+                "enhance_prompt": False,
+            },
+            True,
+            {
+                "uri": "gs://bucket/prior.mp3",
+                "mime_type": "audio/mpeg",
+                "prior_prompt": "Warm indie rock verse at 112 BPM",
+                "structure": {"bpm": 112, "key": "G major"},
+                "lyrics": "[Verse 1]\nChasing horizons at dawn",
+            },
+            [
+                ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE.strip(),
+                "Warm indie rock verse at 112 BPM",
+                '"bpm": 112',
+                "[Verse 1]\nChasing horizons at dawn",
+                "Build into an anthemic chorus with electric guitar harmonies",
+                "Elements to avoid: muddy bass",
+                "Target model format: Lyria 3 Pro",
+                "[m:ss - m:ss]",
+            ],
+            ["Lyria 2 (instrumental only"],
+        ),
+        (
+            {
+                "prompt": "Add warm cello counterpoint",
+                "model": GenerationModelEnum.LYRIA_002,
+            },
+            True,
+            {
+                "uri": "gs://bucket/prior.wav",
+                "mime_type": "audio/wav",
+                "raw_text": "Gentle acoustic motif in D major",
+            },
+            [
+                "Target model constraint: Lyria 2 (instrumental only",
+                "do NOT include vocals, a Lyrics: block",
+                "Reference track notes:\nGentle acoustic motif in D major",
+            ],
+            [],
+        ),
+        (
+            {
+                "prompt": "Add muted trumpet solo over the Rhodes",
+                "model": GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            },
+            True,
+            {
+                "uri": "gs://bucket/step2.mp3",
+                "mime_type": "audio/mpeg",
+                "prior_prompt": "120 BPM Bb Major drumless Rhodes jazz solo",
+                "iteration_steps": [
+                    "Jazz solo on keys",
+                    "Remove all the drums",
+                ],
+                "musical_profile": {
+                    "bpm": 120,
+                    "key_signature": "Bb Major",
+                    "time_signature": "4/4",
+                    "instrumentation": ["Fender Rhodes", "upright bass"],
+                },
+            },
+            [
+                "Target model format: Lyria 3 Clip (~30-second clip — anchor "
+                "the [m:ss - m:ss] section timeline within 0:00 to 0:30).",
+                "Cumulative iteration history",
+                "1. Jazz solo on keys",
+                "2. Remove all the drums",
+                "Reference track acoustic / musical profile",
+                '"bpm": 120',
+                '"key_signature": "Bb Major"',
+                "Add muted trumpet solo over the Rhodes",
+            ],
+            [],
+        ),
+    ],
+)
+async def test_enhance_prompt_from_audio_dto_variants(
+    gemini_service,
+    dto_kwargs,
+    use_part,
+    ref_ctx,
+    expected_substrings,
+    forbidden_substrings,
+):
+    assert (
+        "unless the user explicitly asks for vocals"
+        not in REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE
+    )
+    assert "Lyrics:" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
+    assert "Female Alto" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
+
+    dto = CreateAudioDto(workspace_id=1, **dto_kwargs)
+    part = MagicMock(name="media_part")
+    mock_resp = MagicMock(text="Enhanced audio prompt.")
+    gemini_service.client.models.generate_content.return_value = mock_resp
+
+    res = await gemini_service.enhance_prompt_from_dto(
+        dto,
+        PromptTargetEnum.AUDIO,
+        extra_parts=[part] if use_part else None,
+        reference_audio_context=ref_ctx,
+    )
+
+    assert res == mock_resp.text
+    contents = gemini_service.client.models.generate_content.call_args.kwargs[
+        "contents"
+    ]
+    if use_part:
+        assert contents[0] is part
+        prompt_body = contents[1]
+    else:
+        prompt_body = contents
+    for expected in expected_substrings:
+        assert expected in prompt_body
+    for forbidden in forbidden_substrings:
+        assert forbidden not in prompt_body
+
+
+def test_generate_media_metadata_with_audio_profile_compacts_and_infers_audio_mimes(
+    gemini_service,
+):
+    gemini_service.client.models.generate_content.return_value = MagicMock(
+        text=(
+            '{"items": ['
+            '{"title": "Take 1", "description": "Warm jazz keys", "musicalProfile": '
+            '{"bpm": 124, "keySignature": "F# minor", "timeSignature": "4/4", '
+            '"instrumentation": ["Rhodes", "  ", "upright bass"], "vocalProfile": "  "}},'
+            '{"title": "Take 2", "description": "Ambient pad", "musicalProfile": "invalid"}'
+            "]}"
+        )
+    )
+
+    with patch(
+        "src.multimodal.gemini_service.types.Part.from_uri",
+        side_effect=[MagicMock(), MagicMock(), MagicMock()],
+    ) as mock_from_uri:
+        res = gemini_service.generate_media_metadata(
+            prompt="Jazz keys",
+            media_uris=[
+                "gs://bucket/take1.wav",
+                "gs://bucket/take2.ogg",
+                "gs://bucket/take3.webm",
+            ],
+            model_name="gemini-3.5-flash",
+            include_audio_profile=True,
+        )
+
+    assert [c.kwargs for c in mock_from_uri.call_args_list] == [
+        {"file_uri": "gs://bucket/take1.wav", "mime_type": "audio/wav"},
+        {"file_uri": "gs://bucket/take2.ogg", "mime_type": "audio/ogg"},
+        {"file_uri": "gs://bucket/take3.webm", "mime_type": "audio/webm"},
+    ]
+    assert res == {
+        "titles": ["Take 1", "Take 2"],
+        "descriptions": ["Warm jazz keys", "Ambient pad"],
+        "musical_profiles": [
+            {
+                "bpm": 124,
+                "key_signature": "F# minor",
+                "time_signature": "4/4",
+                "instrumentation": ["Rhodes", "upright bass"],
+            },
+            None,
+        ],
+    }

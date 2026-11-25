@@ -46,6 +46,7 @@ export interface ConcatenationInput {
 }
 export interface ConcatenateVideosDto {
   workspaceId: number;
+  parentMediaItemId?: number | null;
   name: string;
   inputs: ConcatenationInput[];
   aspectRatio: string;
@@ -240,7 +241,7 @@ export class SearchService {
   }
 
   rewritePrompt(payload: {
-    targetType: 'image' | 'video';
+    targetType: 'image' | 'video' | 'audio';
     userPrompt: string;
   }): Observable<{prompt: string}> {
     return this.http.post<{prompt: string}>(
@@ -250,7 +251,7 @@ export class SearchService {
   }
 
   getRandomPrompt(payload: {
-    target_type: 'image' | 'video';
+    target_type: 'image' | 'video' | 'audio';
   }): Observable<{prompt: string}> {
     return this.http.post<{prompt: string}>(
       `${environment.backendURL}/gemini/random-prompt`,

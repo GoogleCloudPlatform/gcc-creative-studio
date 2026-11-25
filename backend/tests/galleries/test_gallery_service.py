@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
     AspectRatioEnum,
     GenerationModelEnum,
@@ -39,6 +40,11 @@ from src.galleries.dto.unified_gallery_response import (
 )
 from src.galleries.gallery_service import GalleryService
 from src.users.user_model import UserModel, UserRoleEnum
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceRoleEnum,
+    WorkspaceScopeEnum,
+)
 
 
 @pytest.fixture(name="service")
@@ -48,8 +54,18 @@ def fixture_service():
     mock_unified_gallery_repo = AsyncMock()
     mock_user_repo = AsyncMock()
     mock_workspace_repo = AsyncMock()
-    mock_iam_signer = MagicMock()
+    mock_iam_signer = MagicMock(spec=IamSignerCredentials)
+    mock_iam_signer.generate_presigned_url_async = AsyncMock()
     mock_workspace_auth = AsyncMock()
+    default_ws = WorkspaceModel(
+        id=88,
+        name="Shared WS",
+        owner_id=999,
+        scope=WorkspaceScopeEnum.PRIVATE,
+        current_user_role=WorkspaceRoleEnum.EDITOR,
+    )
+    mock_workspace_auth.authorize.return_value = default_ws
+    mock_workspace_auth.authorize_write.return_value = default_ws
     mock_imagen_service = AsyncMock()
     mock_gcs_service = MagicMock()
     mock_tags_repo = AsyncMock()
@@ -95,23 +111,32 @@ def fixture_service():
 
 @pytest.mark.anyio
 async def test_enrich_source_asset_link(service):
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+
+    current_user = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
     # Setup link
     link = SourceAssetLink(asset_id=123, role=AssetRoleEnum.INPUT)
 
     # Mock source_asset_repo.get_by_id
     mock_asset = MagicMock()
+    mock_asset.workspace_id = 10
+    mock_asset.scope = AssetScopeEnum.PRIVATE
     mock_asset.gcs_uri = "gs://bucket/asset.jpg"
     mock_asset.thumbnail_gcs_uri = "gs://bucket/thumb.jpg"
     mock_asset.mime_type = "image/jpeg"
     service.mock_source_asset_repo.get_by_id.return_value = mock_asset
 
     # Mock iam_signer_credentials
-    service.mock_iam_signer.generate_presigned_url.side_effect = [
+    service.mock_iam_signer.generate_presigned_url_async.side_effect = [
         "https://signed.url/asset.jpg",
         "https://signed.url/thumb.jpg",
     ]
 
-    result = await service._enrich_source_asset_link(link)
+    result = await service._enrich_source_asset_link(
+        link, item_workspace_id=10, current_user=current_user
+    )
 
     assert result is not None
     assert result.presigned_url == "https://signed.url/asset.jpg"
@@ -149,7 +174,7 @@ async def test_get_paginated_gallery_admin(service):
     mock_query_result.total_pages = 1
 
     service.mock_unified_gallery_repo.query.return_value = mock_query_result
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url/image.png"
     )
 
@@ -283,7 +308,7 @@ async def test_get_media_by_id_success(service):
     mock_workspace = MagicMock()
     service.mock_workspace_repo.get_by_id.return_value = mock_workspace
 
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url/img.jpg"
     )
 
@@ -344,6 +369,7 @@ async def test_bulk_copy_success(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -460,7 +486,7 @@ async def test_get_media_by_id_with_source_media_items(service):
     service.mock_media_repo.get_by_id.side_effect = get_by_id_side_effect
 
     service.mock_workspace_repo.get_by_id.return_value = MagicMock()
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url"
     )
 
@@ -620,6 +646,11 @@ async def test_restore_item_unsupported_type(service):
 @pytest.mark.anyio
 async def test_get_media_by_id_with_both_source_references(service):
     from src.common.schema.media_item_model import SourceMediaItemLink
+    from src.source_assets.schema.source_asset_model import (
+        AssetScopeEnum,
+        AssetTypeEnum,
+        SourceAssetModel,
+    )
 
     current_user = UserModel(
         id=1,
@@ -660,10 +691,18 @@ async def test_get_media_by_id_with_both_source_references(service):
         gcs_uris=["gs://bucket/parent.jpg"],
     )
 
-    source_asset = MagicMock()
-    source_asset.gcs_uri = "gs://bucket/asset.jpg"
-    source_asset.thumbnail_gcs_uri = "gs://bucket/thumb.jpg"
-    source_asset.mime_type = "image/jpeg"
+    source_asset = SourceAssetModel(
+        id=789,
+        workspace_id=99,
+        user_id=1,
+        gcs_uri="gs://bucket/asset.jpg",
+        thumbnail_gcs_uri="gs://bucket/thumb.jpg",
+        original_filename="asset.jpg",
+        file_hash="hash_789",
+        scope=AssetScopeEnum.PRIVATE,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        mime_type=MimeTypeEnum.IMAGE_JPEG,
+    )
 
     def get_by_id_side_effect(id, **kwargs):
         if id == 123:
@@ -676,7 +715,7 @@ async def test_get_media_by_id_with_both_source_references(service):
     service.mock_source_asset_repo.get_by_id.return_value = source_asset
 
     service.mock_workspace_repo.get_by_id.return_value = MagicMock()
-    service.mock_iam_signer.generate_presigned_url.return_value = (
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
         "https://signed.url"
     )
 
@@ -744,6 +783,7 @@ async def test_bulk_move_media_item_success(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -788,6 +828,7 @@ async def test_bulk_move_media_item_same_workspace(service):
         id: int
         workspace_id: int
         folder_id: int | None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list[str] = []
@@ -913,13 +954,8 @@ async def test_bulk_move_source_asset_same_workspace(service):
 
 @pytest.mark.anyio
 async def test_bulk_move_folder_success(service):
-    from pydantic import BaseModel
+    from src.folders.schema.folder_model import Folder
     from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
-
-    class DummyFolder(BaseModel):
-        id: int
-        workspace_id: int
-        name: str
 
     bulk_dto = BulkMoveDto(
         target_workspace_id=88,
@@ -932,8 +968,15 @@ async def test_bulk_move_folder_success(service):
         roles=[UserRoleEnum.USER],
     )
 
-    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    folder = Folder(
+        id=10,
+        workspace_id=99,
+        user_id=1,
+        user_email="user@test.com",
+        name="Campaigns",
+    )
     service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
+    service.mock_folder_repo.subtree_has_foreign_content.return_value = False
     service.mock_folder_repo.get_existing_folders_map.return_value = {}
     service.mock_folder_repo.move_folder_to_workspace.return_value = {
         "folders_moved": 2,
@@ -943,10 +986,10 @@ async def test_bulk_move_folder_success(service):
 
     result = await service.bulk_move(bulk_dto, current_user)
     assert result["moved_count"] == 6
-    service.mock_workspace_auth.authorize.assert_any_call(
+    service.mock_workspace_auth.authorize_write.assert_any_call(
         workspace_id=88, user=current_user
     )
-    service.mock_workspace_auth.authorize.assert_any_call(
+    service.mock_workspace_auth.authorize_write.assert_any_call(
         workspace_id=99, user=current_user
     )
     service.mock_folder_repo.move_folder_to_workspace.assert_called_once_with(
@@ -960,13 +1003,8 @@ async def test_bulk_move_folder_success(service):
 
 @pytest.mark.anyio
 async def test_bulk_move_folder_same_workspace(service):
-    from pydantic import BaseModel
+    from src.folders.schema.folder_model import Folder
     from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
-
-    class DummyFolder(BaseModel):
-        id: int
-        workspace_id: int
-        name: str
 
     bulk_dto = BulkMoveDto(
         target_workspace_id=88,
@@ -979,8 +1017,15 @@ async def test_bulk_move_folder_same_workspace(service):
         roles=[UserRoleEnum.USER],
     )
 
-    folder = DummyFolder(id=10, workspace_id=88, name="Campaigns")
+    folder = Folder(
+        id=10,
+        workspace_id=88,
+        user_id=1,
+        user_email="user@test.com",
+        name="Campaigns",
+    )
     service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
+    service.mock_folder_repo.subtree_has_foreign_content.return_value = False
 
     result = await service.bulk_move(bulk_dto, current_user)
     assert result["moved_count"] == 0
@@ -989,13 +1034,8 @@ async def test_bulk_move_folder_same_workspace(service):
 
 @pytest.mark.anyio
 async def test_bulk_move_folder_conflict_detection_409(service):
-    from pydantic import BaseModel
+    from src.folders.schema.folder_model import Folder
     from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
-
-    class DummyFolder(BaseModel):
-        id: int
-        workspace_id: int
-        name: str
 
     bulk_dto = BulkMoveDto(
         target_workspace_id=88,
@@ -1008,10 +1048,23 @@ async def test_bulk_move_folder_conflict_detection_409(service):
         roles=[UserRoleEnum.USER],
     )
 
-    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    folder = Folder(
+        id=10,
+        workspace_id=99,
+        user_id=1,
+        user_email="user@test.com",
+        name="Campaigns",
+    )
     service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
+    service.mock_folder_repo.subtree_has_foreign_content.return_value = False
     service.mock_folder_repo.get_existing_folders_map.return_value = {
-        "campaigns": DummyFolder(id=999, workspace_id=88, name="Campaigns")
+        "campaigns": Folder(
+            id=999,
+            workspace_id=88,
+            user_id=1,
+            user_email="user@test.com",
+            name="Campaigns",
+        )
     }
 
     with pytest.raises(HTTPException) as exc_info:
@@ -1026,14 +1079,8 @@ async def test_bulk_move_folder_conflict_detection_409(service):
 
 @pytest.mark.anyio
 async def test_bulk_move_folder_merge_strategy(service):
-    from pydantic import BaseModel
-    from src.folders.dto.folder_dto import ConflictStrategyEnum
+    from src.folders.schema.folder_model import Folder
     from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
-
-    class DummyFolder(BaseModel):
-        id: int
-        workspace_id: int
-        name: str
 
     bulk_dto = BulkMoveDto(
         target_workspace_id=88,
@@ -1047,8 +1094,15 @@ async def test_bulk_move_folder_merge_strategy(service):
         roles=[UserRoleEnum.USER],
     )
 
-    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    folder = Folder(
+        id=10,
+        workspace_id=99,
+        user_id=1,
+        user_email="user@test.com",
+        name="Campaigns",
+    )
     service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
+    service.mock_folder_repo.subtree_has_foreign_content.return_value = False
     service.mock_folder_repo.move_folder_to_workspace.return_value = {
         "folders_moved": 1,
         "media_moved": 2,
@@ -1075,6 +1129,7 @@ async def test_bulk_move_partial_failure_with_savepoint(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1157,7 +1212,7 @@ async def test_bulk_copy_folder_success(service):
 
     result = await service.bulk_copy(bulk_dto, current_user)
     assert result["copied_count"] == 6
-    service.mock_workspace_auth.authorize.assert_any_call(
+    service.mock_workspace_auth.authorize_write.assert_any_call(
         workspace_id=88, user=current_user
     )
     service.mock_workspace_auth.authorize.assert_any_call(
@@ -1213,7 +1268,6 @@ async def test_bulk_copy_folder_conflict_detection_409(service):
 @pytest.mark.anyio
 async def test_bulk_copy_folder_merge_strategy(service):
     from pydantic import BaseModel
-    from src.folders.dto.folder_dto import ConflictStrategyEnum
     from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
 
     class DummyFolder(BaseModel):
@@ -1262,6 +1316,7 @@ async def test_bulk_copy_partial_failure_with_savepoint(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1318,6 +1373,7 @@ async def test_bulk_copy_reraises_http_exception(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1346,6 +1402,12 @@ async def test_bulk_copy_reraises_http_exception(service):
     async def fake_authorize(workspace_id, user):
         if workspace_id == 99:
             raise HTTPException(status_code=403, detail="Forbidden")
+        return WorkspaceModel(
+            id=workspace_id,
+            name="Target WS",
+            owner_id=user.id,
+            scope=WorkspaceScopeEnum.PRIVATE,
+        )
 
     service.mock_workspace_auth.authorize.side_effect = fake_authorize
 
@@ -1365,6 +1427,7 @@ async def test_bulk_move_reraises_http_exception(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1393,11 +1456,454 @@ async def test_bulk_move_reraises_http_exception(service):
     async def fake_authorize(workspace_id, user):
         if workspace_id == 99:
             raise HTTPException(status_code=403, detail="Forbidden")
+        return WorkspaceModel(
+            id=workspace_id,
+            name="Target WS",
+            owner_id=user.id,
+            scope=WorkspaceScopeEnum.PRIVATE,
+        )
 
-    service.mock_workspace_auth.authorize.side_effect = fake_authorize
+    service.mock_workspace_auth.authorize_write.side_effect = fake_authorize
 
     with pytest.raises(HTTPException) as exc_info:
         await service.bulk_move(bulk_dto, current_user)
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Forbidden"
+
+
+@pytest.mark.anyio
+async def test_sign_uri_delegates_to_async_signer(service):
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
+        "https://async-signed.url/img.webp"
+    )
+
+    result = await service._sign_uri("gs://bucket/img.webp")
+
+    assert result == "https://async-signed.url/img.webp"
+    service.mock_iam_signer.generate_presigned_url_async.assert_awaited_once_with(
+        "gs://bucket/img.webp"
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_copy_sanitizes_cross_workspace_references_and_clears_lineage(
+    service,
+):
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+    from src.common.schema.media_item_model import SourceMediaItemLink
+
+    current_user = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
+    src_item = MediaItemModel(
+        id=50,
+        workspace_id=10,
+        user_id=1,
+        user_email="user@test.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model=GenerationModelEnum.IMAGEN_3_FAST,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://b/out.png"],
+        revision_root_id=40,
+        revision_parent_id=49,
+        revision_number=3,
+        source_assets=[
+            SourceAssetLink(asset_id=1, role=AssetRoleEnum.INPUT),
+            SourceAssetLink(asset_id=2, role=AssetRoleEnum.STYLE_REFERENCE),
+        ],
+        source_media_items=[
+            SourceMediaItemLink(
+                media_item_id=3, media_index=0, role=AssetRoleEnum.INPUT
+            ),
+            SourceMediaItemLink(
+                media_item_id=4, media_index=0, role=AssetRoleEnum.INPUT
+            ),
+        ],
+    )
+    service.mock_media_repo.get_by_id.return_value = src_item
+    mock_allowed_assets = MagicMock()
+    mock_allowed_assets.fetchall.return_value = [(2,)]
+    mock_allowed_media = MagicMock()
+    mock_allowed_media.fetchall.return_value = [(4,)]
+    service.mock_db.execute.side_effect = [
+        mock_allowed_assets,
+        mock_allowed_media,
+    ]
+    service.mock_media_repo.create.return_value = MediaItemModel(
+        id=200,
+        workspace_id=88,
+        user_id=1,
+        user_email="user@test.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model=GenerationModelEnum.IMAGEN_3_FAST,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://b/out.png"],
+    )
+
+    res = await service.bulk_copy(
+        BulkCopyDto(
+            target_workspace_id=88,
+            items=[BulkCopyItemDto(id=50, type="media_item")],
+        ),
+        current_user,
+    )
+
+    assert res["copied_count"] == 1
+    created_kwargs = service.mock_media_repo.create.call_args.args[0]
+    assert created_kwargs["revision_number"] == 1
+    assert "revision_root_id" not in created_kwargs
+    assert "revision_parent_id" not in created_kwargs
+    assert [a["asset_id"] for a in created_kwargs["source_assets"]] == [2]
+    assert [
+        m["media_item_id"] for m in created_kwargs["source_media_items"]
+    ] == [4]
+
+
+@pytest.mark.anyio
+async def test_bulk_move_out_of_personal_workspace_rejected_400(service):
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    user = UserModel(
+        id=1, email="u@test.com", name="U", roles=[UserRoleEnum.USER]
+    )
+    personal_ws = WorkspaceModel(
+        id=10,
+        name="My Workspace",
+        owner_id=1,
+        scope=WorkspaceScopeEnum.PERSONAL,
+    )
+    target_ws = WorkspaceModel(
+        id=88, name="Shared", owner_id=1, scope=WorkspaceScopeEnum.PRIVATE
+    )
+    service.mock_workspace_auth.authorize_write.side_effect = (
+        lambda workspace_id, user: (
+            personal_ws if workspace_id == 10 else target_ws
+        )
+    )
+    service.mock_media_repo.get_by_id.return_value = MediaItemModel(
+        id=5,
+        workspace_id=10,
+        user_id=1,
+        user_email="u@test.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model=GenerationModelEnum.IMAGEN_3_FAST,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://b/m5.png"],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.bulk_move(
+            BulkMoveDto(
+                target_workspace_id=88,
+                items=[BulkMoveItemDto(id=5, type="media_item")],
+            ),
+            user,
+        )
+    assert exc.value.status_code == 400
+    assert "Use Promote" in exc.value.detail
+
+
+@pytest.mark.anyio
+async def test_restore_item_global_admin_blocked_from_foreign_personal_workspace(
+    service,
+):
+    admin = UserModel(
+        id=1, email="admin@test.com", name="A", roles=[UserRoleEnum.ADMIN]
+    )
+    service.mock_media_repo.get_by_id.return_value = MediaItemModel(
+        id=77,
+        workspace_id=10,
+        user_id=1,
+        user_email="other@test.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model=GenerationModelEnum.IMAGEN_3_FAST,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://b/m77.png"],
+    )
+    service.mock_workspace_auth.authorize_write.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.restore_item(77, "media_item", admin)
+    assert exc.value.status_code == 403
+    service.mock_media_repo.restore.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_enrich_source_links_skip_inaccessible_foreign_workspace(service):
+    from src.common.schema.media_item_model import SourceMediaItemLink
+    from src.source_assets.schema.source_asset_model import (
+        AssetScopeEnum,
+        AssetTypeEnum,
+        SourceAssetModel,
+    )
+
+    caller = UserModel(
+        id=2, email="colleague@test.com", name="C", roles=[UserRoleEnum.USER]
+    )
+    service.mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+
+    foreign_asset = SourceAssetModel(
+        id=11,
+        workspace_id=10,
+        user_id=1,
+        gcs_uri="gs://b/private.png",
+        original_filename="private.png",
+        file_hash="h1",
+        scope=AssetScopeEnum.PRIVATE,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+    system_asset = SourceAssetModel(
+        id=12,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://b/sys.png",
+        original_filename="sys.png",
+        file_hash="h2",
+        scope=AssetScopeEnum.SYSTEM,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+    foreign_media = MediaItemModel(
+        id=21,
+        workspace_id=10,
+        user_email="owner@test.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model=GenerationModelEnum.IMAGEN_3_001,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://b/private_gen.png"],
+    )
+
+    service.mock_source_asset_repo.get_by_id.return_value = foreign_asset
+    blocked_asset = await service._enrich_source_asset_link(
+        SourceAssetLink(asset_id=11, role=AssetRoleEnum.INPUT),
+        item_workspace_id=99,
+        current_user=caller,
+    )
+    assert blocked_asset is None
+    service.mock_iam_signer.generate_presigned_url_async.assert_not_awaited()
+
+    service.mock_media_repo.get_by_id.return_value = foreign_media
+    blocked_media = await service._enrich_source_media_item_link(
+        SourceMediaItemLink(
+            media_item_id=21, media_index=0, role=AssetRoleEnum.INPUT
+        ),
+        item_workspace_id=99,
+        current_user=caller,
+    )
+    assert blocked_media is None
+    service.mock_iam_signer.generate_presigned_url_async.assert_not_awaited()
+
+    service.mock_source_asset_repo.get_by_id.return_value = system_asset
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
+        "https://signed/sys.png"
+    )
+    allowed_system = await service._enrich_source_asset_link(
+        SourceAssetLink(asset_id=12, role=AssetRoleEnum.INPUT),
+        item_workspace_id=99,
+        current_user=caller,
+    )
+    assert allowed_system is not None
+    assert allowed_system.presigned_url == "https://signed/sys.png"
+
+
+@pytest.mark.anyio
+async def test_hydrate_media_items_batches_tags_and_user_pictures(service):
+    from src.tags.schema.tags_model import Tag
+
+    caller = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
+        "https://signed"
+    )
+    items = [
+        MediaItemModel(
+            id=11,
+            workspace_id=10,
+            user_id=1,
+            user_email="a@test.com",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+            model=GenerationModelEnum.IMAGEN_3_001,
+            aspect_ratio="1:1",
+            gcs_uris=["gs://bucket/img-1.png"],
+        ),
+        MediaItemModel(
+            id=12,
+            workspace_id=10,
+            user_id=2,
+            user_email="b@test.com",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+            model=GenerationModelEnum.IMAGEN_3_001,
+            aspect_ratio="1:1",
+            gcs_uris=["gs://bucket/img-2.png"],
+        ),
+    ]
+    tag_res = MagicMock()
+    now_dt = datetime.now()
+    tag_res.all.return_value = [
+        (
+            11,
+            Tag(
+                id=5,
+                workspace_id=10,
+                name="hero",
+                color="#112233",
+                created_at=now_dt,
+                updated_at=now_dt,
+            ),
+        )
+    ]
+    user_res = MagicMock()
+    user_res.all.return_value = [(1, "https://pic/1"), (2, "https://pic/2")]
+    service.mock_db.execute.side_effect = [tag_res, user_res]
+
+    assert await service.hydrate_media_items([], caller) == []
+    hydrated = await service.hydrate_media_items(items, caller)
+
+    assert len(hydrated) == 2
+    assert service.mock_db.execute.await_count == 2
+    assert [t.name for t in hydrated[0].tags] == ["hero"]
+    assert hydrated[1].tags == []
+    assert hydrated[0].user_picture == "https://pic/1"
+    assert hydrated[1].user_picture == "https://pic/2"
+
+
+@pytest.mark.anyio
+async def test_authorize_move_source_forbidden_for_foreign_folder(service):
+    from src.folders.schema.folder_model import Folder
+    from src.workspaces.schema.workspace_model import (
+        WorkspaceModel,
+        WorkspaceRoleEnum,
+        WorkspaceScopeEnum,
+    )
+
+    caller = UserModel(
+        id=2, email="colleague@test.com", name="C", roles=[UserRoleEnum.USER]
+    )
+    service.mock_workspace_auth.authorize_write.return_value = WorkspaceModel(
+        id=10,
+        name="Team",
+        owner_id=1,
+        scope=WorkspaceScopeEnum.PRIVATE,
+        current_user_role=WorkspaceRoleEnum.EDITOR,
+    )
+    foreign_folder = Folder(
+        id=55, workspace_id=10, user_id=1, user_email="owner@test.com", name="F"
+    )
+    with pytest.raises(HTTPException) as exc:
+        await service._authorize_move_source(
+            10, 10, foreign_folder, "folder", caller
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_bulk_move_same_workspace_colocates_stack_to_root(service):
+    from pydantic import BaseModel
+
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyStackMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        revision_root_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=202, type="media_item")],
+    )
+    current_user = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
+    service.mock_media_repo.get_by_id.return_value = DummyStackMedia(
+        id=202,
+        workspace_id=88,
+        folder_id=12,
+        revision_root_id=101,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+
+    result = await service.bulk_move(bulk_dto, current_user)
+
+    assert result["moved_count"] == 1
+    executed_stmt = service.mock_db.execute.call_args[0][0]
+    stmt_text = str(executed_stmt)
+    assert "revision_root_id" in stmt_text
+    assert "deleted_at IS NULL" in stmt_text
+    service.mock_tags_repo.clear_tags_for_media_item.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_paginated_gallery_filters_inaccessible_promotions(service):
+    current_user = UserModel(
+        id=2,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    search_dto = GallerySearchDto(workspace_id=1, limit=10, offset=0)
+
+    mock_item = UnifiedGalleryItemResponse(
+        id=1,
+        workspace_id=1,
+        created_at=datetime.now(),
+        item_type="media_item",
+        gcs_uris=[],
+        thumbnail_uris=[],
+        metadata_={
+            "promotions": [
+                {
+                    "target_workspace_id": 10,
+                    "target_workspace_name": "Shared Public",
+                    "target_item_id": 100,
+                },
+                {
+                    "target_workspace_id": 20,
+                    "target_workspace_name": "Secret Private",
+                    "target_item_id": 200,
+                },
+                {
+                    "target_workspace_id": 30,
+                    "target_workspace_name": "Foreign Personal",
+                    "target_item_id": 300,
+                },
+            ]
+        },
+    )
+    mock_query_result = MagicMock()
+    mock_query_result.data = [mock_item]
+    mock_query_result.count = 1
+    mock_query_result.page = 1
+    mock_query_result.page_size = 10
+    mock_query_result.total_pages = 1
+    service.mock_unified_gallery_repo.query.return_value = mock_query_result
+
+    ws_res = MagicMock()
+    ws_res.scalars.return_value.all.return_value = [10]
+    service.mock_db.execute.return_value = ws_res
+
+    result = await service.get_paginated_gallery(search_dto, current_user)
+
+    assert len(result.data) == 1
+    assert result.data[0].metadata["promotions"] == [
+        {
+            "target_workspace_id": 10,
+            "target_workspace_name": "Shared Public",
+            "target_item_id": 100,
+        }
+    ]
+    executed_stmt = str(service.mock_db.execute.call_args[0][0])
+    assert "workspaces.scope !=" in executed_stmt
+    assert "workspace_members" in executed_stmt

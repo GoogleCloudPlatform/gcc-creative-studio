@@ -310,7 +310,7 @@ async def test_generate_video(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 6
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 777})
 
@@ -345,7 +345,7 @@ async def test_generate_vertical_video(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
 
@@ -386,7 +386,7 @@ async def test_generate_video_with_multi_reference_videos_and_ignored_audio(
     request.config.resolution = "4K"  # Forced down to 1K for Omni
     request.config.duration_seconds = 8
     request.config.input_mode = "Ingredients to Video"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 1234}
@@ -447,7 +447,7 @@ async def test_generate_video_with_source_asset_video_and_extend_mode(service):
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
     request.config.input_mode = None  # Legacy unset mode infers Extend Video
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 5678}
@@ -489,7 +489,7 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
     request.config.input_mode = None
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 9999}
@@ -537,7 +537,7 @@ async def test_generate_video_reference_passthrough_by_model(
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
     request.config.input_mode = None
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 4321}
@@ -844,7 +844,7 @@ async def test_generate_audio(service):
     request.config.language_code = "en"
     request.config.negative_prompt = None
     request.config.seed = None
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 555})
 
@@ -912,7 +912,7 @@ async def test_execute_image_generate_mode(service):
     request.config.aspect_ratio = "1:1"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     with patch.object(
         service,
@@ -956,7 +956,7 @@ async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
     request.config.aspect_ratio = "auto"
     request.config.brand_guidelines = False
     request.config.resolution = "2K"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     with patch.object(
         service,
@@ -989,7 +989,7 @@ async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
     request.config.aspect_ratio = "auto"
     request.config.brand_guidelines = False
     request.config.resolution = "4K"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     with patch.object(
         service,
@@ -1021,7 +1021,7 @@ async def test_execute_image_upscale_mode(service):
     request.config.upscale_factor = "x2"
     request.config.enhance_input_image = False
     request.config.image_preservation_factor = None
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     with patch.object(
         service,
@@ -1043,7 +1043,7 @@ async def test_execute_image_vto_mode(service):
     request.inputs.dress_image = None
     request.inputs.shoes_image = None
     request.config.mode = "virtual_try_on"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
 
     with patch.object(
         service,
@@ -1260,7 +1260,7 @@ def _image_request() -> MagicMock:
     request.config.aspect_ratio = "1:1"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
-    request.config.output_folder_id = None
+    request.inputs.output_folder = None
     return request
 
 
@@ -1710,6 +1710,69 @@ async def test_text_with_argon_model_sends_argon_model(service):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("input_model", "expected_model"),
+    [
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-2.5-pro", "gemini-4-argon"),
+        ("gemini-2.5-flash", "gemini-4-hydrogen"),
+    ],
+)
+async def test_text_normalizes_retired_and_hydrogen_models(
+    service, input_model, expected_model
+):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("Haiku line")]
+
+    request = GenerateTextRequest.model_validate(
+        {
+            "inputs": {"prompt": "Write a haiku"},
+            "config": {"model": input_model, "temperature": 0.4},
+        }
+    )
+    result = await service.generate_text(request)
+
+    assert result == {"generated_text": "Haiku line"}
+    stream.assert_called_once()
+    assert stream.call_args.kwargs["model"] == expected_model
+
+
+@pytest.mark.anyio
+async def test_text_vertex_404_surfaces_as_step_error(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = genai_errors.ClientError(
+        404,
+        {
+            "error": {
+                "code": 404,
+                "status": "NOT_FOUND",
+                "message": "Publisher Model was not found.",
+            }
+        },
+    )
+    guard = MagicMock()
+    guard.state_key = "text_1"
+    guard.run_id = "run-1"
+    guard.begin = AsyncMock(return_value=None)
+    guard.record_failure = AsyncMock()
+
+    request = GenerateTextRequest.model_validate(
+        {
+            "run_id": "run-1",
+            "step_id": "text_1",
+            "inputs": {"prompt": "Write a haiku"},
+            "config": {"model": "gemini-4-argon", "temperature": 0.4},
+        }
+    )
+    with pytest.raises(StepError) as exc:
+        await service.generate_text(request, guard=guard)
+
+    assert exc.value.status_code == 404
+    assert exc.value.error_category is ErrorCategory.MISSING_RESOURCE
+    guard.record_failure.assert_awaited_once_with(exc.value)
+
+
+@pytest.mark.anyio
 async def test_text_with_google_search_keeps_media_parts(service):
     stream = service.mock_genai_client.models.generate_content_stream
     stream.return_value = [_text_chunk("A rainy street in Paris.")]
@@ -1811,28 +1874,30 @@ def _image_step_request(
 ) -> ImageStepRequest:
     return ImageStepRequest(
         workspace_id=1,
-        inputs=ImageInputs(**IMAGE_MODE_INPUTS[mode]),
-        config=ImageSettings(mode=mode, output_folder_id=output_folder_id),
+        inputs=ImageInputs(
+            **IMAGE_MODE_INPUTS[mode], output_folder=output_folder_id
+        ),
+        config=ImageSettings(mode=mode),
     )
 
 
 def _video_request(output_folder_id: int | None) -> GenerateVideoRequest:
     return GenerateVideoRequest(
         workspace_id=1,
-        inputs=GenerateVideoInputs(prompt="A running dog"),
-        config=GenerateVideoSettings(
-            model="veo-3.1-generate-001", output_folder_id=output_folder_id
+        inputs=GenerateVideoInputs(
+            prompt="A running dog", output_folder=output_folder_id
         ),
+        config=GenerateVideoSettings(model="veo-3.1-generate-001"),
     )
 
 
 def _audio_request(output_folder_id: int | None) -> GenerateAudioRequest:
     return GenerateAudioRequest(
         workspace_id=1,
-        inputs=GenerateAudioInputs(prompt="Birds chirping"),
-        config=GenerateAudioSettings(
-            model="lyria-002", output_folder_id=output_folder_id
+        inputs=GenerateAudioInputs(
+            prompt="Birds chirping", output_folder=output_folder_id
         ),
+        config=GenerateAudioSettings(model="lyria-002"),
     )
 
 
@@ -1915,3 +1980,75 @@ async def test_rejected_output_folder_is_invalid_input(service):
     assert error.error_category is ErrorCategory.INVALID_INPUT
     assert OUTPUT_FOLDER_NOT_FOUND_DETAIL in error.detail
     service.mock_rest_client.post.assert_awaited_once()
+
+
+@pytest.mark.parametrize("mode", list(IMAGE_MODE_INPUTS))
+def test_image_step_inputs_record_output_folder_when_set(mode):
+    step_inputs = WorkflowsExecutorService._image_step_inputs(
+        _image_step_request(mode, OUTPUT_FOLDER_ID)
+    )
+
+    assert step_inputs["output_folder"] == OUTPUT_FOLDER_ID
+
+
+@pytest.mark.parametrize("mode", list(IMAGE_MODE_INPUTS))
+def test_image_step_inputs_omit_root_output_folder(mode):
+    step_inputs = WorkflowsExecutorService._image_step_inputs(
+        _image_step_request(mode, None)
+    )
+
+    assert "output_folder" not in step_inputs
+
+
+# --- Deleted gallery item while polling ---------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("deleted_key", ["deletedAt", "deleted_at"])
+@pytest.mark.parametrize("status", ["processing", "completed"])
+async def test_poll_job_status_fails_when_item_was_deleted(
+    service, deleted_key, status
+):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": status, deleted_key: "2026-11-17T19:00:00Z"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    error = exc.value
+    assert error.status_code == 404
+    assert error.error_category is ErrorCategory.MISSING_RESOURCE
+    assert error.job_terminal is True
+    service.mock_rest_client.get.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_poll_job_status_ignores_null_deleted_at(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed", "deletedAt": None}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        result = await service._poll_job_status(123)
+
+    assert result is True
+
+
+@pytest.mark.anyio
+async def test_deleted_item_during_job_stays_retry_safe(service):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 9})
+    service.mock_rest_client.get.return_value = Response(
+        200,
+        json={"status": "processing", "deletedAt": "2026-11-17T19:00:00Z"},
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service.execute_image(_image_request(), USER_AUTH)
+
+    error = exc.value
+    assert error.error_category is ErrorCategory.MISSING_RESOURCE
+    assert error.retry_safe is True
+    assert "retry_safe" not in error.to_body()

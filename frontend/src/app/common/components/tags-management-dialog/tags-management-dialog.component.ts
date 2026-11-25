@@ -52,6 +52,15 @@ export class TagsManagementDialogComponent implements OnInit {
   ) {
     const user = this.userService.getUserDetails();
     this.userId = user?.id as number;
+    this.workspaceStateService.syncUser(user);
+    this.onlyMyTags = !this.workspaceStateService.canManageActiveWorkspace();
+  }
+
+  canManageTag(tag: TagModel): boolean {
+    if (this.workspaceStateService.canManageActiveWorkspace()) {
+      return true;
+    }
+    return this.userId !== undefined && tag.userId === this.userId;
   }
 
   ngOnInit(): void {

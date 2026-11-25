@@ -16,10 +16,15 @@
 
 import {TestBed} from '@angular/core/testing';
 import {provideHttpClient} from '@angular/common/http';
-import {provideHttpClientTesting} from '@angular/common/http/testing';
-import {of} from 'rxjs';
+import {
+  HttpTestingController,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
+import {EMPTY, Observable, of, throwError} from 'rxjs';
 import {AgentChatService, SSECallbacks} from './agent-chat.service';
+import {ChatSession} from '../../common/models/workbench.model';
 import {AuthService} from '../../common/services/auth.service';
+import {isSessionHandledError} from '../../common/services/auth-token.utils';
 
 /**
  * `streamActive` must mirror the whole lifetime of an agent run: it is what
@@ -30,6 +35,13 @@ describe('AgentChatService streamActive lifecycle', () => {
   let service: AgentChatService;
   let fetchSpy: jasmine.Spy;
   let callbacks: SSECallbacks<any>;
+  let authServiceMock: {
+    getValidIdentityPlatformToken$: jasmine.Spy;
+    renewAfterUnauthorized$: jasmine.Spy;
+    onSessionRenewalFailed: jasmine.Spy;
+    hasRenewableSession: jasmine.Spy;
+    recordRejectedRenewedToken: jasmine.Spy;
+  };
 
   /**
    * A microtask-only stand-in for `Response`: a real `Response.json()` reads
@@ -41,6 +53,8 @@ describe('AgentChatService streamActive lifecycle', () => {
       ok: status >= 200 && status < 300,
       status,
       json: () => Promise.resolve(body),
+      text: () =>
+        Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)),
     }) as unknown as Response;
 
   /** Lets the awaited token + fetch + json() steps settle. */
@@ -51,15 +65,28 @@ describe('AgentChatService streamActive lifecycle', () => {
   };
 
   beforeEach(() => {
+    authServiceMock = {
+      getValidIdentityPlatformToken$: jasmine
+        .createSpy('getValidIdentityPlatformToken$')
+        .and.returnValue(of('token')),
+      renewAfterUnauthorized$: jasmine
+        .createSpy('renewAfterUnauthorized$')
+        .and.returnValue(of('fresh-token')),
+      onSessionRenewalFailed: jasmine.createSpy('onSessionRenewalFailed'),
+      hasRenewableSession: jasmine
+        .createSpy('hasRenewableSession')
+        .and.returnValue(false),
+      recordRejectedRenewedToken: jasmine.createSpy(
+        'recordRejectedRenewedToken',
+      ),
+    };
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
         {
           provide: AuthService,
-          useValue: {
-            getValidIdentityPlatformToken$: () => of('token'),
-          },
+          useValue: authServiceMock,
         },
       ],
     });
@@ -180,5 +207,441 @@ describe('AgentChatService streamActive lifecycle', () => {
     service.stopPolling();
     expect(service.streamActive()).toBeFalse();
     expect(service.isPolling()).toBeFalse();
+  });
+
+  it('stops generating and passes session-handled error when sendMessage renewal fails or returns empty', async () => {
+    service.isGeneratingStoryboard.set(true);
+    service.isGeneratingVideo.set(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Silent sign-in renewal failed: skipped')),
+    );
+
+    await service.sendMessage('s7', 'hello', 1, callbacks);
+
+    expect(authServiceMock.onSessionRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(service.streamActive()).toBeFalse();
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.isGeneratingVideo()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    const err = (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0];
+    expect(isSessionHandledError(err)).toBeTrue();
+
+    // Empty token (signed out) also cleanly terminates with a session-handled error.
+    (callbacks.onError as jasmine.Spy).calls.reset();
+    service.isGeneratingStoryboard.set(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(EMPTY);
+
+    await service.sendMessage('s7', 'hello', 1, callbacks);
+
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.streamActive()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    const sendHandled = isSessionHandledError(
+      (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+    );
+    expect(sendHandled).toBeTrue();
+  });
+
+  it('stops polling and resets generating signals when startPolling loses session, but stays armed when deferred', async () => {
+    service.isGeneratingStoryboard.set(true);
+    service.isGeneratingVideo.set(true);
+    authServiceMock.hasRenewableSession.and.returnValue(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Session renewal deferred while hidden')),
+    );
+
+    service.startPolling('s8', callbacks);
+    jasmine.clock().tick(2600);
+    await settle();
+
+    // Session still exists (deferred while hidden/offline): polling remains armed.
+    expect(authServiceMock.onSessionRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(service.isPolling()).toBeTrue();
+    expect(callbacks.onError).not.toHaveBeenCalled();
+
+    // Once session is cleared (renewal permanently failed), polling stops and notifies.
+    authServiceMock.hasRenewableSession.and.returnValue(false);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Silent sign-in renewal failed: timed out')),
+    );
+    jasmine.clock().tick(2600);
+    await settle();
+
+    expect(service.isPolling()).toBeFalse();
+    expect(service.streamActive()).toBeFalse();
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.isGeneratingVideo()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    const sendHandled = isSessionHandledError(
+      (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+    );
+    expect(sendHandled).toBeTrue();
+  });
+
+  it('retries fetch once after 401 on sendMessage and startPolling, skipping unauthorized-org 401s', async () => {
+    fetchSpy.and.returnValues(
+      Promise.resolve(jsonResponse(401, {detail: 'Token expired'})),
+      Promise.resolve(jsonResponse(200, {status: 'processing'})),
+      Promise.resolve(jsonResponse(401, {detail: 'Token expired'})),
+      Promise.resolve(jsonResponse(200, {events: ['data: [DONE]']})),
+    );
+
+    await service.sendMessage('s9', 'hello', 1, callbacks);
+    expect(authServiceMock.renewAfterUnauthorized$).toHaveBeenCalledTimes(1);
+    expect(service.isPolling()).toBeTrue();
+
+    jasmine.clock().tick(2600);
+    await settle();
+
+    expect(authServiceMock.renewAfterUnauthorized$).toHaveBeenCalledTimes(2);
+    expect(callbacks.onClose).toHaveBeenCalledTimes(1);
+    expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
+
+    // Org-unauthorized 401 must never trigger renewal or onSessionRenewalFailed.
+    authServiceMock.renewAfterUnauthorized$.calls.reset();
+    fetchSpy.and.returnValue(
+      Promise.resolve(
+        jsonResponse(401, {
+          detail: 'User is not authorized to access this application.',
+        }),
+      ),
+    );
+    await service.sendMessage('s10', 'hello', 1, callbacks);
+    expect(authServiceMock.renewAfterUnauthorized$).not.toHaveBeenCalled();
+    expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+
+    // Post-renewal retry still returning 401 records failure cooldown.
+    fetchSpy.and.returnValues(
+      Promise.resolve(jsonResponse(401, {detail: 'Expired'})),
+      Promise.resolve(jsonResponse(401, {detail: 'Wrong audience'})),
+    );
+    await service.sendMessage('s11', 'hello', 1, callbacks);
+    expect(authServiceMock.recordRejectedRenewedToken).toHaveBeenCalledOnceWith(
+      'fresh-token',
+    );
+  });
+
+  it('prevents concurrent overlapping poll ticks while an earlier tick is in flight', async () => {
+    fetchSpy.and.returnValue(
+      Promise.resolve(jsonResponse(200, {events: ['data: [DONE]']})),
+    );
+    let resolvePendingToken!: (token: string) => void;
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      new Observable<string>(sub => {
+        resolvePendingToken = tok => {
+          sub.next(tok);
+          sub.complete();
+        };
+      }),
+    );
+
+    service.startPolling('s-overlap', callbacks);
+    jasmine.clock().tick(2600);
+    expect(
+      authServiceMock.getValidIdentityPlatformToken$,
+    ).toHaveBeenCalledTimes(1);
+
+    // Next 2.5s tick fires while token renewal from tick #1 is still in flight: skipped.
+    jasmine.clock().tick(2600);
+    expect(
+      authServiceMock.getValidIdentityPlatformToken$,
+    ).toHaveBeenCalledTimes(1);
+
+    resolvePendingToken('renewed-tok');
+    await settle();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(callbacks.onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AgentChatService projects and chat titles', () => {
+  let service: AgentChatService;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    localStorage.removeItem('izumi_topics');
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: AuthService,
+          useValue: {getValidIdentityPlatformToken$: () => of('token')},
+        },
+      ],
+    });
+    service = TestBed.inject(AgentChatService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    http.verify();
+    localStorage.removeItem('izumi_topics');
+  });
+
+  const sessionsUrl = (url: string) => url.includes('/agent/sessions?');
+
+  it('sends the project with getSessions and createSession', () => {
+    service.getSessions(3, false, null, null, 7).subscribe();
+    const list = http.expectOne(req => sessionsUrl(req.urlWithParams));
+    expect(list.request.urlWithParams).toContain('workspace_id=3');
+    expect(list.request.urlWithParams).toContain('project_id=7');
+    list.flush([]);
+
+    service.createSession(3, 7).subscribe();
+    const create = http.expectOne(req => req.method === 'POST');
+    expect(create.request.urlWithParams).toContain('project_id=7');
+    create.flush({id: 'new'});
+  });
+
+  it('keys the sessions cache by project', () => {
+    service.getSessions(3, false, null, null, 7).subscribe();
+    http.expectOne(req => sessionsUrl(req.urlWithParams)).flush([{id: 'a'}]);
+
+    // Same project: served from the cache.
+    service.getSessions(3, false, null, null, 7).subscribe();
+    http.expectNone(req => sessionsUrl(req.urlWithParams));
+
+    // Another project: fetched again.
+    service.getSessions(3, false, null, null, 8).subscribe();
+    const other = http.expectOne(req => sessionsUrl(req.urlWithParams));
+    expect(other.request.urlWithParams).toContain('project_id=8');
+    other.flush([]);
+  });
+
+  it('lists expired chats apart from the ones that can be opened', () => {
+    let emitted: ChatSession[] = [];
+    service
+      .getSessions(3, false, null, null, 7)
+      .subscribe(sessions => (emitted = sessions));
+    const list = http.expectOne(req => sessionsUrl(req.urlWithParams));
+    expect(list.request.urlWithParams).toContain('include_expired=true');
+    list.flush([{id: 'live'}, {id: 'gone', expired: true}]);
+
+    expect(emitted.map(s => s.id)).toEqual(['live']);
+    expect(service.sessions().map(s => s.id)).toEqual(['live']);
+    expect(service.expiredSessions().map(s => s.id)).toEqual(['gone']);
+  });
+
+  it('restores an expired chat in its workspace', () => {
+    let restored: ChatSession | undefined;
+    service.restoreSession('gone', 3).subscribe(s => (restored = s));
+
+    const req = http.expectOne(req =>
+      req.url.includes('/agent/sessions/gone/restore'),
+    );
+    expect(req.request.method).toBe('POST');
+    expect(req.request.urlWithParams).toContain('appName=ads_x');
+    expect(req.request.urlWithParams).toContain('workspace_id=3');
+    req.flush({id: 's-new', title: 'Spring', restored: true});
+
+    expect(restored).toEqual({id: 's-new', title: 'Spring', restored: true});
+  });
+
+  it('restores without a workspace filter when none is given', () => {
+    service.restoreSession('gone').subscribe();
+
+    const req = http.expectOne(req =>
+      req.url.includes('/agent/sessions/gone/restore'),
+    );
+    expect(req.request.urlWithParams).not.toContain('workspace_id');
+    req.flush({id: 's-new'});
+  });
+
+  it('patches the chat title and summary', () => {
+    service
+      .updateSessionMetadata('s1', {title: 'Launch', summary: 'Teaser'})
+      .subscribe();
+    const req = http.expectOne(req => req.url.endsWith('/agent/sessions/s1'));
+    expect(req.request.method).toBe('PATCH');
+    expect(req.request.body).toEqual({title: 'Launch', summary: 'Teaser'});
+    req.flush({id: 's1', title: 'Launch'});
+  });
+
+  it('clamps the title and summary to the API limits', () => {
+    service
+      .updateSessionMetadata('s1', {
+        title: 't'.repeat(250),
+        summary: 's'.repeat(1500),
+      })
+      .subscribe();
+    const req = http.expectOne(req => req.url.endsWith('/agent/sessions/s1'));
+    expect(req.request.body.title.length).toBe(200);
+    expect(req.request.body.summary.length).toBe(1000);
+    req.flush({id: 's1'});
+  });
+
+  it('leaves empty fields out of the patch', () => {
+    service
+      .updateSessionMetadata('s1', {title: 'Launch', summary: undefined})
+      .subscribe();
+    const req = http.expectOne(req => req.url.endsWith('/agent/sessions/s1'));
+    expect(req.request.body).toEqual({title: 'Launch'});
+    req.flush({id: 's1', title: 'Launch'});
+  });
+
+  it('forgets a single legacy title', () => {
+    localStorage.setItem(
+      'izumi_topics',
+      JSON.stringify({s1: 'Deleted chat', s2: 'Kept'}),
+    );
+
+    service.forgetLegacyTitle('s1');
+
+    expect(JSON.parse(localStorage.getItem('izumi_topics')!)).toEqual({
+      s2: 'Kept',
+    });
+  });
+
+  it('discards legacy titles stored as an array', () => {
+    // Old builds always wrote an object: an array is corrupted storage, so it
+    // is removed instead of being written back unchanged.
+    localStorage.setItem('izumi_topics', JSON.stringify(['Old title']));
+
+    service.forgetLegacyTitle('s1');
+
+    expect(localStorage.getItem('izumi_topics')).toBeNull();
+  });
+
+  it('resets every shared conversation signal and the cache', () => {
+    spyOn(service, 'stopPolling');
+    service.sessions.set([{id: 's1'}]);
+    service.expiredSessions.set([{id: 'gone', expired: true}]);
+    service.chatMessages.set([{text: 'msg'}]);
+    service.selectedSessionId.set('s1');
+    service.finalVideoReady.set(true);
+    service.chatRestored.set(true);
+    service.isGeneratingStoryboard.set(true);
+
+    service.resetConversation();
+
+    expect(service.stopPolling).toHaveBeenCalled();
+    expect(service.sessions()).toEqual([]);
+    expect(service.expiredSessions()).toEqual([]);
+    expect(service.chatMessages()).toEqual([]);
+    expect(service.selectedSessionId()).toBeNull();
+    expect(service.currentStoryboard()).toBeNull();
+    expect(service.finalVideoReady()).toBeFalse();
+    expect(service.chatRestored()).toBeFalse();
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+  });
+
+  describe('importLegacyTitles', () => {
+    const untitled = (id: string): ChatSession => ({id, title: null});
+
+    it('imports untitled chats and forgets each entry once saved', () => {
+      localStorage.setItem(
+        'izumi_topics',
+        JSON.stringify({
+          s1: 'Old title',
+          s2: {title: 'Title 2', summary: 'Summary 2'},
+          s3: 'Kept: the chat already has a server title',
+          other: 'Kept: not in this list',
+        }),
+      );
+      service.sessions.set([untitled('s1'), untitled('s2')]);
+
+      service.importLegacyTitles([
+        untitled('s1'),
+        untitled('s2'),
+        {id: 's3', title: 'Server title'},
+      ]);
+
+      const first = http.expectOne(req => req.url.endsWith('/sessions/s1'));
+      expect(first.request.body).toEqual({title: 'Old title'});
+      first.flush({id: 's1', title: 'Old title'});
+      const second = http.expectOne(req => req.url.endsWith('/sessions/s2'));
+      expect(second.request.body).toEqual({
+        title: 'Title 2',
+        summary: 'Summary 2',
+      });
+      second.flush({id: 's2', title: 'Title 2', summary: 'Summary 2'});
+
+      expect(JSON.parse(localStorage.getItem('izumi_topics')!)).toEqual({
+        s3: 'Kept: the chat already has a server title',
+        other: 'Kept: not in this list',
+      });
+      expect(service.sessions().map(s => s.title)).toEqual([
+        'Old title',
+        'Title 2',
+      ]);
+    });
+
+    it('keeps an entry whose import failed, for a later retry', () => {
+      spyOn(console, 'warn');
+      localStorage.setItem('izumi_topics', JSON.stringify({s1: 'Old title'}));
+
+      service.importLegacyTitles([untitled('s1')]);
+      http
+        .expectOne(req => req.url.endsWith('/sessions/s1'))
+        .flush({detail: 'boom'}, {status: 500, statusText: 'Server Error'});
+
+      expect(localStorage.getItem('izumi_topics')).toContain('Old title');
+      expect(console.warn).toHaveBeenCalled();
+
+      // The failed import is no longer in flight: a later load retries it.
+      service.importLegacyTitles([untitled('s1')]);
+      const retry = http.expectOne(req => req.url.endsWith('/sessions/s1'));
+      expect(retry.request.body).toEqual({title: 'Old title'});
+      retry.flush({id: 's1', title: 'Old title'});
+
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
+    });
+
+    it('removes the key once the last entry is imported', () => {
+      localStorage.setItem('izumi_topics', JSON.stringify({s1: 'Old title'}));
+
+      service.importLegacyTitles([untitled('s1')]);
+      // A second load while the first import is in flight sends nothing.
+      service.importLegacyTitles([untitled('s1')]);
+      http
+        .expectOne(req => req.url.endsWith('/sessions/s1'))
+        .flush({id: 's1', title: 'Old title'});
+
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
+    });
+
+    it('truncates legacy values to the API limits', () => {
+      localStorage.setItem(
+        'izumi_topics',
+        JSON.stringify({
+          s1: {title: 't'.repeat(250), summary: 's'.repeat(1500)},
+        }),
+      );
+
+      service.importLegacyTitles([untitled('s1')]);
+
+      const req = http.expectOne(req => req.url.endsWith('/sessions/s1'));
+      expect(req.request.body.title.length).toBe(200);
+      expect(req.request.body.summary.length).toBe(1000);
+      req.flush({id: 's1'});
+    });
+
+    it('does nothing without legacy titles', () => {
+      service.importLegacyTitles([untitled('s1')]);
+      http.expectNone(() => true);
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
+    });
+
+    it('forgets corrupted entries instead of throwing', () => {
+      localStorage.setItem(
+        'izumi_topics',
+        JSON.stringify({s1: {title: 42}, s2: '   ', s3: 'Valid'}),
+      );
+
+      expect(() =>
+        service.importLegacyTitles([
+          untitled('s1'),
+          untitled('s2'),
+          untitled('s3'),
+        ]),
+      ).not.toThrow();
+
+      http
+        .expectOne(req => req.url.endsWith('/sessions/s3'))
+        .flush({id: 's3', title: 'Valid'});
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
+    });
   });
 });

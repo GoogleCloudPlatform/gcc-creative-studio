@@ -18,21 +18,25 @@ import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 import {GENERATE_AUDIO_STEP_CONFIG} from './generate-audio-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from './generate-video-step.config';
-import {IMAGE_STEP_CONFIG} from './image-step.config';
 import {
-  OUTPUT_FOLDER_SETTING,
-  OUTPUT_FOLDER_SETTING_NAME,
+  IMAGE_MODE_ALLOWED_INPUTS,
+  IMAGE_STEP_CONFIG,
+} from './image-step.config';
+import {
+  OUTPUT_FOLDER_INPUT,
+  OUTPUT_FOLDER_INPUT_NAME,
   getOutputFolderMimeType,
 } from './output-folder-setting';
 
-describe('Output folder setting', () => {
-  it('is a root-allowing folder setting that defaults to the root', () => {
-    expect(OUTPUT_FOLDER_SETTING).toEqual({
-      name: 'output_folder_id',
+describe('Output folder input', () => {
+  it('is an optional, root-allowing folder input', () => {
+    expect(OUTPUT_FOLDER_INPUT_NAME).toBe('output_folder');
+    expect(OUTPUT_FOLDER_INPUT).toEqual({
+      name: 'output_folder',
       label: 'Output folder',
       type: 'folder',
       allowRoot: true,
-      defaultValue: null,
+      required: false,
     });
   });
 
@@ -43,13 +47,22 @@ describe('Output folder setting', () => {
   ];
 
   MEDIA_CONFIGS.forEach(config => {
-    it(`is configured on the ${config.type} node`, () => {
-      const setting = config.settings.find(
-        s => s.name === OUTPUT_FOLDER_SETTING_NAME,
+    it(`is configured as an input on the ${config.type} node`, () => {
+      const input = config.inputs.find(
+        i => i.name === OUTPUT_FOLDER_INPUT_NAME,
       );
-      expect(setting).toEqual(OUTPUT_FOLDER_SETTING);
-      expect(setting?.hidden).toBeFalsy();
-      expect(setting?.required).toBeFalsy();
+      expect(input).toEqual(OUTPUT_FOLDER_INPUT);
+      expect(input?.hidden).toBeFalsy();
+    });
+  });
+
+  it('is recorded in the step history of every image mode', () => {
+    const modes = Object.keys(IMAGE_MODE_ALLOWED_INPUTS);
+    expect(modes.length).toBe(4);
+    modes.forEach(mode => {
+      expect(IMAGE_MODE_ALLOWED_INPUTS[mode])
+        .withContext(mode)
+        .toContain(OUTPUT_FOLDER_INPUT_NAME);
     });
   });
 

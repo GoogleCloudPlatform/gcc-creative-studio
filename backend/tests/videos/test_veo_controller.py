@@ -48,6 +48,7 @@ def fixture_mock_veo_service():
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
     auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
     return auth
 
 

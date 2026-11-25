@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  fakeAsync,
+  TestBed,
+  tick,
+} from '@angular/core/testing';
 import {ReactiveFormsModule, FormsModule} from '@angular/forms';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
@@ -90,12 +95,17 @@ describe('VideoComponent', () => {
             startVeoGeneration: jasmine
               .createSpy('startVeoGeneration')
               .and.returnValue(of({})),
+            concatenateVideos: jasmine
+              .createSpy('concatenateVideos')
+              .and.returnValue(of({})),
           },
         },
         {
           provide: WorkspaceStateService,
           useValue: {
             getActiveWorkspaceId: () => 1,
+            personalWorkspaceId: () => 1,
+            getReferencedGenerationWorkspaceParams: () => ({workspaceId: 1}),
           },
         },
         {
@@ -330,4 +340,87 @@ describe('VideoComponent', () => {
     expect(component.image1Preview).toBe('https://example.com/frame.png');
     expect(showSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('should send personal workspaceId and shared contextWorkspaceId on searchTerm', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 11,
+      contextWorkspaceId: 22,
+    });
+    component.searchRequest.prompt = 'sunrise timelapse';
+    component.currentMode = 'Text to Video';
+
+    component.searchTerm();
+
+    const payload = searchService.startVeoGeneration.calls.mostRecent().args[0];
+    expect(payload.workspaceId).toBe(11);
+    expect(payload.contextWorkspaceId).toBe(22);
+  });
+
+  it('should send concatenateVideos payload without contextWorkspaceId in concatenate mode', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 11,
+      contextWorkspaceId: 22,
+    });
+    component.onModeChanged('Concatenate Video');
+    component.startImageAssetId = 101;
+    component.endImageAssetId = 102;
+    component.searchRequest.aspectRatio = '16:9';
+
+    component.searchTerm();
+
+    const payload = searchService.concatenateVideos.calls.mostRecent().args[0];
+    expect(payload).toEqual({
+      workspaceId: 11,
+      name: 'Concatenated Video',
+      inputs: [
+        {id: 101, type: 'source_asset'},
+        {id: 102, type: 'source_asset'},
+      ],
+      aspectRatio: '16:9',
+    });
+    expect('contextWorkspaceId' in payload).toBeFalse();
+  });
+
+  it('forwards parentMediaItemId when concatenating generated media items', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 10,
+      contextWorkspaceId: 30,
+    });
+
+    component.isConcatenateMode = true;
+    component.parentMediaItemId = 41;
+    component.sourceMediaItems = [
+      {mediaItemId: 41, mediaIndex: 0, role: 'input'},
+      {mediaItemId: 42, mediaIndex: 0, role: 'input'},
+    ];
+    component.searchTerm();
+
+    expect(searchService.concatenateVideos).toHaveBeenCalledTimes(1);
+    const payload = searchService.concatenateVideos.calls.mostRecent().args[0];
+    expect(payload.workspaceId).toBe(10);
+    expect(payload.parentMediaItemId).toBe(41);
+    expect(payload.inputs).toEqual([
+      {id: 41, type: 'media_item'},
+      {id: 42, type: 'media_item'},
+    ]);
+  });
+
+  it('cancels pending ngAfterViewInit concatenation selector timer on destroy', fakeAsync(() => {
+    const openSpy = spyOn(component, 'openImageSelector');
+    history.replaceState({remixState: {startConcatenation: true}}, '');
+    try {
+      component.ngAfterViewInit();
+      component.ngOnDestroy();
+      tick(2000);
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      history.replaceState({}, '');
+    }
+  }));
 });

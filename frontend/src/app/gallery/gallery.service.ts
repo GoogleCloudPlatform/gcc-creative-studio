@@ -33,8 +33,14 @@ import {
 import {environment} from '../../environments/environment';
 import {MediaItem} from '../common/models/media-item.model';
 import {
+  BulkCopyItem,
   GalleryItem,
   PaginatedGalleryResponse,
+  PromoteItemsRequest,
+  PromoteResponse,
+  PromoteTargetWorkspace,
+  PromotionSummary,
+  RevisionHistoryResponse,
 } from '../common/models/gallery-item.model';
 import {
   GalleryFiltersState,
@@ -68,7 +74,7 @@ export class GalleryService implements OnDestroy {
       .pipe(
         debounceTime(50),
         switchMap(([workspaceId, filters]) => {
-          if (!filters) {
+          if (!filters || !workspaceId) {
             return of(null);
           }
           this.isLoading$.next(true);
@@ -76,7 +82,7 @@ export class GalleryService implements OnDestroy {
 
           const body: GallerySearchDto = {
             ...filters,
-            workspaceId: workspaceId || undefined,
+            workspaceId,
           };
 
           return this.fetchImages(body).pipe(
@@ -109,11 +115,16 @@ export class GalleryService implements OnDestroy {
   }
 
   setFilters(filters: GallerySearchDto) {
+    if (this.workspaceStateService.getActiveWorkspaceId()) {
+      this.isLoading$.next(true);
+      this.allImagesLoaded$.next(false);
+    }
     this.filters$.next(filters);
   }
 
   loadGallery(reset = false): void {
-    if (this.isLoading$.value) {
+    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (this.isLoading$.value || !activeWorkspaceId) {
       return;
     }
 
@@ -127,8 +138,7 @@ export class GalleryService implements OnDestroy {
 
     const body: GallerySearchDto = {
       ...this.filters$.value,
-      workspaceId:
-        this.workspaceStateService.getActiveWorkspaceId() || undefined,
+      workspaceId: activeWorkspaceId,
       offset: this.currentPage * this.pageSize,
       limit: this.pageSize,
     };
@@ -158,6 +168,68 @@ export class GalleryService implements OnDestroy {
     return this.http
       .post<PaginatedGalleryResponse>(galleryUrl, body)
       .pipe(shareReplay(1));
+  }
+
+  public searchGalleryPage(
+    filters: GallerySearchDto,
+    workspaceIdOverride?: number | null,
+  ): Observable<PaginatedGalleryResponse> {
+    const body: GallerySearchDto = {
+      ...filters,
+      workspaceId:
+        workspaceIdOverride ??
+        filters.workspaceId ??
+        this.workspaceStateService.getActiveWorkspaceId() ??
+        undefined,
+    };
+    const galleryUrl = `${environment.backendURL}/gallery/search`;
+    return this.http.post<PaginatedGalleryResponse>(galleryUrl, body).pipe(
+      map(response => ({
+        ...response,
+        data: this.mapUnifiedResponse(response.data || []),
+      })),
+    );
+  }
+
+  public getItemRevisions(itemId: number): Observable<RevisionHistoryResponse> {
+    const url = `${environment.backendURL}/gallery/item/${itemId}/revisions`;
+    return this.http
+      .get<{
+        rootId: number;
+        revisionCount: number;
+        takes: Record<string, unknown>[];
+        promotions?: Record<string, unknown>[];
+      }>(url)
+      .pipe(
+        map(res => ({
+          rootId: res.rootId,
+          revisionCount: res.revisionCount,
+          takes: (res.takes || []).map(take =>
+            this.mapUnifiedItem({...take, itemType: 'media_item'}),
+          ),
+          promotions: (res.promotions || []).map(p =>
+            this.mapPromotionSummary(p),
+          ),
+        })),
+      );
+  }
+
+  public getPromoteTargets(
+    sourceWorkspaceId: number,
+    items: BulkCopyItem[],
+  ): Observable<PromoteTargetWorkspace[]> {
+    const url = `${environment.backendURL}/gallery/promote-targets`;
+    return this.http.post<PromoteTargetWorkspace[]>(url, {
+      sourceWorkspaceId,
+      items,
+    });
+  }
+
+  public promoteItems(
+    request: PromoteItemsRequest,
+  ): Observable<PromoteResponse> {
+    const url = `${environment.backendURL}/gallery/promote`;
+    return this.http.post<PromoteResponse>(url, request);
   }
 
   private resetCache() {
@@ -244,17 +316,84 @@ export class GalleryService implements OnDestroy {
     return data.map(item => this.mapUnifiedItem(item));
   }
 
+  private mapPromotionSummary(raw: Record<string, unknown>): PromotionSummary {
+    return {
+      targetWorkspaceId: Number(
+        raw['targetWorkspaceId'] ?? raw['target_workspace_id'] ?? 0,
+      ),
+      targetWorkspaceName: String(
+        raw['targetWorkspaceName'] ?? raw['target_workspace_name'] ?? '',
+      ),
+      targetItemId: Number(raw['targetItemId'] ?? raw['target_item_id'] ?? 0),
+      targetFolderId: (raw['targetFolderId'] ??
+        raw['target_folder_id'] ??
+        null) as number | null,
+      promotedRevisionNumber: (raw['promotedRevisionNumber'] ??
+        raw['promoted_revision_number'] ??
+        null) as number | null,
+      promotedFromMediaItemId: (raw['promotedFromMediaItemId'] ??
+        raw['promoted_from_media_item_id'] ??
+        null) as number | null,
+    };
+  }
+
   public mapUnifiedItem(item: any): GalleryItem {
     const metadata = item.metadata || {};
+    const rawPromotions = (item.promotions ??
+      metadata.promotions ??
+      []) as Record<string, unknown>[];
     const galleryItem: GalleryItem = {
       id: item.id,
       tags: item.tags,
       workspaceId: item.workspaceId,
+      workspaceName: item.workspaceName || item.workspace_name,
+      workspaceScope: item.workspaceScope || item.workspace_scope,
       folderId: item.folderId,
       userId: item.userId,
       createdAt: item.createdAt,
       itemType: item.itemType || 'media_item',
       status: item.status,
+      revisionRootId:
+        item.revisionRootId ??
+        item.revision_root_id ??
+        metadata.revisionRootId ??
+        metadata.revision_root_id ??
+        null,
+      revisionParentId:
+        item.revisionParentId ??
+        item.revision_parent_id ??
+        metadata.revisionParentId ??
+        metadata.revision_parent_id ??
+        null,
+      revisionNumber:
+        item.revisionNumber ??
+        item.revision_number ??
+        metadata.revisionNumber ??
+        metadata.revision_number ??
+        1,
+      revisionCount:
+        item.revisionCount ??
+        item.revision_count ??
+        metadata.revisionCount ??
+        metadata.revision_count ??
+        1,
+      isLatestRevision:
+        item.isLatestRevision ?? item.is_latest_revision ?? true,
+      promotedFromMediaItemId:
+        item.promotedFromMediaItemId ??
+        item.promoted_from_media_item_id ??
+        metadata.promotedFromMediaItemId ??
+        metadata.promoted_from_media_item_id ??
+        null,
+      promotedFromRootId:
+        item.promotedFromRootId ??
+        item.promoted_from_root_id ??
+        metadata.promotedFromRootId ??
+        metadata.promoted_from_root_id ??
+        null,
+      promotions: Array.isArray(rawPromotions)
+        ? rawPromotions.map(p => this.mapPromotionSummary(p))
+        : [],
       gcsUris: item.gcsUris,
       thumbnailUris: item.thumbnailUris,
       presignedUrls: item.presignedUrls,

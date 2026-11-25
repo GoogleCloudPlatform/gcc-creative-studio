@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.auth.auth_guard import RoleChecker, get_current_user
@@ -30,6 +32,8 @@ from src.multimodal.dto.multimodal_generation_request_dto import (
 from src.multimodal.gemini_service import GeminiService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/gemini",
@@ -54,9 +58,9 @@ router = APIRouter(
     response_model=RewrittenOrRandomPromptResponse,
     summary="Rewrite and enhance a prompt for image generation",
 )
-async def rewrite_prompt_endpoint(
+def rewrite_prompt_endpoint(
     rewrite_request: RewritePromptRequestDto,
-    gemini_service: GeminiService = Depends(),
+    gemini_service: GeminiService = Depends(GeminiService.create_stateless),
 ):
     """Takes a set of image generation parameters and combines them into a single,
     high-quality, natural language prompt suitable for an image model.
@@ -69,10 +73,11 @@ async def rewrite_prompt_endpoint(
         )
         return RewrittenOrRandomPromptResponse(prompt=rewritten_prompt)
     except Exception as e:
+        logger.exception("Error during prompt rewriting: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred during prompt rewriting: {e}",
-        )
+            detail="An unexpected error occurred during prompt rewriting.",
+        ) from e
 
 
 @router.post(
@@ -80,23 +85,24 @@ async def rewrite_prompt_endpoint(
     response_model=RewrittenOrRandomPromptResponse,
     summary="Generate a random, creative prompt for image creation",
 )
-async def random_prompt_endpoint(
+def random_prompt_endpoint(
     random_request: RandomPromptRequestDto,
-    gemini_service: GeminiService = Depends(),
+    gemini_service: GeminiService = Depends(GeminiService.create_stateless),
 ):
     """Generates a completely new, random, and visually descriptive prompt using Gemini.
     Useful for sparking creativity or for a "surprise me" feature.
     """
     try:
         random_prompt = gemini_service.generate_random_or_rewrite_prompt(
-            random_request.target_type,
+            random_request.target_type
         )
         return RewrittenOrRandomPromptResponse(prompt=random_prompt)
     except Exception as e:
+        logger.exception("Failed to generate random prompt: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate random prompt from Gemini: {e}",
-        )
+            detail="Failed to generate random prompt from Gemini.",
+        ) from e
 
 
 @router.post(
@@ -104,19 +110,20 @@ async def random_prompt_endpoint(
     response_model=GenerateTitleResponseDto,
     summary="Generate a short title and summary for a text message",
 )
-async def generate_title_endpoint(
+def generate_title_endpoint(
     request: GenerateTitleRequestDto,
-    gemini_service: GeminiService = Depends(),
+    gemini_service: GeminiService = Depends(GeminiService.create_stateless),
 ):
     """Generates a short, concise title (max 5 words) and a longer summary for the provided text."""
     try:
         data = gemini_service.generate_title_and_summary(request.text)
         return GenerateTitleResponseDto(**data)
     except Exception as e:
+        logger.exception("Failed to generate title and summary: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate title and summary from Gemini: {e}",
-        )
+            detail="Failed to generate title and summary from Gemini.",
+        ) from e
 
 
 @router.post(
@@ -136,12 +143,15 @@ async def generate_multimodal_endpoint(
             workspace_id=request.workspace_id,
             user=current_user,
         )
-        response_text = await gemini_service.generate_multimodal(request)
+        response_text = await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
         return MultimodalGenerationResponseDto(text=response_text)
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
+        logger.exception("Failed to generate multimodal content: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate multimodal content: {e}",
-        )
+            detail="Failed to generate multimodal content.",
+        ) from e

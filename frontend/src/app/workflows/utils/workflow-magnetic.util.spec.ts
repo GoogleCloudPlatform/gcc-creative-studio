@@ -316,6 +316,7 @@ describe('WorkflowMagneticUtil', () => {
       expect(getShortType('vid')).toBe('VID');
       expect(getShortType('audio')).toBe('AUD');
       expect(getShortType('aud')).toBe('AUD');
+      expect(getShortType('folder')).toBe('FLD');
     });
   });
 
@@ -329,6 +330,35 @@ describe('WorkflowMagneticUtil', () => {
       expect(getPortTypeColor('audio')).toBe(PORT_TYPE_COLORS.AUD);
       expect(getPortTypeColor(null)).toBe(PORT_TYPE_COLORS.TXT);
       expect(getPortTypeColor(undefined)).toBe(PORT_TYPE_COLORS.TXT);
+      expect(getPortTypeColor('folder')).toBe(PORT_TYPE_COLORS.FLD);
+    });
+  });
+
+  describe('folder ports', () => {
+    it('maps folder and fld to FLD in any case or padding', () => {
+      expect(getCanonicalType('folder')).toBe('FLD');
+      expect(getCanonicalType(' Folder ')).toBe('FLD');
+      expect(getCanonicalType('FLD')).toBe('FLD');
+    });
+
+    it('connects folder ports only to folder ports, in both directions', () => {
+      expect(isPortTypeCompatible('folder', 'folder')).toBeTrue();
+      expect(isPortTypeCompatible('fld', 'Folder')).toBeTrue();
+      const otherTypes: ReadonlyArray<string> = [
+        'text',
+        'image',
+        'video',
+        'audio',
+        'loop_ending',
+      ];
+      otherTypes.forEach(type => {
+        expect(isPortTypeCompatible('folder', type))
+          .withContext(`folder -> ${type}`)
+          .toBeFalse();
+        expect(isPortTypeCompatible(type, 'folder'))
+          .withContext(`${type} -> folder`)
+          .toBeFalse();
+      });
     });
   });
 
@@ -411,6 +441,12 @@ describe('WorkflowMagneticUtil', () => {
       expect(getMaxAllowedInputs('input_images', 'gemini-4-argon')).toBe(10);
     });
 
+    it('should return 10 for input_images when model is gemini-4-hydrogen or retired Gemini 2.5 text', () => {
+      expect(getMaxAllowedInputs('input_images', 'gemini-4-hydrogen')).toBe(10);
+      expect(getMaxAllowedInputs('input_images', 'gemini-2.5-pro')).toBe(10);
+      expect(getMaxAllowedInputs('input_images', 'gemini-2.5-flash')).toBe(10);
+    });
+
     it('should fallback to 14 for input_images when model is unknown or null', () => {
       expect(getMaxAllowedInputs('input_images', null)).toBe(14);
       expect(getMaxAllowedInputs('input_images', undefined)).toBe(14);
@@ -429,7 +465,7 @@ describe('WorkflowMagneticUtil', () => {
         1,
       );
       expect(getMaxAllowedInputs('end_frame', 'veo-3.1-generate-001')).toBe(1);
-      expect(getMaxAllowedInputs('input_videos', 'gemini-2.5-pro')).toBe(1);
+      expect(getMaxAllowedInputs('input_videos', 'gemini-4-argon')).toBe(1);
     });
   });
 
@@ -481,10 +517,10 @@ describe('WorkflowMagneticUtil', () => {
 
     it('should return true for single-value inputs with 1 item', () => {
       expect(
-        isInputPortFull({step: 's1', output: 'o1'}, 'prompt', 'gemini-2.5-pro'),
+        isInputPortFull({step: 's1', output: 'o1'}, 'prompt', 'gemini-4-argon'),
       ).toBeTrue();
-      expect(isInputPortFull('hello', 'prompt', 'gemini-2.5-pro')).toBeTrue();
-      expect(isInputPortFull(null, 'prompt', 'gemini-2.5-pro')).toBeFalse();
+      expect(isInputPortFull('hello', 'prompt', 'gemini-4-argon')).toBeTrue();
+      expect(isInputPortFull(null, 'prompt', 'gemini-4-argon')).toBeFalse();
     });
   });
 

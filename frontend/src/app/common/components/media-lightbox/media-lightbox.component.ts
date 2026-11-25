@@ -25,7 +25,16 @@ import {
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
-import {MediaItem} from '../../models/media-item.model';
+import {
+  AudioTrackAnalysis,
+  MediaItem,
+  SongStructureEntry,
+  formatSongStructureEntries,
+  formatTrackAnalysisForCopy,
+  getAudioTrackAnalysis,
+  getAudioTrackCaption,
+  getAudioTrackLyrics,
+} from '../../models/media-item.model';
 import {GalleryItem} from '../../models/gallery-item.model';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import {Clipboard} from '@angular/cdk/clipboard';
@@ -40,9 +49,19 @@ import {
 } from '../../../utils/handleMessageSnackbar';
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {TagsService} from '../../services/tags.service';
-import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
-import {MoveToFolderDialogComponent} from '../move-to-folder-dialog/move-to-folder-dialog.component';
+import {
+  PermissionUser,
+  WorkspaceStateService,
+} from '../../../services/workspace/workspace-state.service';
+import {
+  MoveToFolderDialogComponent,
+  MoveToFolderDialogResult,
+} from '../move-to-folder-dialog/move-to-folder-dialog.component';
 import {FolderService} from '../../services/folder.service';
+import {GalleryService} from '../../../gallery/gallery.service';
+import {UserService} from '../../services/user.service';
+import {PromoteDialogResult} from '../promote-dialog/promote-dialog.component';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -59,13 +78,12 @@ export class MediaLightboxComponent
   @Input() showDownloadButton = true;
   @Input() showDeleteButton = false;
   @Input() showMoveButton = false;
+  @Input() showOmni = true;
+  @Input() showIterateAudio = true;
+  @Input() showWorkspacePromoteBar = false;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
-  }
-
-  get showOmni(): boolean {
-    return true;
   }
 
   get showEditButton(): boolean {
@@ -79,6 +97,16 @@ export class MediaLightboxComponent
   get showVtoButton(): boolean {
     return this.isImage;
   }
+
+  get canIterateAudio(): boolean {
+    const model = (this.mediaItem as any)?.model;
+    return (
+      this.isAudio &&
+      this.showIterateAudio &&
+      this.iterateAudioClicked.observers.length > 0 &&
+      (!model || String(model).toLowerCase().startsWith('lyria'))
+    );
+  }
   @Output() editClicked = new EventEmitter<number>();
   @Output() generateVideoClicked = new EventEmitter<{
     role: 'start' | 'end';
@@ -86,6 +114,10 @@ export class MediaLightboxComponent
   }>();
   @Output() sendToVtoClicked = new EventEmitter<number>();
   @Output() editWithOmniClicked = new EventEmitter<{
+    mediaItem: MediaItem;
+    selectedIndex: number;
+  }>();
+  @Output() iterateAudioClicked = new EventEmitter<{
     mediaItem: MediaItem;
     selectedIndex: number;
   }>();
@@ -102,6 +134,7 @@ export class MediaLightboxComponent
   @Output() slideChanged = new EventEmitter<number>();
   /** Emits the destination folder id (null = All Media) after a successful move. */
   @Output() moved = new EventEmitter<number | null>();
+  @Output() promoted = new EventEmitter<PromoteDialogResult>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -113,6 +146,7 @@ export class MediaLightboxComponent
   public isShareMenuOpen = false;
   public isDownloading = false;
   private lightbox: PhotoSwipeLightbox | undefined;
+  private selectMediaAudioTimer: ReturnType<typeof setTimeout> | null = null;
 
   @ViewChild('audioPlayer') audioPlayerRef!: ElementRef<HTMLAudioElement>;
   @ViewChild('videoPlayer') videoPlayerRef!: ElementRef<HTMLVideoElement>;
@@ -131,15 +165,78 @@ export class MediaLightboxComponent
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
     private folderService: FolderService,
+    private galleryService: GalleryService,
+    private userService: UserService,
+    private promoteLauncher: PromoteLauncherService,
   ) {}
+
+  get isInPersonalWorkspace(): boolean {
+    return this.workspaceStateService.isPersonalItem(
+      this.mediaItem as GalleryItem | undefined,
+    );
+  }
+
+  get promoteButtonLabel(): string {
+    return this.promoteLauncher.getPromoteButtonLabel();
+  }
+
+  openPromoteDialog(): void {
+    if (!this.mediaItem) {
+      return;
+    }
+    const item = this.mediaItem as GalleryItem;
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: item.workspaceId,
+        items: [{id: item.id, type: item.itemType || 'media_item'}],
+        itemLabel: item.titles?.[0] || item.prompt || 'Selected item',
+      })
+      .subscribe(result => this.promoted.emit(result));
+  }
+
+  private permissionUser(): PermissionUser {
+    const details = this.userService.getUserDetails();
+    return {
+      id: details?.id,
+      roles: details?.roles,
+    };
+  }
+
+  get canEditItemWorkspace(): boolean {
+    if (!this.mediaItem) {
+      return false;
+    }
+    const wsId = this.mediaItem.workspaceId;
+    if (!wsId) {
+      return this.workspaceStateService.canEditActiveWorkspace();
+    }
+    const match = this.workspaceStateService
+      .workspaces()
+      .find(w => w.id === wsId);
+    if (!match) {
+      return this.workspaceStateService.canEditActiveWorkspace();
+    }
+    return this.workspaceStateService.canEditWorkspace(
+      match,
+      this.permissionUser(),
+    );
+  }
 
   ngAfterViewInit(): void {
     this.initializePhotoSwipe();
   }
 
   ngOnDestroy(): void {
+    this.clearSelectMediaAudioTimer();
     this.lightbox?.destroy();
     this.lightbox = undefined;
+  }
+
+  private clearSelectMediaAudioTimer(): void {
+    if (this.selectMediaAudioTimer !== null) {
+      clearTimeout(this.selectMediaAudioTimer);
+      this.selectMediaAudioTimer = null;
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -249,7 +346,9 @@ export class MediaLightboxComponent
   }
 
   openBatchMoveDialog(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId =
+      this.mediaItem?.workspaceId ||
+      this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId || !this.mediaItem) return;
 
     const dialogRef = this.dialog.open(MoveToFolderDialogComponent, {
@@ -260,15 +359,48 @@ export class MediaLightboxComponent
       },
     });
 
-    dialogRef.afterClosed().subscribe(result => {
-      if (result && result.destinationFolderId !== undefined) {
-        const destName =
-          result.destinationFolderId === null
-            ? 'All Media'
-            : result.folderName || 'Folder';
-        this.executeMove(workspaceId, result.destinationFolderId, destName);
-      }
-    });
+    dialogRef
+      .afterClosed()
+      .subscribe((result: MoveToFolderDialogResult | null | undefined) => {
+        if (!result) return;
+        if (result.destinationFolderId !== undefined) {
+          const destName =
+            result.destinationFolderId === null
+              ? 'All Media'
+              : result.destinationName || 'Folder';
+          this.executeMove(workspaceId, result.destinationFolderId, destName);
+        } else if (result.destinationWorkspaceId !== undefined) {
+          const destName = result.destinationName || 'Workspace';
+          this.executeMoveToWorkspace(result.destinationWorkspaceId, destName);
+        }
+      });
+  }
+
+  private executeMoveToWorkspace(
+    destinationWorkspaceId: number,
+    destinationName: string,
+  ): void {
+    if (!this.mediaItem) return;
+
+    const assetType = (this.mediaItem as GalleryItem).itemType || 'media_item';
+    this.galleryService
+      .bulkMove(
+        [{id: this.mediaItem.id, type: assetType}],
+        destinationWorkspaceId,
+      )
+      .subscribe({
+        next: () => {
+          this.snackBar.open(`Moved to "${destinationName}"`, 'Close', {
+            duration: 3000,
+          });
+          this.mediaItem!.workspaceId = destinationWorkspaceId;
+          this.mediaItem!.folderId = undefined;
+          this.moved.emit(null);
+        },
+        error: err => {
+          handleErrorSnackbar(this.snackBar, err, 'Move item');
+        },
+      });
   }
 
   private executeMove(
@@ -425,7 +557,8 @@ export class MediaLightboxComponent
       if (this.isAudio) {
         this.resetAudioState();
         // Allow DOM to update src, then load
-        setTimeout(() => {
+        this.selectMediaAudioTimer = setTimeout(() => {
+          this.selectMediaAudioTimer = null;
           if (this.audioPlayerRef) {
             this.audioPlayerRef.nativeElement.load();
             this.togglePlay(); // Auto-play on switch
@@ -488,8 +621,10 @@ export class MediaLightboxComponent
   }
 
   get aspectRatioClass(): string {
-    // For Audio, we just want a nice container, aspect-video works well for the player shape
-    if (this.isAudio) return 'aspect-video h-auto';
+    // Let the audio stage grow naturally when lyrics/structure are displayed
+    if (this.isAudio) {
+      return this.hasCurrentTrackText ? 'h-auto' : 'aspect-video h-auto';
+    }
 
     // For Videos, we can still use the aspect ratio if available
     if (this.isVideo) {
@@ -507,14 +642,52 @@ export class MediaLightboxComponent
     return '';
   }
 
+  get currentTrackAnalysis(): AudioTrackAnalysis | null {
+    if (!this.isAudio) return null;
+    return getAudioTrackAnalysis(this.mediaItem, this.selectedIndex);
+  }
+
+  get currentTrackLyrics(): string | null {
+    return getAudioTrackLyrics(this.currentTrackAnalysis);
+  }
+
+  get currentTrackCaption(): string | null {
+    return getAudioTrackCaption(this.currentTrackAnalysis);
+  }
+
+  get currentTrackStructureEntries(): SongStructureEntry[] {
+    return formatSongStructureEntries(this.currentTrackAnalysis);
+  }
+
+  get hasCurrentTrackText(): boolean {
+    return (
+      Boolean(this.currentTrackLyrics) ||
+      Boolean(this.currentTrackCaption) ||
+      this.currentTrackStructureEntries.length > 0
+    );
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  copyCurrentTrackText(): void {
+    const text = formatTrackAnalysisForCopy(this.currentTrackAnalysis);
+    if (!text) return;
+    this.clipboard.copy(text);
+    handleSuccessSnackbar(this.snackBar, 'Copied to clipboard!');
+  }
+
   // --- AUDIO PLAYER LOGIC ---
   togglePlay() {
     const audio = this.audioPlayerRef?.nativeElement;
     if (!audio) return;
 
     if (audio.paused) {
-      void audio.play();
       this.isPlaying = true;
+      audio.play()?.catch(() => {
+        this.isPlaying = false;
+      });
     } else {
       audio.pause();
       this.isPlaying = false;
@@ -555,6 +728,7 @@ export class MediaLightboxComponent
   }
 
   private resetAudioState() {
+    this.clearSelectMediaAudioTimer();
     this.isPlaying = false;
     this.progressValue = 0;
     this.currentTime = '0:00';
@@ -583,6 +757,15 @@ export class MediaLightboxComponent
   onEditWithOmniClick(): void {
     if (this.mediaItem) {
       this.editWithOmniClicked.emit({
+        mediaItem: this.mediaItem as MediaItem,
+        selectedIndex: this.selectedIndex,
+      });
+    }
+  }
+
+  onIterateAudioClick(): void {
+    if (this.mediaItem) {
+      this.iterateAudioClicked.emit({
         mediaItem: this.mediaItem as MediaItem,
         selectedIndex: this.selectedIndex,
       });
@@ -626,6 +809,9 @@ export class MediaLightboxComponent
         existingTags: ((this.mediaItem as any)?.tags || []).map((t: any) =>
           typeof t === 'object' ? t.name : t,
         ),
+        workspaceId:
+          this.mediaItem?.workspaceId ??
+          this.workspaceStateService.getActiveWorkspaceId(),
       },
       width: '400px',
     });
@@ -633,7 +819,9 @@ export class MediaLightboxComponent
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
         if (this.mediaItem) {
-          const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+          const workspaceId =
+            this.mediaItem.workspaceId ??
+            this.workspaceStateService.getActiveWorkspaceId();
           if (!workspaceId) return;
 
           this.tagsService

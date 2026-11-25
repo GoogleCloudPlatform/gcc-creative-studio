@@ -23,7 +23,15 @@ class Timeline(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     storyboard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("storyboards.id"), nullable=True
+        ForeignKey("storyboards.id", ondelete="CASCADE"), nullable=True
+    )
+    # Owning project. The application always sets it; the database allows
+    # NULL only for legacy rows the migration could not attribute, which are
+    # admin-only (see ``TimelineAuth``).
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -59,7 +67,7 @@ class VideoClip(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     timeline_id: Mapped[int] = mapped_column(
-        ForeignKey("timelines.id"), nullable=False
+        ForeignKey("timelines.id", ondelete="CASCADE"), nullable=False
     )
     clip_index: Mapped[int] = mapped_column(default=0, nullable=False)
 
@@ -113,7 +121,7 @@ class AudioClip(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     timeline_id: Mapped[int] = mapped_column(
-        ForeignKey("timelines.id"), nullable=False
+        ForeignKey("timelines.id", ondelete="CASCADE"), nullable=False
     )
     clip_index: Mapped[int] = mapped_column(default=0, nullable=False)
 

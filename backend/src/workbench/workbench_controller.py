@@ -32,7 +32,10 @@ from src.workbench.dto.workbench_dto import (
     RenderTimelineRequest,
 )
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.projects.project_service import ProjectService
+from src.workbench.timeline_auth_guard import TimelineAuth
 from src.workbench.workbench_service import WorkbenchService
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 router = APIRouter(
     prefix="/api/workbench",
@@ -41,6 +44,26 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
+
+
+def _as_int(value) -> int | None:
+    """Parses an id the DTO types as ``str | int`` (Izumi sends either)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _require_workspace_id(raw: object, *, status_code: int) -> int:
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    if isinstance(raw, str) and (s := raw.strip()).isdigit() and int(s) > 0:
+        return int(s)
+    raise HTTPException(
+        status_code, detail="A valid positive integer workspace_id is required."
+    )
 
 
 @router.post(
@@ -53,7 +76,9 @@ async def render_timeline_by_id(
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    timeline_auth: TimelineAuth = Depends(),
 ):
+    await timeline_auth.authorize(timeline_id, current_user)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         timeline_id, current_user, executor
@@ -70,9 +95,11 @@ async def render_timeline(
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    timeline_auth: TimelineAuth = Depends(),
 ):
     if not req.timeline_id:
         raise HTTPException(status_code=400, detail="timeline_id is required")
+    await timeline_auth.authorize(req.timeline_id, current_user)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         req.timeline_id, current_user, executor
@@ -92,11 +119,27 @@ async def create_timeline(
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    project_service: ProjectService = Depends(),
 ):
+    # The project comes from the storyboard, an explicit hint, the chat or
+    # the user's default project. Owner, project and workspace are
+    # server-side facts: client values are ignored.
+    project = await project_service.resolve_project_for_write(
+        current_user,
+        _as_int(timeline_create.workspace_id),
+        project_id=timeline_create.project_id,
+        storyboard_id=_as_int(timeline_create.storyboard_id),
+        session_id=timeline_create.session_id,
+    )
+    timeline_create.project_id = project.id
+    timeline_create.user_id = str(current_user.id)
+    timeline_create.workspace_id = str(project.workspace_id)
     # The agent re-creates the timeline on every stitch; replace the
     # storyboard's existing cut in place so the Workbench follows the live one.
     return await service.create_timeline(
-        timeline_create, reuse_for_storyboard=is_agent_request.get()
+        timeline_create,
+        reuse_for_storyboard=is_agent_request.get(),
+        current_user=current_user,
     )
 
 
@@ -106,7 +149,9 @@ async def get_timeline(
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    timeline_auth: TimelineAuth = Depends(),
 ):
+    await timeline_auth.authorize(timeline_id, current_user)
     timeline = await service.get_timeline(timeline_id)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
@@ -118,7 +163,9 @@ async def list_timelines(
     storyboard_id: int,
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
+    project_service: ProjectService = Depends(),
 ):
+    await project_service.authorize_storyboard(current_user, storyboard_id)
     return await service.list_timelines(storyboard_id)
 
 
@@ -129,8 +176,50 @@ async def update_timeline(
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    timeline_auth: TimelineAuth = Depends(),
+    project_service: ProjectService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
-    timeline = await service.update_timeline(timeline_id, timeline_update)
+    access = await timeline_auth.authorize(
+        timeline_id, current_user, write=True
+    )
+    # A timeline may only be re-linked to a storyboard of its own project.
+    target_project_id = None
+    target_workspace_id = None
+    new_storyboard_id = _as_int(timeline_update.storyboard_id)
+    if (
+        new_storyboard_id is not None
+        and new_storyboard_id != access.storyboard_id
+    ):
+        target = await project_service.authorize_storyboard(
+            current_user, new_storyboard_id, write=True
+        )
+        if access.project_id is not None and target.id != access.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The storyboard belongs to another project.",
+            )
+        target_project_id = target.id
+        target_workspace_id = target.workspace_id
+    timeline_update.project_id = access.project_id or target_project_id
+    timeline_update.user_id = access.user_id or str(current_user.id)
+    # The workspace follows the owning project: a legacy row claimed through
+    # the storyboard takes its project's workspace. Only a row that stays
+    # unattributed keeps the payload's value (no project to follow).
+    project_workspace_id = access.workspace_id or target_workspace_id
+    if project_workspace_id is not None:
+        timeline_update.workspace_id = str(project_workspace_id)
+    else:
+        ws_id = _require_workspace_id(
+            timeline_update.workspace_id,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+        await workspace_auth.authorize_write(
+            workspace_id=ws_id, user=current_user
+        )
+    timeline = await service.update_timeline(
+        timeline_id, timeline_update, current_user=current_user
+    )
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return timeline
@@ -143,7 +232,9 @@ async def delete_timeline(
     timeline_id: int,
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
+    timeline_auth: TimelineAuth = Depends(),
 ):
+    await timeline_auth.authorize(timeline_id, current_user, write=True)
     success = await service.delete_timeline(timeline_id)
     if not success:
         raise HTTPException(status_code=404, detail="Timeline not found")

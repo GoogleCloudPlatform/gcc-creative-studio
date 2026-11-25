@@ -190,3 +190,145 @@ def test_bulk_move_folders_success(client, mock_service):
     assert response.status_code == 200
     assert response.json() == {"moved_count": 1}
     mock_service.bulk_move.assert_called_once()
+
+
+def test_search_gallery_unauthenticated_returns_401():
+    app = FastAPI()
+    app.include_router(router)
+    anon_client = TestClient(app)
+
+    response = anon_client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 1, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 401
+
+
+def test_search_gallery_forbidden_workspace_returns_403(
+    mock_user, mock_service
+):
+    from fastapi import HTTPException
+
+    forbidden_auth = AsyncMock()
+    forbidden_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[GalleryService] = lambda: mock_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: forbidden_auth
+
+    forbidden_client = TestClient(app)
+    response = forbidden_client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 99, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 403
+    mock_service.get_paginated_gallery.assert_not_called()
+
+
+def test_search_gallery_invalid_payload_returns_422(client):
+    response = client.post(
+        "/api/gallery/search",
+        json={"workspace_id": 0, "limit": 10, "offset": 0},
+    )
+    assert response.status_code == 422
+
+
+def test_get_item_revisions_route(mock_user):
+    from src.galleries.dto.unified_gallery_response import (
+        RevisionHistoryResponseDto,
+    )
+    from src.galleries.revision_service import RevisionService
+
+    mock_revision_service = AsyncMock()
+    mock_revision_service.get_revisions.return_value = (
+        RevisionHistoryResponseDto(
+            root_id=40,
+            revision_count=2,
+            takes=[],
+        )
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[RevisionService] = lambda: mock_revision_service
+
+    test_client = TestClient(app)
+    response = test_client.get("/api/gallery/item/42/revisions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rootId"] == 40
+    assert body["revisionCount"] == 2
+    assert body["takes"] == []
+    mock_revision_service.get_revisions.assert_awaited_once_with(
+        item_id=42, current_user=mock_user
+    )
+
+
+def test_list_promote_targets_and_promote_routes(mock_user):
+    from src.galleries.dto.promote_dto import (
+        PromoteResponseDto,
+        PromoteResultItemDto,
+        PromoteTargetWorkspaceDto,
+    )
+    from src.galleries.promotion_service import PromotionService
+
+    mock_promo_svc = AsyncMock()
+    mock_promo_svc.get_promote_targets.return_value = [
+        PromoteTargetWorkspaceDto(
+            workspace_id=88,
+            workspace_name="Team Shared",
+            scope="private",
+            current_user_role="editor",
+            existing_count=0,
+            new_count=1,
+        )
+    ]
+    mock_promo_svc.promote_items.return_value = PromoteResponseDto(
+        promoted_count=1,
+        updated_count=0,
+        created_count=1,
+        target_workspace_id=88,
+        target_folder_id=5,
+        promoted_items=[
+            PromoteResultItemDto(
+                source_id=42,
+                source_type="media_item",
+                target_id=99,
+                target_workspace_id=88,
+                target_folder_id=5,
+                action="created",
+            )
+        ],
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[PromotionService] = lambda: mock_promo_svc
+
+    test_client = TestClient(app)
+    res_targets = test_client.post(
+        "/api/gallery/promote-targets",
+        json={
+            "source_workspace_id": 10,
+            "items": [{"id": 42, "type": "media_item"}],
+        },
+    )
+    assert res_targets.status_code == 200
+    assert res_targets.json()[0]["workspaceName"] == "Team Shared"
+
+    res_promote = test_client.post(
+        "/api/gallery/promote",
+        json={
+            "source_workspace_id": 10,
+            "target_workspace_id": 88,
+            "target_folder_id": 5,
+            "items": [{"id": 42, "type": "media_item"}],
+        },
+    )
+    assert res_promote.status_code == 200
+    assert res_promote.json()["createdCount"] == 1
+    assert res_promote.json()["promotedItems"][0]["targetId"] == 99

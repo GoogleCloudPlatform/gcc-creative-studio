@@ -60,6 +60,7 @@ export class WorkflowExecutionPollingService {
    */
   pollRuns(
     workflowId: string,
+    workspaceId: number,
     limit = 20,
     status = 'ALL',
   ): Observable<WorkflowRunSummary[]> {
@@ -67,17 +68,19 @@ export class WorkflowExecutionPollingService {
     let consecutiveFailures = 0;
     return timer(0, this.POLLING_INTERVAL).pipe(
       exhaustMap(() =>
-        this.workflowService.getRuns(workflowId, limit, 0, status).pipe(
-          map(response => response?.data ?? response?.runs ?? []),
-          tap(() => (consecutiveFailures = 0)),
-          catchError(err => {
-            console.error('Error fetching runs in poll:', err);
-            consecutiveFailures++;
-            return consecutiveFailures >= this.MAX_CONSECUTIVE_POLL_FAILURES
-              ? of([] as WorkflowRunSummary[])
-              : EMPTY;
-          }),
-        ),
+        this.workflowService
+          .getRuns(workflowId, workspaceId, limit, 0, status)
+          .pipe(
+            map(response => response?.data ?? response?.runs ?? []),
+            tap(() => (consecutiveFailures = 0)),
+            catchError(err => {
+              console.error('Error fetching runs in poll:', err);
+              consecutiveFailures++;
+              return consecutiveFailures >= this.MAX_CONSECUTIVE_POLL_FAILURES
+                ? of([] as WorkflowRunSummary[])
+                : EMPTY;
+            }),
+          ),
       ),
       tap(runs => this.runs.set(runs)),
       takeWhile(runs => this.hasActiveRuns(runs), true),
@@ -91,9 +94,10 @@ export class WorkflowExecutionPollingService {
    */
   pollExecutions(
     workflowId: string,
+    workspaceId: number,
     limit = 20,
     status = 'ALL',
   ): Observable<WorkflowRunSummary[]> {
-    return this.pollRuns(workflowId, limit, status);
+    return this.pollRuns(workflowId, workspaceId, limit, status);
   }
 }

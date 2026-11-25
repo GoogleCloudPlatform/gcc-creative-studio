@@ -62,6 +62,13 @@ class VtoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+    context_workspace_id: PositiveInt | None = Field(
+        default=None,
+        description=(
+            "Optional shared workspace ID providing context while outputting "
+            "to the user's personal workspace."
+        ),
+    )
     number_of_media: int = Field(
         default=1,
         ge=1,
@@ -90,6 +97,10 @@ class VtoDto(BaseDto):
     folder_id: PositiveInt | None = Field(
         default=None,
         description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
+    )
+    parent_media_item_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional parent media item ID to link this generation into its revision stack.",
     )
 
     @model_validator(mode="after")

@@ -271,6 +271,29 @@ describe('MediaUploadService', () => {
       expect(batchCompleted).toBeTrue();
       done();
     });
+
+    it('includes folderId on finalize-upload only when a non-null folderId is supplied', () => {
+      const file = createDummyFile('folder-image.png', 'image/png', 1024);
+      service.uploadFiles(mockWorkspaceId, [file], 42);
+
+      const genReq = httpMock.expectOne(`${apiUrl}/generate-upload-url`);
+      genReq.flush({
+        uploadUrl:
+          'https://storage.googleapis.com/test-bucket/signed-url-folder',
+        gcsUri: 'gs://test-bucket/uploads/folder-image.png',
+        fileUuid: 'folder-uuid',
+      });
+
+      const putReq = httpMock.expectOne(
+        'https://storage.googleapis.com/test-bucket/signed-url-folder',
+      );
+      putReq.flush(null, {status: 200, statusText: 'OK'});
+
+      const finalizeReq = httpMock.expectOne(`${apiUrl}/finalize-upload`);
+      expect(finalizeReq.request.body.folderId).toBe(42);
+      finalizeReq.flush({id: 99, originalFilename: 'folder-image.png'});
+      expect(service.totalUploaded()).toBe(1);
+    });
   });
 
   describe('Error Handling & Retries', () => {

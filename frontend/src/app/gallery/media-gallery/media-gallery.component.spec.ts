@@ -17,7 +17,7 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {ElementRef, NO_ERRORS_SCHEMA} from '@angular/core';
-import {DomSanitizer} from '@angular/platform-browser';
+import {By, DomSanitizer} from '@angular/platform-browser';
 import {MatIconModule} from '@angular/material/icon';
 import {MatMenuModule} from '@angular/material/menu';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
@@ -42,8 +42,10 @@ import {
   GalleryFolderLocation,
 } from '../../common/models/folder.model';
 import {WorkspaceService} from '../../services/workspace/workspace.service';
+import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
+import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 
 const mockWorkspaces: Workspace[] = [
@@ -58,6 +60,27 @@ const mockWorkspaces: Workspace[] = [
     name: 'Private',
     ownerId: '7',
     scope: WorkspaceScope.PRIVATE,
+  } as Workspace,
+  {
+    id: 3,
+    name: 'Private Admin Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.ADMIN,
+  } as Workspace,
+  {
+    id: 4,
+    name: 'Private Viewer Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.VIEWER,
+  } as Workspace,
+  {
+    id: 5,
+    name: 'Private Editor Team',
+    ownerId: '99',
+    scope: WorkspaceScope.PRIVATE,
+    currentUserRole: WorkspaceRole.EDITOR,
   } as Workspace,
 ];
 
@@ -140,6 +163,17 @@ describe('MediaGalleryComponent', () => {
             images$: of([]),
             allImagesLoaded: of(true),
             searchTerm: () => {},
+            searchGalleryPage: jasmine
+              .createSpy('searchGalleryPage')
+              .and.returnValue(
+                of({
+                  count: 0,
+                  page: 1,
+                  pageSize: 40,
+                  totalPages: 1,
+                  data: [],
+                }),
+              ),
             filtersState: null,
             setFiltersState: () => {},
             setFilters: () => {},
@@ -168,11 +202,36 @@ describe('MediaGalleryComponent', () => {
         },
         {
           provide: WorkspaceStateService,
-          useValue: {
-            activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
-            getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
-            setActiveWorkspaceId: (id: number | null) =>
-              activeWorkspaceIdSubject.next(id),
+          deps: [UserService],
+          useFactory: (userService: UserService) => {
+            const real = new WorkspaceStateService();
+            real.syncUser(userService.getUserDetails());
+            real.setWorkspaces([
+              ...mockWorkspaces,
+              {
+                id: 10,
+                name: 'My Workspace',
+                ownerId: '7',
+                scope: WorkspaceScope.PERSONAL,
+                members: [],
+                memberIds: ['7'],
+              } as Workspace,
+            ]);
+            return {
+              activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
+              getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
+              setActiveWorkspaceId: (id: number | null) =>
+                activeWorkspaceIdSubject.next(id),
+              syncUser: real.syncUser.bind(real),
+              setWorkspaces: real.setWorkspaces.bind(real),
+              workspaces: real.workspaces,
+              personalWorkspaceId: real.personalWorkspaceId,
+              activeWorkspace: real.activeWorkspace,
+              canEditActiveWorkspace: real.canEditActiveWorkspace,
+              canEditWorkspace: real.canEditWorkspace.bind(real),
+              canManageWorkspace: real.canManageWorkspace.bind(real),
+              isPersonalItem: real.isPersonalItem.bind(real),
+            };
           },
         },
         {
@@ -226,7 +285,29 @@ describe('MediaGalleryComponent', () => {
     } as unknown as Event;
 
     component.onFilesSelected(mockEvent);
-    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(
+      1,
+      [dummyFile],
+      null,
+    );
+  });
+
+  it('should pass currentFolderId to MediaUploadService.uploadFiles when inside a subfolder', () => {
+    spyOn(uploadService, 'uploadFiles');
+    component.currentFolderId = 42;
+
+    const dummyFile = new File(['test'], 'subfolder-demo.png', {
+      type: 'image/png',
+    });
+    const mockEvent = {
+      target: {
+        files: [dummyFile],
+        value: 'subfolder-demo.png',
+      },
+    } as unknown as Event;
+
+    component.onFilesSelected(mockEvent);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile], 42);
   });
 
   it('should trigger MediaUploadService.uploadFiles when files are selected from Google Drive', () => {
@@ -237,7 +318,11 @@ describe('MediaGalleryComponent', () => {
 
     component.openGoogleDrivePicker();
     expect(driveService.openPicker).toHaveBeenCalled();
-    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(
+      1,
+      [dummyFile],
+      null,
+    );
   });
 
   describe('ngOnInit filters restoration', () => {
@@ -1249,6 +1334,26 @@ describe('MediaGalleryComponent', () => {
       expect(component.canManageFolder(folderOwnedBy(99, 1))).toBeFalse();
     });
 
+    it('grants folder management parity to PRIVATE ADMIN members on folders created by others', () => {
+      expect(component.canManageFolder(folderOwnedBy(99, 3))).toBeTrue();
+    });
+
+    it('denies folder management and edit controls for PRIVATE VIEWER members', () => {
+      expect(component.canManageFolder(folderOwnedBy(5, 4))).toBeFalse();
+
+      activeWorkspaceIdSubject.next(4);
+      component.showAdvancedFilters = true;
+      component.selectedItems.add('media_item:1');
+      fixture.detectChanges();
+
+      expect(component.canEditActiveWorkspace).toBeFalse();
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector('#gallery-bulk-move-btn')).toBeNull();
+      expect(host.querySelector('#gallery-bulk-tag-btn')).toBeNull();
+      expect(host.querySelector('#gallery-bulk-delete-btn')).toBeNull();
+      expect(host.querySelector('#gallery-manage-tags-btn')).toBeNull();
+    });
+
     it('denies when the current user id is unknown', () => {
       component.userId = undefined;
       expect(component.canManageFolder(folderOwnedBy(5))).toBeFalse();
@@ -1397,6 +1502,442 @@ describe('MediaGalleryComponent', () => {
       expect(selComp.currentFolderId).toBeNull();
       expect(emitSpy).toHaveBeenCalledWith({folderId: null, breadcrumbs: []});
       expect(routerSpy.navigate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Startup search deduplication', () => {
+    it('triggers searchTerm only once during ngOnInit and ignores unchanged itemType', () => {
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const freshComp = freshFixture.componentInstance;
+      const searchSpy = spyOn(freshComp, 'searchTerm').and.callThrough();
+
+      freshComp.ngOnInit();
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      freshComp.itemType = '';
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      freshComp.itemType = 'media_item';
+      expect(searchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps isLoading true and defers searchTerm while activeWorkspaceId is null', () => {
+      activeWorkspaceIdSubject.next(null);
+      const loadingSubject = new BehaviorSubject<boolean>(false);
+      (
+        galleryService as unknown as {isLoading$: BehaviorSubject<boolean>}
+      ).isLoading$ = loadingSubject;
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const freshComp = freshFixture.componentInstance;
+      const searchSpy = spyOn(freshComp, 'searchTerm').and.callThrough();
+      const setFiltersSpy = spyOn(galleryService, 'setFilters');
+
+      freshComp.ngOnInit();
+      expect(freshComp.isLoading).toBeTrue();
+      expect(searchSpy).not.toHaveBeenCalled();
+      expect(setFiltersSpy).not.toHaveBeenCalled();
+
+      activeWorkspaceIdSubject.next(1);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+      expect(setFiltersSpy).toHaveBeenCalledTimes(1);
+
+      loadingSubject.next(true);
+      expect(freshComp.isLoading).toBeTrue();
+      loadingSubject.next(false);
+      expect(freshComp.isLoading).toBeFalse();
+    });
+
+    it('clears isLoading when getWorkspaces fails or returns empty while activeWorkspaceId is null', () => {
+      spyOn(console, 'error');
+      activeWorkspaceIdSubject.next(null);
+      const workspaceService = TestBed.inject(WorkspaceService);
+
+      spyOn(workspaceService, 'getWorkspaces').and.returnValue(
+        throwError(() => new Error('Workspaces failed')),
+      );
+      const errFixture = TestBed.createComponent(MediaGalleryComponent);
+      const errComp = errFixture.componentInstance;
+      errComp.ngOnInit();
+      expect(errComp.isLoading).toBeFalse();
+
+      (workspaceService.getWorkspaces as jasmine.Spy).and.returnValue(of([]));
+      const emptyFixture = TestBed.createComponent(MediaGalleryComponent);
+      const emptyComp = emptyFixture.componentInstance;
+      emptyComp.ngOnInit();
+      expect(emptyComp.isLoading).toBeFalse();
+    });
+
+    it('clears images and groups synchronously when searchTerm runs', () => {
+      const sampleItem = {
+        id: 1,
+        itemType: 'media_item' as const,
+        workspaceId: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+      component.images = [sampleItem];
+      component.groups = [{title: 'Today', items: [sampleItem]}];
+
+      component.searchTerm();
+      expect(component.images).toEqual([]);
+      expect(component.groups).toEqual([]);
+    });
+
+    it('fails closed when active workspace is unknown and blocks VIEWER drag-moves and tag deletion', () => {
+      activeWorkspaceIdSubject.next(999);
+      expect(component.canEditActiveWorkspace).toBeFalse();
+
+      activeWorkspaceIdSubject.next(4);
+      component.isAdmin = false;
+      component.availableTags = [
+        {id: 77, name: 'draft', color: '#ccc', workspaceId: 4, userId: 7},
+      ];
+      const tagsService = TestBed.inject(TagsService);
+      const deleteSpy = spyOn(tagsService, 'deleteTag').and.callThrough();
+
+      const dropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {
+          types: ['application/json'],
+          getData: () =>
+            JSON.stringify({
+              mediaItemIds: [11],
+              sourceAssetIds: [],
+              itemCount: 1,
+            }),
+        },
+      } as unknown as DragEvent;
+      component.onBreadcrumbDragOver(dropEvent, 5);
+      expect(dropEvent.preventDefault).not.toHaveBeenCalled();
+
+      component.onBreadcrumbDrop(dropEvent, 5);
+      component.onItemDroppedOnFolder(
+        {id: 5, name: 'F', workspaceId: 4} as Folder,
+        {mediaItemIds: [11], sourceAssetIds: [], itemCount: 1},
+      );
+      expect(folderService.moveItems).not.toHaveBeenCalled();
+
+      component.onTagDelete({label: 'draft', value: 'draft'});
+      expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
+    it('gates Manage Tags button on canEditActiveWorkspace and per-tag deletable on creator or manager', () => {
+      component.isAdmin = false;
+      component.userId = 7;
+      component.showAdvancedFilters = true;
+      activeWorkspaceIdSubject.next(5);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 5, userId: 7},
+        {id: 2, name: 'theirs', color: '#bbb', workspaceId: 5, userId: 99},
+      ];
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector('#gallery-manage-tags-btn')).not.toBeNull();
+      component.isSelectorMode = true;
+      fixture.detectChanges();
+      expect(host.querySelector('#gallery-manage-tags-btn')).toBeNull();
+      component.isSelectorMode = false;
+      fixture.detectChanges();
+      expect(
+        component.displayedTagOptions.map(o => [o.value, o.deletable]),
+      ).toEqual([
+        ['', false],
+        ['mine', true],
+        ['theirs', false],
+      ]);
+
+      activeWorkspaceIdSubject.next(3);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 3, userId: 7},
+        {id: 2, name: 'theirs', color: '#bbb', workspaceId: 3, userId: 99},
+      ];
+      fixture.detectChanges();
+      expect(
+        component.displayedTagOptions.map(o => [o.value, o.deletable]),
+      ).toEqual([
+        ['', false],
+        ['mine', true],
+        ['theirs', true],
+      ]);
+    });
+
+    it('shows error snackbar when deleting a tag fails', () => {
+      component.isAdmin = false;
+      component.userId = 7;
+      activeWorkspaceIdSubject.next(5);
+      component.availableTags = [
+        {id: 1, name: 'mine', color: '#aaa', workspaceId: 5, userId: 7},
+      ];
+      const dialogRef = {afterClosed: () => of(true)};
+      spyOn(component.dialog, 'open').and.returnValue(dialogRef as any);
+      const tagsService = TestBed.inject(TagsService);
+      spyOn(tagsService, 'deleteTag').and.returnValue(
+        throwError(() => ({
+          status: 403,
+          error: {detail: 'Only tag creator or workspace manager can delete.'},
+        })),
+      );
+      const snackBar = TestBed.inject(MatSnackBar);
+
+      component.onTagDelete({label: 'mine', value: 'mine'});
+
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'Only tag creator or workspace manager can delete.',
+        'Close',
+        jasmine.objectContaining({duration: 4000}),
+      );
+    });
+
+    it('uses searchGalleryPage and loadMore pagination when workspaceIdOverride is set without mutating shared filters', () => {
+      const setFiltersSpy = spyOn(galleryService, 'setFilters');
+      const overrideSpy = (
+        galleryService as unknown as {searchGalleryPage: jasmine.Spy}
+      ).searchGalleryPage;
+      const item1 = {
+        id: 701,
+        itemType: 'media_item' as const,
+        workspaceId: 99,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+      const item2 = {
+        id: 702,
+        itemType: 'media_item' as const,
+        workspaceId: 99,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+
+      overrideSpy.and.returnValues(
+        of({
+          count: 2,
+          page: 1,
+          pageSize: 1,
+          totalPages: 2,
+          data: [item1],
+        }),
+        of({
+          count: 2,
+          page: 2,
+          pageSize: 1,
+          totalPages: 2,
+          data: [item2],
+        }),
+      );
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const overrideComp = freshFixture.componentInstance;
+      overrideComp.isSelectorMode = true;
+      overrideComp.workspaceIdOverride = 99;
+      overrideComp.ngOnInit();
+
+      expect(setFiltersSpy).not.toHaveBeenCalled();
+      expect(overrideSpy).toHaveBeenCalledTimes(1);
+      expect(overrideSpy.calls.argsFor(0)[0].offset).toBe(0);
+      expect(overrideSpy.calls.argsFor(0)[1]).toBe(99);
+      expect(overrideComp.images.map(i => i.id)).toEqual([701]);
+      expect(overrideComp.allImagesLoaded).toBeFalse();
+
+      overrideComp.loadMore();
+      expect(overrideSpy).toHaveBeenCalledTimes(2);
+      expect(overrideSpy.calls.argsFor(1)[0].offset).toBeGreaterThan(0);
+      expect(overrideSpy.calls.argsFor(1)[1]).toBe(99);
+      expect(overrideComp.images.map(i => i.id)).toEqual([701, 702]);
+      expect(overrideComp.allImagesLoaded).toBeTrue();
+    });
+
+    it('cancels in-flight override search on null transition, preserves external selectedKeys across reloads, and passes workspaceId to AssignTagsDialog', () => {
+      const lateOverride$ = new Subject<any>();
+      const overrideSpy = (
+        galleryService as unknown as {searchGalleryPage: jasmine.Spy}
+      ).searchGalleryPage;
+      overrideSpy.and.returnValue(lateOverride$.asObservable());
+
+      const freshFixture = TestBed.createComponent(MediaGalleryComponent);
+      const comp = freshFixture.componentInstance;
+      comp.isSelectorMode = true;
+      comp.workspaceIdOverride = 99;
+      comp.selectedKeys = new Set(['media_item:55']);
+      comp.ngOnInit();
+
+      expect(comp.selectedItems.has('media_item:55')).toBeTrue();
+
+      comp.workspaceIdOverride = null;
+      comp.ngOnChanges({
+        workspaceIdOverride: {
+          previousValue: 99,
+          currentValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+      lateOverride$.next({
+        count: 1,
+        page: 1,
+        pageSize: 40,
+        totalPages: 1,
+        data: [
+          {id: 888, itemType: 'media_item', workspaceId: 99, metadata: {}},
+        ],
+      });
+      expect(comp.images.some(i => i.id === 888)).toBeFalse();
+      expect(comp.selectedItems.has('media_item:55')).toBeTrue();
+
+      const dialog = TestBed.inject(MatDialog);
+      const openSpy = spyOn(dialog, 'open').and.returnValue({
+        afterClosed: () => of(undefined),
+      } as any);
+      comp.openBulkAssignTagsDialog();
+      expect(openSpy).toHaveBeenCalledWith(
+        jasmine.anything(),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            workspaceId: activeWorkspaceIdSubject.value,
+          }),
+        }),
+      );
+    });
+
+    it('launches bulk promote and folder promote from personal workspace', () => {
+      activeWorkspaceIdSubject.next(10);
+      expect(component.isPersonalEffectiveWorkspace).toBeTrue();
+
+      const openDialogSpy = spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () =>
+          of({
+            response: {
+              promotedCount: 2,
+              createdCount: 2,
+              updatedCount: 0,
+              promotedItems: [],
+            },
+            targetWorkspaceName: 'Private',
+          }),
+      } as never);
+      component.selectedItems = new Set(['media_item:5', 'source_asset:9']);
+      component.isSelectionMode = true;
+      let clearedCount = 0;
+      const clearedSub = component.selectionCleared.subscribe(
+        () => clearedCount++,
+      );
+
+      component.openBulkPromoteDialog();
+
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            sourceWorkspaceId: 10,
+            items: [
+              {id: 5, type: 'media_item'},
+              {id: 9, type: 'source_asset'},
+            ],
+          }),
+        }),
+      );
+      expect(component.selectedItems.size).toBe(0);
+      expect(component.isSelectionMode).toBeFalse();
+      expect(clearedCount).toBe(1);
+      clearedSub.unsubscribe();
+
+      openDialogSpy.calls.reset();
+      component.openPromoteFolderDialog({
+        id: 77,
+        name: 'Finals',
+        workspaceId: 10,
+      } as Folder);
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            sourceWorkspaceId: 10,
+            items: [{id: 77, type: 'folder'}],
+          }),
+        }),
+      );
+    });
+
+    it('hides bulk and folder promote controls when isSelectorMode is true', () => {
+      activeWorkspaceIdSubject.next(10);
+      component.isLoading = false;
+      component.folders = [
+        {
+          id: 77,
+          name: 'Finals',
+          workspaceId: 10,
+        } as Folder,
+      ];
+      component.selectedItems = new Set(['media_item:5']);
+
+      component.isSelectorMode = false;
+      fixture.detectChanges();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector('#gallery-bulk-promote-btn')).not.toBeNull();
+      expect(
+        fixture.debugElement.query(By.css('app-folder-card')).properties[
+          'canPromote'
+        ],
+      ).toBeTrue();
+
+      component.isSelectorMode = true;
+      fixture.detectChanges();
+      expect(root.querySelector('#gallery-bulk-promote-btn')).toBeNull();
+      expect(
+        fixture.debugElement.query(By.css('app-folder-card')).properties[
+          'canPromote'
+        ],
+      ).toBeFalse();
+
+      const openDialogSpy = spyOn(component.dialog, 'open');
+      component.openBulkPromoteDialog();
+      expect(openDialogSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders empty shared workspace CTAs by role and locks Promote picker', async () => {
+      component.isAdmin = false;
+      component.isLoading = false;
+      component.allImagesLoaded = true;
+      component.images = [];
+      component.folders = [];
+      component.isSelectorMode = false;
+      component.currentFolderId = null;
+
+      activeWorkspaceIdSubject.next(3);
+      fixture.detectChanges();
+
+      const root = fixture.nativeElement as HTMLElement;
+      expect(
+        root.querySelector('#shared-workspace-empty-state'),
+      ).not.toBeNull();
+      expect(root.querySelector('#empty-upload-team-btn')).not.toBeNull();
+      expect(root.querySelector('#empty-promote-personal-btn')).not.toBeNull();
+
+      const openDialogSpy = spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () => of(undefined),
+      } as never);
+      component.promoteFromPersonalWorkspace();
+      for (let i = 0; i < 40 && !openDialogSpy.calls.any(); i++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.anything(),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            defaultSourceMode: 'personal',
+            lockToPersonalWorkspace: true,
+          }),
+        }),
+      );
+
+      activeWorkspaceIdSubject.next(4);
+      fixture.detectChanges();
+      expect(
+        root.querySelector('#shared-workspace-empty-state'),
+      ).not.toBeNull();
+      expect(root.querySelector('#empty-upload-team-btn')).toBeNull();
+      expect(root.querySelector('#empty-promote-personal-btn')).toBeNull();
     });
   });
 });

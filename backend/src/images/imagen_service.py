@@ -52,13 +52,22 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
-from src.folders.output_folder import resolve_output_folder_id
 from src.database import WorkerDatabase
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    RevisionLineage,
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
-from src.images.dto.vto_dto import VtoDto, VtoInputLink
+from src.images.dto.vto_dto import VtoDto
 from src.images.repository.media_item_repository import MediaRepository
+from src.workspaces.generation_workspace import (
+    GenerationContext,
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
 from src.images.schema.imagen_result_model import (
     CustomImagenResult,
     ImageGenerationResult,
@@ -389,7 +398,6 @@ def _process_vto_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 uri,
-                                mime_type.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)
@@ -683,6 +691,12 @@ def _process_image_in_background(
                             )
                         )
                         request_dto.prompt = rewritten_prompt
+                    elif request_dto.use_brand_guidelines:
+                        rewritten_prompt = request_dto.prompt = (
+                            await gemini_service.apply_brand_guidelines_to_dto(
+                                request_dto
+                            )
+                        )
                     else:
                         rewritten_prompt = request_dto.prompt
 
@@ -1214,7 +1228,6 @@ def _process_image_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 uri,
-                                mime_type.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)
@@ -1558,7 +1571,6 @@ def _process_upload_upscale_in_background(
                             thumb_uri = generate_image_thumbnail_from_gcs(
                                 gcs_service,
                                 final_upscaled_uri,
-                                MimeTypeEnum.IMAGE_PNG.value,
                             )
                             if thumb_uri:
                                 thumbnail_uris.append(thumb_uri)
@@ -1580,7 +1592,7 @@ def _process_upload_upscale_in_background(
                                     gemini_service.generate_media_metadata,
                                     prompt="Describe this image in detail.",
                                     media_uris=[uri_for_metadata],
-                                    model_name="gemini-2.5-pro",
+                                    model_name=config_service.GEMINI_MODEL_ID,
                                     mime_type=MimeTypeEnum.IMAGE_PNG.value,
                                 )
                                 if not final_titles and "titles" in metadata:
@@ -1669,6 +1681,105 @@ class ImagenService:
         self.source_asset_repo = source_asset_repo
         self.cfg = config_service
 
+    @staticmethod
+    def _collect_imagen_input_ids(
+        request_dto: CreateImagenDto,
+    ) -> tuple[list[int], list[int]]:
+        media_ids = [
+            item.media_item_id
+            for item in (request_dto.source_media_items or [])
+        ]
+        asset_ids = list(request_dto.source_asset_ids or [])
+        if request_dto.parent_media_item_id is not None:
+            media_ids.append(request_dto.parent_media_item_id)
+        if request_dto.reference_video is not None:
+            if request_dto.reference_video.type == "media_item":
+                media_ids.append(request_dto.reference_video.id)
+            else:
+                asset_ids.append(request_dto.reference_video.id)
+        return media_ids, asset_ids
+
+    @staticmethod
+    def _collect_vto_input_ids(
+        request_dto: VtoDto,
+    ) -> tuple[list[int], list[int]]:
+        media_ids: list[int] = []
+        asset_ids: list[int] = []
+        for link in (
+            request_dto.person_image,
+            request_dto.top_image,
+            request_dto.bottom_image,
+            request_dto.dress_image,
+            request_dto.shoe_image,
+        ):
+            if link is None:
+                continue
+            if link.source_asset_id is not None:
+                asset_ids.append(link.source_asset_id)
+            if link.source_media_item is not None:
+                media_ids.append(link.source_media_item.media_item_id)
+        if request_dto.parent_media_item_id is not None:
+            media_ids.append(request_dto.parent_media_item_id)
+        return media_ids, asset_ids
+
+    async def _authorize_generation_target(
+        self,
+        *,
+        user: UserModel,
+        workspace_id: int,
+        folder_id: int | None,
+        context_workspace_id: int | None = None,
+        media_ids: list[int] | tuple[int, ...] = (),
+        asset_ids: list[int] | tuple[int, ...] = (),
+    ) -> GenerationContext:
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            user,
+            media_item_ids=media_ids,
+            source_asset_ids=asset_ids,
+        )
+        return await resolve_generation_context(
+            self.media_repo.db,
+            workspace_id,
+            user,
+            requested_folder_id=folder_id,
+            context_workspace_id=context_workspace_id,
+        )
+
+    async def _prepare_generation_target(
+        self,
+        *,
+        user: UserModel,
+        workspace_id: int,
+        folder_id: int | None,
+        context_workspace_id: int | None = None,
+        media_ids: list[int] | tuple[int, ...] = (),
+        asset_ids: list[int] | tuple[int, ...] = (),
+        explicit_parent_id: int | None = None,
+        source_media_items: list[SourceMediaItemLink] | None = None,
+    ) -> tuple[GenerationContext, RevisionLineage, int | None]:
+        ctx = await self._authorize_generation_target(
+            user=user,
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            context_workspace_id=context_workspace_id,
+            media_ids=media_ids,
+            asset_ids=asset_ids,
+        )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=explicit_parent_id,
+            source_media_items=source_media_items,
+            requested_folder_id=folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder = effective_revision_folder(
+            folder_id, ctx.resolved_folder_id, lineage
+        )
+        return ctx, lineage, effective_folder
+
     async def start_upload_upscale_job(
         self,
         user: UserModel,
@@ -1688,6 +1799,7 @@ class ImagenService:
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
         folder_id: int | None = None,
+        parent_media_item_id: int | None = None,
     ) -> MediaItemResponse:
         """Starts a background job to upload and/or upscale an image.
 
@@ -1710,28 +1822,45 @@ class ImagenService:
             image_preservation_factor: Factor for image preservation during upscaling.
             folder_id: Optional gallery folder of the workspace to save the
                 result into; the root folder when omitted.
+            parent_media_item_id: Optional parent MediaItem ID for revision lineage.
 
         Returns:
             A MediaItemResponse representing the placeholder item.
         """
 
+        parsed_asset_id: int | None = None
+        if not file_bytes and source_asset_id:
+            try:
+                parsed_asset_id = int(source_asset_id)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Invalid source asset id: {source_asset_id}"
+                ) from exc
+
+        ctx = await self._authorize_generation_target(
+            user=user,
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            media_ids=[
+                mid
+                for mid in (media_item_id_existing, parent_media_item_id)
+                if mid
+            ],
+            asset_ids=(
+                [parsed_asset_id] if parsed_asset_id is not None else ()
+            ),
+        )
+
         # --- Validation for Existing Assets (Sync Check) ---
         target_gcs_uri = None
         if not file_bytes:
-            if source_asset_id:
-                try:
-                    asset = await self.source_asset_repo.get_by_id(
-                        int(source_asset_id)
-                    )
-                    if not asset:
-                        raise ValueError(
-                            f"Source asset {source_asset_id} not found"
-                        )
-                    target_gcs_uri = asset.gcs_uri
-                except ValueError as exc:
+            if parsed_asset_id is not None:
+                asset = await self.source_asset_repo.get_by_id(parsed_asset_id)
+                if not asset:
                     raise ValueError(
                         f"Invalid source asset id: {source_asset_id}"
-                    ) from exc
+                    )
+                target_gcs_uri = asset.gcs_uri
 
             elif media_item_id_existing:
                 # It's an existing MediaItem
@@ -1786,13 +1915,26 @@ class ImagenService:
                         e,
                     )
 
-        # 1. Create Placeholder
-        folder_id = await resolve_output_folder_id(
-            self.media_repo.db, workspace_id, user, folder_id
+        # Acquire stack-root FOR UPDATE lock only after external GCS I/O completes.
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=parent_media_item_id or media_item_id_existing,
+            requested_folder_id=folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
         )
+        effective_folder_id = effective_revision_folder(
+            folder_id, ctx.resolved_folder_id, lineage
+        )
+
+        # 1. Create Placeholder
         placeholder_item = MediaItemModel(
-            workspace_id=workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,
@@ -1813,7 +1955,7 @@ class ImagenService:
         executor.submit(
             _process_upload_upscale_in_background,
             media_item_id=media_item_id,
-            workspace_id=workspace_id,
+            workspace_id=ctx.output_workspace_id,
             user=user,
             gcs_uri=gcs_uri,
             file_bytes=file_bytes,
@@ -1856,16 +1998,26 @@ class ImagenService:
         """Immediately creates a placeholder MediaItem and starts the image
         generation in the background.
         """
-        # Create a placeholder document
-        folder_id = await resolve_output_folder_id(
-            self.media_repo.db,
-            request_dto.workspace_id,
-            user,
-            request_dto.folder_id,
+        media_ids, asset_ids = self._collect_imagen_input_ids(request_dto)
+        ctx, lineage, effective_folder_id = (
+            await self._prepare_generation_target(
+                user=user,
+                workspace_id=request_dto.workspace_id,
+                folder_id=request_dto.folder_id,
+                context_workspace_id=request_dto.context_workspace_id,
+                media_ids=media_ids,
+                asset_ids=asset_ids,
+                explicit_parent_id=request_dto.parent_media_item_id,
+                source_media_items=request_dto.source_media_items,
+            )
         )
+        # Create a placeholder document
         placeholder_item = MediaItemModel(
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             # Default to PNG, will update if needed
@@ -1889,12 +2041,18 @@ class ImagenService:
 
         # Save the placeholder to the database immediately
         placeholder_item = await self.media_repo.create(placeholder_item)
+        worker_dto = request_dto.model_copy(
+            update={
+                "workspace_id": ctx.output_workspace_id,
+                "context_workspace_id": ctx.brand_workspace_id,
+            }
+        )
 
         # Submit the long-running function to the process pool
         executor.submit(
             _process_image_in_background,
             media_item_id=placeholder_item.id,
-            request_dto=request_dto,
+            request_dto=worker_dto,
             current_user=user,
         )
 
@@ -1929,17 +2087,39 @@ class ImagenService:
             pre-generated ID.
 
         """
+        media_ids, asset_ids = self._collect_vto_input_ids(request_dto)
+        person_source_media = (
+            [
+                SourceMediaItemLink(
+                    media_item_id=request_dto.person_image.source_media_item.media_item_id,
+                    media_index=request_dto.person_image.source_media_item.media_index,
+                    role=AssetRoleEnum.INPUT,
+                )
+            ]
+            if request_dto.person_image
+            and request_dto.person_image.source_media_item
+            else None
+        )
+        ctx, lineage, effective_folder_id = (
+            await self._prepare_generation_target(
+                user=user,
+                workspace_id=request_dto.workspace_id,
+                folder_id=request_dto.folder_id,
+                context_workspace_id=request_dto.context_workspace_id,
+                media_ids=media_ids,
+                asset_ids=asset_ids,
+                explicit_parent_id=request_dto.parent_media_item_id,
+                source_media_items=person_source_media,
+            )
+        )
         # 2. Create a placeholder document
         # Do not allow manually setting ID for auto-increment columns
-        folder_id = await resolve_output_folder_id(
-            self.media_repo.db,
-            request_dto.workspace_id,
-            user,
-            request_dto.folder_id,
-        )
         placeholder_item = MediaItemModel(
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,
@@ -1953,12 +2133,18 @@ class ImagenService:
 
         # 3. Save the placeholder to the database immediately
         created_item = await self.media_repo.create(placeholder_item)
+        worker_dto = request_dto.model_copy(
+            update={
+                "workspace_id": ctx.output_workspace_id,
+                "context_workspace_id": ctx.brand_workspace_id,
+            }
+        )
 
         # 4. Submit the long-running function to the process pool
         executor.submit(
             _process_vto_in_background,
             media_item_id=created_item.id,
-            request_dto=request_dto,
+            request_dto=worker_dto,
             current_user=user,
         )
 

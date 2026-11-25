@@ -60,7 +60,10 @@ from src.workflows_executor.workflows_executor_controller import (
 from src.workspaces.workspace_controller import router as workspace_router
 from src.agents.agent_controller import router as agent_router
 from src.folders.folder_controller import router as folder_router
-from src.projects.project_controller import router as project_router
+from src.projects.project_controller import (
+    projects_router,
+    storyboards_router,
+)
 
 
 def configure_cors(app):
@@ -126,17 +129,30 @@ async def lifespan(app: FastAPI):
     app.state.executor = ThreadPoolExecutor(max_workers=8)
 
     # Register workflow session store + dispatcher hooks.
-    from src.auth.auth_guard import register_post_auth_hook
+    from src.auth.auth_guard import (
+        clear_post_auth_hooks,
+        register_post_auth_hook,
+    )
+    from src.auth.iam_signer_credentials_service import (
+        shutdown_signing_executor,
+    )
     from src.workflows.queue.run_state_service import set_dispatch_hook
     from src.workflows.queue.workflow_dispatcher import (
-        handle_post_auth_session,
+        drain_post_auth_tasks,
         run_default_dispatch,
+        schedule_post_auth_session,
     )
 
-    register_post_auth_hook(handle_post_auth_session)
+    register_post_auth_hook(schedule_post_auth_session)
     set_dispatch_hook(run_default_dispatch)
 
-    yield
+    try:
+        yield
+    finally:
+        clear_post_auth_hooks()
+        set_dispatch_hook(None)
+        await drain_post_auth_tasks()
+        shutdown_signing_executor()
 
     logger.info("Application shutdown terminating")
 
@@ -182,11 +198,6 @@ async def root():
     return "You are calling Creative Studio Backend"
 
 
-@app.get("/api/version", tags=["Health Check"])
-def version():
-    return "v0.0.1"
-
-
 configure_cors(app)
 
 app.include_router(imagen_router)
@@ -206,5 +217,6 @@ app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
 app.include_router(workbench_router)
 app.include_router(agent_router)
-app.include_router(project_router)
+app.include_router(storyboards_router)
+app.include_router(projects_router)
 app.include_router(folder_router)

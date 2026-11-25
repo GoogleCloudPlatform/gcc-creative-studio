@@ -15,22 +15,28 @@
 """Data Transfer Objects for Agent Controller Endpoints."""
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from src.projects.dto.project_dto import StoryboardResponse
 
 
 # --- Sub-components for Chat ---
 class InlineDataRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mimeType: str
     data: str
 
 
 class FileDataRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mimeType: str
     fileUri: str
 
 
 class SourceMediaItemLinkDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mediaItemId: int
     mediaIndex: int
     role: str
@@ -53,6 +59,8 @@ class ChatMessagePart(BaseModel):
 
 
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: str
     parts: List[ChatMessagePart]
 
@@ -60,6 +68,8 @@ class ChatMessage(BaseModel):
 # --- POST /chat ---
 class ChatRequestDto(BaseModel):
     """Payload for starting an agent chat interaction."""
+
+    model_config = ConfigDict(extra="forbid")
 
     sessionId: str
     workspaceId: int
@@ -81,12 +91,38 @@ class PollEventsResponseDto(BaseModel):
 
 # --- Session Responses ---
 class SessionResponseDto(BaseModel):
+    """A chat as listed: its agent session plus Creative Studio's registry."""
+
     id: str
     appName: str
     userId: str
     lastUpdateTime: Optional[float] = None
     state: Optional[Dict[str, Any]] = None
     events: Optional[List[Any]] = None
+    # From Creative Studio's session registry (``agent_sessions``), not from
+    # Agent Engine: the chat's project and its server-side title.
+    projectId: Optional[int] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    # A registered chat the agent backend no longer has (expired, or its
+    # local store was reset): listed on request. It cannot be opened, only
+    # restored when ``restorable``.
+    expired: bool = False
+    # An expired chat that still owns a storyboard: it can be restored.
+    restorable: bool = False
+    # A chat restored after it expired: Izumi does not remember it, so it
+    # cannot run there (its storyboard and timeline are edited by hand).
+    restored: bool = False
+
+
+# --- PATCH /sessions/{session_id} ---
+class UpdateSessionRequestDto(BaseModel):
+    """Server-side chat title and summary (they replace localStorage topics)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, max_length=200)
+    summary: Optional[str] = Field(default=None, max_length=1000)
 
 
 # --- Any dynamic structure fallback (for passthrough) ---
@@ -109,6 +145,8 @@ class CharacterProfileDto(BaseModel):
     Stored verbatim under ``virtual_creator_metadata.profile`` and compiled
     into the free-text fields the agent reads (see ``character_state.py``).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     role: Optional[
@@ -136,11 +174,15 @@ class CharacterProfileDto(BaseModel):
 class CharacterAssetRefDto(BaseModel):
     """A Creative Studio image to use as the character's headshot."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: int
     assetType: Literal["generated", "uploaded"]
 
 
 class UpdateCharacterRequestDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspaceId: int
     appName: Optional[str] = "ads_x"
     profile: CharacterProfileDto = CharacterProfileDto()

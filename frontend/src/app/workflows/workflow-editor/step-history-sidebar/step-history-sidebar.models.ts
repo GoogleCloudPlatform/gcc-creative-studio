@@ -15,6 +15,7 @@
  */
 
 import {Signal} from '@angular/core';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {StepEntry} from '../../workflow.models';
 
 /**
@@ -27,6 +28,11 @@ export interface StepHistorySidebarDialogData {
   stepTitle: string;
   stepMode: string | null;
   mediaUrlMap: Map<string, string>;
+  /**
+   * Resolved folder paths (a signal since hosts resolve them asynchronously).
+   * Optional because some hosts have no resolved paths.
+   */
+  folderPaths?: Signal<FolderPathMap>;
 }
 
 /** CDK overlay panel class of the sidebar dialog (styled in `styles.scss`). */

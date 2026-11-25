@@ -22,10 +22,19 @@ from src.galleries.dto.bulk_download_dto import BulkDownloadDto
 from src.galleries.dto.bulk_move_dto import BulkMoveDto
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
+from src.galleries.dto.promote_dto import (
+    PromoteItemsDto,
+    PromoteResponseDto,
+    PromoteTargetsRequestDto,
+    PromoteTargetWorkspaceDto,
+)
 from src.galleries.dto.unified_gallery_response import (
+    RevisionHistoryResponseDto,
     UnifiedGalleryItemResponse,
 )
 from src.galleries.gallery_service import GalleryService
+from src.galleries.promotion_service import PromotionService
+from src.galleries.revision_service import RevisionService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -105,6 +114,21 @@ async def get_single_gallery_item(
     return item
 
 
+@router.get(
+    "/item/{item_id}/revisions",
+    response_model=RevisionHistoryResponseDto,
+)
+async def get_gallery_item_revisions(
+    item_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    revision_service: RevisionService = Depends(),
+):
+    """Returns revision stack history for a media item."""
+    return await revision_service.get_revisions(
+        item_id=item_id, current_user=current_user
+    )
+
+
 @router.post("/bulk-delete")
 async def bulk_delete_items(
     bulk_delete_dto: BulkDeleteDto,
@@ -168,5 +192,34 @@ async def bulk_move_items(
     """Bulk move media items, source assets, and folders to another workspace."""
     return await service.bulk_move(
         bulk_move_dto=bulk_move_dto,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/promote-targets",
+    response_model=list[PromoteTargetWorkspaceDto],
+)
+async def list_promote_targets(
+    request_dto: PromoteTargetsRequestDto,
+    current_user: UserModel = Depends(get_current_user),
+    promotion_service: PromotionService = Depends(),
+):
+    """Lists shared workspaces the user can promote selected items into."""
+    return await promotion_service.get_promote_targets(
+        request_dto=request_dto,
+        current_user=current_user,
+    )
+
+
+@router.post("/promote", response_model=PromoteResponseDto)
+async def promote_items(
+    promote_dto: PromoteItemsDto,
+    current_user: UserModel = Depends(get_current_user),
+    promotion_service: PromotionService = Depends(),
+):
+    """Promotes curated personal creations and folders into a shared workspace."""
+    return await promotion_service.promote_items(
+        dto=promote_dto,
         current_user=current_user,
     )

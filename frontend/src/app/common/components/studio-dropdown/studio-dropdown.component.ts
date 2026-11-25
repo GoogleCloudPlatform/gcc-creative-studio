@@ -32,6 +32,11 @@ export interface DropdownOption {
   icon?: string;
   isSvgIcon?: boolean;
   tooltip?: string;
+  /** Listed for context but not selectable (e.g. an expired chat). */
+  disabled?: boolean;
+  /** Short status pill shown after the label (e.g. "Expired"). */
+  badge?: string;
+  deletable?: boolean;
 }
 
 @Component({
@@ -124,6 +129,9 @@ export class StudioDropdownComponent {
   }
 
   selectOption(option: DropdownOption) {
+    if (option.disabled) {
+      return; // Shown, never chosen: the panel stays open.
+    }
     if (this.multiple) {
       if (!Array.isArray(this.value)) {
         this.value = [];

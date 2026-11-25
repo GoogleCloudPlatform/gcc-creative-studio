@@ -37,6 +37,8 @@ from src.common.base_dto import (
     ReferenceImageTypeEnum,
 )
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     concatenate_videos,
     generate_thumbnail,
 )
@@ -51,14 +53,21 @@ from src.common.schema.media_item_model import (
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.folders.agent_output_folder import resolve_agent_output_folder_id
-from src.folders.output_folder import resolve_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.repository.media_item_repository import MediaRepository
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
-from src.source_assets.schema.source_asset_model import AssetScopeEnum
+from src.source_assets.schema.source_asset_model import (
+    AssetScopeEnum,
+    SourceAssetModel,
+)
+from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
 from src.videos.dto.create_veo_dto import (
@@ -66,6 +75,12 @@ from src.videos.dto.create_veo_dto import (
     dedupe_reference_images,
     reference_video_key,
 )
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
+from src.workspaces.repository.workspace_repository import WorkspaceRepository
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 logger = logging.getLogger(__name__)
 
@@ -107,14 +122,19 @@ async def _get_active_media_item(
 def _format_omni_prompt(
     prompt: str,
     aspect_ratio: AspectRatioEnum | str | None,
+    *,
+    keyword_check_prompt: str | None = None,
 ) -> str:
     """Formats prompt with aspect ratio and resolution directives for Gemini Omni."""
     cleaned_prompt = prompt.strip()
+    check = (
+        prompt if keyword_check_prompt is None else keyword_check_prompt
+    ).lower()
     if (
         aspect_ratio == AspectRatioEnum.RATIO_9_16
-        and "9:16" not in prompt
-        and "vertical" not in prompt.lower()
-        and "portrait" not in prompt.lower()
+        and "9:16" not in check
+        and "vertical" not in check
+        and "portrait" not in check
     ):
         directive = (
             "Aspect ratio: 9:16 vertical portrait format. Resolution: 720p."
@@ -122,9 +142,9 @@ def _format_omni_prompt(
         return f"{cleaned_prompt}\n{directive}" if cleaned_prompt else directive
     if (
         aspect_ratio == AspectRatioEnum.RATIO_16_9
-        and "16:9" not in prompt
-        and "widescreen" not in prompt.lower()
-        and "landscape" not in prompt.lower()
+        and "16:9" not in check
+        and "widescreen" not in check
+        and "landscape" not in check
     ):
         directive = (
             "Aspect ratio: 16:9 widescreen landscape format. Resolution: 720p."
@@ -187,15 +207,51 @@ def _process_video_in_background(
                     # Create new instances of dependencies within this process
                     media_repo = MediaRepository(db)
                     source_asset_repo = SourceAssetRepository(db)
-                    gemini_service = GeminiService(
-                        brand_guideline_repo=None,
-                    )  # BrandGuidelineRepo not strictly needed for prompt enhancement if not using guidelines, but let's check if GeminiService needs it.
-                    # Actually GeminiService init: def __init__(self, brand_guideline_repo: BrandGuidelineRepository = Depends()):
-                    # If we pass None, it might fail if it tries to use it.
-                    # Let's instantiate BrandGuidelineRepository too if needed.
-                    # Checking GeminiService usage: enhance_prompt_from_dto.
-                    # It might use brand guidelines.
-                    # Let's instantiate it to be safe.
+                    worker_user: UserModel | None = None
+                    worker_user_loaded = False
+                    authorized_worker_workspaces: set[int] = set()
+
+                    async def _is_worker_item_allowed(
+                        obj: MediaItemModel | SourceAssetModel,
+                        *,
+                        allow_system_scope: bool = False,
+                    ) -> bool:
+                        nonlocal worker_user, worker_user_loaded
+                        if _belongs_to_workspace(
+                            obj,
+                            request_dto.workspace_id,
+                            allow_system_scope=allow_system_scope,
+                        ):
+                            return True
+                        ctx_ws = request_dto.context_workspace_id
+                        if ctx_ws is not None and _belongs_to_workspace(
+                            obj,
+                            ctx_ws,
+                            allow_system_scope=allow_system_scope,
+                        ):
+                            return True
+                        obj_ws = obj.workspace_id
+                        if not isinstance(obj_ws, int):
+                            return False
+                        if obj_ws in authorized_worker_workspaces:
+                            return True
+                        if not worker_user_loaded:
+                            worker_user_loaded = True
+                            if user_email:
+                                worker_user = await UserRepository(
+                                    db
+                                ).get_by_email(user_email)
+                        if worker_user is None:
+                            return False
+                        try:
+                            await WorkspaceAuth(
+                                WorkspaceRepository(db)
+                            ).authorize(obj_ws, worker_user)
+                            authorized_worker_workspaces.add(obj_ws)
+                            return True
+                        except HTTPException:
+                            return False
+
                     from src.brand_guidelines.repository.brand_guideline_repository import (
                         BrandGuidelineRepository,
                     )
@@ -212,6 +268,7 @@ def _process_video_in_background(
                         cfg = config_service
                         gcs_output_directory = f"gs://{cfg.GENMEDIA_BUCKET}"
 
+                        omni_kw_prompt: str | None = None
                         if request_dto.enhance_prompt:
                             rewritten_prompt = (
                                 await gemini_service.enhance_prompt_from_dto(
@@ -220,6 +277,28 @@ def _process_video_in_background(
                                 )
                             )
                             # Update the prompt in the DTO for logging and future reference
+                            request_dto.prompt = rewritten_prompt
+                        elif request_dto.use_brand_guidelines:
+                            omni_kw_prompt = request_dto.prompt
+                            has_source_video = bool(
+                                request_dto.source_video_asset_id
+                            ) or any(
+                                i.role == AssetRoleEnum.VIDEO_EXTENSION_SOURCE
+                                for i in (request_dto.source_media_items or [])
+                            )
+                            seed = "Continue the video seamlessly."
+                            dto_for_brand = (
+                                request_dto.model_copy(update={"prompt": seed})
+                                if has_source_video
+                                and not omni_kw_prompt.strip()
+                                else request_dto
+                            )
+                            prefixed = await gemini_service.apply_brand_guidelines_to_dto(
+                                dto=dto_for_brand,
+                            )
+                            rewritten_prompt = prefixed
+                            if prefixed == dto_for_brand.prompt:
+                                rewritten_prompt = omni_kw_prompt
                             request_dto.prompt = rewritten_prompt
                         else:
                             rewritten_prompt = request_dto.prompt
@@ -244,8 +323,8 @@ def _process_video_in_background(
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
-                                    or not _belongs_to_workspace(
-                                        parent_item, request_dto.workspace_id
+                                    or not await _is_worker_item_allowed(
+                                        parent_item
                                     )
                                     or not parent_item.gcs_uris
                                     or not (
@@ -267,9 +346,8 @@ def _process_video_in_background(
                                 if (
                                     not video_asset
                                     or _is_asset_deleted(video_asset)
-                                    or not _belongs_to_workspace(
+                                    or not await _is_worker_item_allowed(
                                         video_asset,
-                                        request_dto.workspace_id,
                                         allow_system_scope=True,
                                     )
                                     or not video_asset.gcs_uri
@@ -291,8 +369,8 @@ def _process_video_in_background(
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
-                                    or not _belongs_to_workspace(
-                                        parent_item, request_dto.workspace_id
+                                    or not await _is_worker_item_allowed(
+                                        parent_item
                                     )
                                 ):
                                     raise ValueError(
@@ -312,9 +390,8 @@ def _process_video_in_background(
                                 if (
                                     not start_asset
                                     or _is_asset_deleted(start_asset)
-                                    or not _belongs_to_workspace(
+                                    or not await _is_worker_item_allowed(
                                         start_asset,
-                                        request_dto.workspace_id,
                                         allow_system_scope=True,
                                     )
                                 ):
@@ -336,8 +413,8 @@ def _process_video_in_background(
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
-                                    or not _belongs_to_workspace(
-                                        parent_item, request_dto.workspace_id
+                                    or not await _is_worker_item_allowed(
+                                        parent_item
                                     )
                                 ):
                                     raise ValueError(
@@ -357,9 +434,8 @@ def _process_video_in_background(
                                 if (
                                     not end_asset
                                     or _is_asset_deleted(end_asset)
-                                    or not _belongs_to_workspace(
+                                    or not await _is_worker_item_allowed(
                                         end_asset,
-                                        request_dto.workspace_id,
                                         allow_system_scope=True,
                                     )
                                 ):
@@ -385,9 +461,8 @@ def _process_video_in_background(
                                 )
                                 if asset and (
                                     _is_asset_deleted(asset)
-                                    or not _belongs_to_workspace(
+                                    or not await _is_worker_item_allowed(
                                         asset,
-                                        request_dto.workspace_id,
                                         allow_system_scope=True,
                                     )
                                 ):
@@ -435,8 +510,11 @@ def _process_video_in_background(
                                     media_repo,
                                     gen_input.media_item_id,
                                 )
-                                if parent_item and not _belongs_to_workspace(
-                                    parent_item, request_dto.workspace_id
+                                if (
+                                    parent_item
+                                    and not await _is_worker_item_allowed(
+                                        parent_item
+                                    )
                                 ):
                                     raise ValueError(
                                         f"Media item {gen_input.media_item_id} does not belong to workspace {request_dto.workspace_id}."
@@ -554,8 +632,8 @@ def _process_video_in_background(
                                 )
                                 if (
                                     not parent_item
-                                    or not _belongs_to_workspace(
-                                        parent_item, request_dto.workspace_id
+                                    or not await _is_worker_item_allowed(
+                                        parent_item
                                     )
                                 ):
                                     raise ValueError(
@@ -580,9 +658,8 @@ def _process_video_in_background(
                                 if (
                                     not video_asset
                                     or _is_asset_deleted(video_asset)
-                                    or not _belongs_to_workspace(
+                                    or not await _is_worker_item_allowed(
                                         video_asset,
-                                        request_dto.workspace_id,
                                         allow_system_scope=True,
                                     )
                                     or not video_asset.gcs_uri
@@ -662,9 +739,8 @@ def _process_video_in_background(
                                 )
                                 if (
                                     parent_media_item
-                                    and not _belongs_to_workspace(
+                                    and not await _is_worker_item_allowed(
                                         parent_media_item,
-                                        request_dto.workspace_id,
                                     )
                                 ):
                                     raise ValueError(
@@ -794,7 +870,9 @@ def _process_video_in_background(
                                     parent_video_bytes = f.read()
 
                                 omni_prompt = _format_omni_prompt(
-                                    request_dto.prompt, request_dto.aspect_ratio
+                                    request_dto.prompt,
+                                    request_dto.aspect_ratio,
+                                    keyword_check_prompt=omni_kw_prompt,
                                 )
 
                                 turn2_input = [
@@ -852,6 +930,7 @@ def _process_video_in_background(
                                     omni_prompt = _format_omni_prompt(
                                         request_dto.prompt,
                                         request_dto.aspect_ratio,
+                                        keyword_check_prompt=omni_kw_prompt,
                                     )
 
                                 t1_inputs = [
@@ -1069,17 +1148,15 @@ def _process_video_in_background(
                                 local_thumbnail_name = thumbnail_path or ""
 
                                 # Upload thumbnail to GCS
-                                thumbnail_gcs_blob = (
-                                    f"thumbnails/{media_item_id}_{i}.png"
-                                )
                                 thumbnail_gcs_uri = ""
                                 if thumbnail_path:
+                                    thumbnail_gcs_blob = f"thumbnails/{media_item_id}_{i}{VIDEO_THUMBNAIL_EXT}"
                                     thumbnail_gcs_uri = (
                                         await asyncio.to_thread(
                                             gcs_service.upload_file_to_gcs,
                                             local_path=thumbnail_path,
                                             destination_blob_name=thumbnail_gcs_blob,
-                                            mime_type="image/png",
+                                            mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                                         )
                                         or ""
                                     )
@@ -1247,7 +1324,7 @@ def _process_video_in_background(
                                                         "thumbnails/",
                                                         "",
                                                     ),
-                                                    mime_type="image/png",
+                                                    mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                                                 )
                                                 or ""
                                             )
@@ -1502,8 +1579,8 @@ def _process_video_concatenation_in_background(
                             thumbnail_gcs_uri = await asyncio.to_thread(
                                 gcs_service.upload_file_to_gcs,
                                 local_path=thumbnail_path,
-                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb.png",
-                                mime_type="image/png",
+                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb{VIDEO_THUMBNAIL_EXT}",
+                                mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                             )
 
                         end_time = time.monotonic()
@@ -1571,10 +1648,11 @@ class VeoService:
         self.source_asset_repo = source_asset_repo
 
     async def _validate_workspace_references(
-        self, request_dto: CreateVeoDto
+        self, request_dto: CreateVeoDto, user: UserModel
     ) -> None:
-        """Verifies that every referenced SourceAsset and MediaItem exists, belongs to
-        request_dto.workspace_id (or SYSTEM scope for SourceAssets), and has a valid clip index.
+        """Verifies that every referenced SourceAsset and MediaItem exists, is
+        accessible to the user across allowed workspaces (or SYSTEM scope for
+        SourceAssets), and has a valid clip index.
         """
         source_asset_ids: list[int] = []
         media_refs: list[tuple[int, int, bool]] = []
@@ -1616,17 +1694,6 @@ class VeoService:
                     status_code=404,
                     detail=f"Source asset {asset_id} not found.",
                 )
-            if (
-                getattr(asset, "scope", None) != AssetScopeEnum.SYSTEM
-                and asset.workspace_id != request_dto.workspace_id
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        f"Asset {asset_id} does not belong to workspace "
-                        f"{request_dto.workspace_id}"
-                    ),
-                )
 
         fetched_media: dict[int, MediaItemModel] = {}
         for item_id, clip_index, require_clip in media_refs:
@@ -1638,14 +1705,6 @@ class VeoService:
                     raise HTTPException(
                         status_code=404,
                         detail=f"Media item {item_id} not found.",
-                    )
-                if media_item.workspace_id != request_dto.workspace_id:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=(
-                            f"Media item {item_id} does not belong to workspace "
-                            f"{request_dto.workspace_id}"
-                        ),
                     )
                 fetched_media[item_id] = media_item
             else:
@@ -1663,6 +1722,13 @@ class VeoService:
                     ),
                 )
 
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            user,
+            media_item_ids=list(fetched_media),
+            source_asset_ids=list(checked_assets),
+        )
+
     async def start_video_generation_job(
         self,
         request_dto: CreateVeoDto,
@@ -1676,7 +1742,7 @@ class VeoService:
             The initial MediaItem with a 'processing' status and a pre-generated ID.
 
         """
-        await self._validate_workspace_references(request_dto)
+        await self._validate_workspace_references(request_dto, user=user)
 
         # 1. Prepare source asset links if they exist
         source_assets: list[SourceAssetLink] = []
@@ -1783,15 +1849,45 @@ class VeoService:
                 )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)
-        folder_id = await resolve_output_folder_id(
+        combined_source_media_items = (
+            request_dto.source_media_items or []
+        ) + source_media_items
+        # Only video-extension sources continue an existing video stack;
+        # image start/end frames and R2V ingredients start a fresh video stack.
+        revision_source_media = [
+            item
+            for item in combined_source_media_items
+            if item.role
+            in (
+                AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
+                AssetRoleEnum.VIDEO_EXTENSION_CHUNK,
+            )
+        ]
+        ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
             user,
-            request_dto.folder_id,
+            requested_folder_id=request_dto.folder_id,
+            context_workspace_id=request_dto.context_workspace_id,
+        )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            source_media_items=revision_source_media or None,
+            requested_folder_id=request_dto.folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            request_dto.folder_id, ctx.resolved_folder_id, lineage
         )
         placeholder_item = MediaItemModel(
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -1806,9 +1902,7 @@ class VeoService:
             composition=request_dto.composition,
             negative_prompt=request_dto.negative_prompt,
             duration_seconds=request_dto.duration_seconds,
-            source_media_items=(request_dto.source_media_items or [])
-            + source_media_items
-            or None,
+            source_media_items=combined_source_media_items or None,
             source_assets=source_assets or None,
             gcs_uris=[],
             thumbnail_uris=[],
@@ -1819,12 +1913,18 @@ class VeoService:
 
         # 2. Save to DB to get the ID
         placeholder_item = await self.media_repo.create(placeholder_item)
+        worker_dto = request_dto.model_copy(
+            update={
+                "workspace_id": ctx.output_workspace_id,
+                "context_workspace_id": ctx.brand_workspace_id,
+            }
+        )
 
         # 3. Submit background task
         executor.submit(
             _process_video_in_background,
             media_item_id=placeholder_item.id,
-            request_dto=request_dto,
+            request_dto=worker_dto,
             user_email=user.email,
         )
 
@@ -1857,6 +1957,8 @@ class VeoService:
         """Creates a placeholder for a video concatenation job and starts it in the background."""
         source_media_items: list[SourceMediaItemLink] = []
         source_assets: list[SourceAssetLink] = []
+        auth_media_ids: list[int] = []
+        auth_asset_ids: list[int] = []
 
         for video_input in request_dto.inputs:
             if video_input.type == "media_item":
@@ -1868,11 +1970,7 @@ class VeoService:
                         status_code=400,
                         detail=f"MediaItem '{video_input.id}' not found or is not a video.",
                     )
-                if item.workspace_id != request_dto.workspace_id:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Media item {video_input.id} does not belong to workspace {request_dto.workspace_id}",
-                    )
+                auth_media_ids.append(video_input.id)
                 source_media_items.append(
                     SourceMediaItemLink(
                         media_item_id=video_input.id,
@@ -1891,14 +1989,7 @@ class VeoService:
                         status_code=400,
                         detail=f"SourceAsset '{video_input.id}' not found or is not a video.",
                     )
-                if (
-                    getattr(asset, "scope", None) != AssetScopeEnum.SYSTEM
-                    and asset.workspace_id != request_dto.workspace_id
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Asset {video_input.id} does not belong to workspace {request_dto.workspace_id}",
-                    )
+                auth_asset_ids.append(video_input.id)
                 source_assets.append(
                     SourceAssetLink(
                         asset_id=video_input.id,
@@ -1906,13 +1997,41 @@ class VeoService:
                     ),
                 )
 
-        # 1. Create placeholder (let DB generate ID)
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, request_dto.workspace_id, user
+        if request_dto.parent_media_item_id is not None:
+            auth_media_ids.append(request_dto.parent_media_item_id)
+
+        await ensure_can_reference_inputs(
+            self.media_repo.db,
+            user,
+            media_item_ids=auth_media_ids,
+            source_asset_ids=auth_asset_ids,
+        )
+
+        # 1. Create a placeholder (let DB generate ID)
+        ctx = await resolve_generation_context(
+            self.media_repo.db,
+            request_dto.workspace_id,
+            user,
+            agent_folder_resolver=resolve_agent_output_folder_id,
+        )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            source_media_items=source_media_items or None,
+            requested_folder_id=None,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            None, ctx.resolved_folder_id, lineage
         )
         placeholder_item = MediaItemModel(
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -1935,12 +2054,15 @@ class VeoService:
 
         # 2. Save to DB
         placeholder_item = await self.media_repo.create(placeholder_item)
+        worker_dto = request_dto.model_copy(
+            update={"workspace_id": ctx.output_workspace_id}
+        )
 
         # 3. Submit background task
         executor.submit(
             _process_video_concatenation_in_background,
             media_item_id=placeholder_item.id,
-            request_dto=request_dto,
+            request_dto=worker_dto,
         )
 
         logger.info("Video concatenation job queued: %s", placeholder_item.id)

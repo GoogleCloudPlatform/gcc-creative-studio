@@ -14,8 +14,10 @@
 """Tests for Media Templates Service."""
 
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+from fastapi import HTTPException
 import pytest
 
 from src.common.schema.media_item_model import (
@@ -31,13 +33,17 @@ from src.media_templates.schema.media_template_model import (
     GenerationParameters,
     MediaTemplateModel,
 )
-from src.users.user_model import UserModel
+from src.users.user_model import UserModel, UserRoleEnum
 
 
 @pytest.fixture(name="service")
 def fixture_service():
     mock_template_repo = AsyncMock()
     mock_media_item_repo = AsyncMock()
+    mock_db_result = MagicMock()
+    mock_db_result.all.return_value = []
+    mock_db_result.scalar_one_or_none.return_value = None
+    mock_media_item_repo.db.execute = AsyncMock(return_value=mock_db_result)
     mock_source_asset_repo = AsyncMock()
     mock_gemini_service = AsyncMock()
     mock_gemini_service.generate_structured_prompt = MagicMock()
@@ -46,6 +52,7 @@ def fixture_service():
     mock_gcs_service = MagicMock()
     mock_source_asset_service = AsyncMock()
     mock_workspace_repo = AsyncMock()
+    mock_workspace_auth = AsyncMock()
 
     service = MediaTemplateService(
         template_repo=mock_template_repo,
@@ -56,6 +63,7 @@ def fixture_service():
         gcs_service=mock_gcs_service,
         source_asset_service=mock_source_asset_service,
         workspace_repo=mock_workspace_repo,
+        workspace_auth=mock_workspace_auth,
     )
 
     # Attach mocks for ease of use in tests
@@ -67,6 +75,7 @@ def fixture_service():
     service.mock_gcs_service = mock_gcs_service
     service.mock_source_asset_service = mock_source_asset_service
     service.mock_workspace_repo = mock_workspace_repo
+    service.mock_workspace_auth = mock_workspace_auth
 
     return service
 
@@ -327,3 +336,100 @@ async def test_create_template_from_media_item_with_source_media_items(
         asset_type=AssetTypeEnum.GENERIC_IMAGE,
         aspect_ratio=AspectRatioEnum.RATIO_16_9,
     )
+
+
+@pytest.mark.anyio
+async def test_create_template_from_media_item_blocks_global_admin_on_foreign_personal_item(
+    service,
+):
+    from src.common.base_dto import GenerationModelEnum
+
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
+    service.mock_media_item_repo.get_by_id.return_value = MediaItemModel(
+        workspace_id=777,
+        user_id=99,
+        user_email="owner@test.com",
+        model=GenerationModelEnum.IMAGEN_3_001,
+        prompt="Private draft",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://bucket/private.png"],
+    )
+    service.mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403,
+        detail="Cannot access another user's personal workspace.",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_template_from_media_item(123, global_admin)
+
+    assert exc.value.status_code == 403
+    service.mock_workspace_auth.authorize.assert_awaited_once_with(
+        workspace_id=777,
+        user=global_admin,
+    )
+    service.mock_gemini_service.generate_structured_prompt.assert_not_called()
+    service.mock_template_repo.create.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_template_from_media_item_blocks_global_admin_on_foreign_personal_input(
+    service,
+):
+    from src.common.base_dto import GenerationModelEnum
+    from src.source_assets.schema.source_asset_model import AssetScopeEnum
+    from src.workspaces.schema.workspace_model import (
+        Workspace,
+        WorkspaceScopeEnum,
+    )
+
+    global_admin = UserModel(
+        id=1,
+        email="admin@test.com",
+        name="Global Admin",
+        roles=[UserRoleEnum.ADMIN],
+    )
+    service.mock_media_item_repo.get_by_id.return_value = MediaItemModel(
+        workspace_id=88,
+        user_id=1,
+        user_email="admin@test.com",
+        model=GenerationModelEnum.IMAGEN_3_001,
+        prompt="Shared item referencing foreign personal asset",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://bucket/shared.png"],
+        source_assets=[SourceAssetLink(asset_id=55, role="input")],
+    )
+    service.mock_workspace_auth.authorize.return_value = MagicMock(id=88)
+
+    asset_res = MagicMock()
+    asset_res.all.return_value = [(777, AssetScopeEnum.PRIVATE)]
+    scope_res = MagicMock()
+    scope_res.scalar_one_or_none.return_value = (
+        WorkspaceScopeEnum.PERSONAL.value
+    )
+    ws_res = MagicMock()
+    ws_res.scalar_one_or_none.return_value = Workspace(
+        id=777,
+        name="Colleague Personal",
+        owner_id=99,
+        scope=WorkspaceScopeEnum.PERSONAL.value,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    service.mock_media_item_repo.db.execute = AsyncMock(
+        side_effect=[asset_res, scope_res, ws_res]
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_template_from_media_item(456, global_admin)
+
+    assert exc.value.status_code == 403
+    service.mock_gemini_service.generate_structured_prompt.assert_not_called()
+    service.mock_source_asset_service.upload_asset.assert_not_called()
+    service.mock_template_repo.create.assert_not_called()

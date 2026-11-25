@@ -16,6 +16,7 @@
 
 import {Component, Inject, Signal} from '@angular/core';
 import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {StepEntry} from '../../workflow.models';
 import {StepHistorySidebarDialogData} from './step-history-sidebar.models';
 
@@ -31,12 +32,15 @@ import {StepHistorySidebarDialogData} from './step-history-sidebar.models';
 export class StepHistorySidebarDialogComponent {
   /** Live entry of the inspected step. */
   readonly entry: Signal<StepEntry | null>;
+  /** Live resolved folder paths, or null when the host has none. */
+  readonly folderPaths: Signal<FolderPathMap> | null;
 
   constructor(
     private dialogRef: MatDialogRef<StepHistorySidebarDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: StepHistorySidebarDialogData,
   ) {
     this.entry = data.entry;
+    this.folderPaths = data.folderPaths ?? null;
   }
 
   close(): void {

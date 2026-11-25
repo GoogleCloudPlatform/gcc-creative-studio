@@ -21,12 +21,12 @@
     [ngClass]="[
       aspectRatioClass,
       (!isVideo && !isAudio) ? 'zoomable' : '',
-      isAudio ? '!bg-transparent !shadow-none !h-full flex-col' : ''
+      isAudio ? 'audio-stage-container !h-full flex-col' : ''
     ]"
     (click)="(!isVideo && !isAudio) && openPhotoSwipe(selectedIndex)"
   >
     <!-- Audio Stage Visuals -->
-    <div *ngIf="isAudio" class="audio-stage-layout">
+    <div *ngIf="isAudio" class="audio-stage-layout" [class.has-lyrics]="hasCurrentTrackText">
         <div class="audio-icon-container">
             <mat-icon class="stage-icon">music_note</mat-icon>
         </div>
@@ -39,6 +39,44 @@
               matTooltipShowDelay="300"
             >{{ mediaItem.prompt || 'Untitled Audio' }}</h2>
             <p class="audio-type">{{ mediaItem.mimeType }}</p>
+        </div>
+
+        <div *ngIf="hasCurrentTrackText" class="audio-lyrics-panel glass-effect">
+          <div class="audio-lyrics-header">
+            <span class="audio-lyrics-title">
+              <mat-icon class="lyrics-icon">lyrics</mat-icon>
+              {{
+                currentTrackLyrics && (currentTrackStructureEntries.length || currentTrackCaption)
+                  ? 'Lyrics & Structure'
+                  : currentTrackLyrics
+                    ? 'Lyrics'
+                    : 'Song Structure'
+              }}
+            </span>
+            <button
+              mat-icon-button
+              type="button"
+              class="copy-lyrics-btn"
+              matTooltip="Copy lyrics / structure"
+              (click)="copyCurrentTrackText(); $event.stopPropagation()"
+              aria-label="Copy lyrics"
+            >
+              <mat-icon>content_copy</mat-icon>
+            </button>
+          </div>
+          <div class="audio-lyrics-body">
+            <div *ngIf="currentTrackStructureEntries.length" class="structure-grid">
+              <div *ngFor="let entry of currentTrackStructureEntries; trackBy: trackByIndex" class="structure-chip">
+                <span class="structure-label">{{ entry.label }}</span>
+                <span class="structure-value">{{ entry.value }}</span>
+              </div>
+            </div>
+            <pre *ngIf="currentTrackLyrics" class="lyrics-text">{{ currentTrackLyrics }}</pre>
+            <p *ngIf="currentTrackCaption" class="structure-caption">
+              <span class="structure-caption-label">Caption:</span>
+              {{ currentTrackCaption }}
+            </p>
+          </div>
         </div>
     </div>
     <ng-container *ngIf="!isVideo && !isAudio && selectedUrl">
@@ -85,7 +123,13 @@
                    hidden>
             </audio>
 
-            <button mat-icon-button class="play-btn" (click)="togglePlay()">
+            <button
+              type="button"
+              mat-icon-button
+              class="play-btn"
+              [attr.aria-label]="isPlaying ? 'Pause audio' : 'Play audio'"
+              (click)="togglePlay()"
+            >
                 <mat-icon class="!w-10 !h-10 !text-[40px] leading-[40px]">
                     {{ isPlaying ? 'pause_circle' : 'play_circle' }}
                 </mat-icon>
@@ -94,7 +138,12 @@
             <span class="time-text">{{ currentTime }}</span>
 
             <mat-slider class="custom-slider" min="0" max="100" step="0.1">
-                <input matSliderThumb [value]="progressValue" (valueChange)="seek($event)">
+                <input
+                  matSliderThumb
+                  aria-label="Seek audio"
+                  [value]="progressValue"
+                  (valueChange)="seek($event)"
+                >
             </mat-slider>
 
             <span class="time-text">{{ duration }}</span>
@@ -102,14 +151,18 @@
     </ng-container>
   </div>
 
-  <!-- Bottom Controls: Thumbnails and Actions -->
+  <!-- Bottom Controls: Thumbnails, Workspace Origin/Promote, and Actions -->
   <div
-    *ngIf="mediaItem.presignedUrls && mediaItem.presignedUrls.length >= 1"
+    *ngIf="
+      (mediaItem.presignedUrls && mediaItem.presignedUrls.length >= 1) ||
+      (isInPersonalWorkspace && showWorkspacePromoteBar)
+    "
     class="bottom-controls"
   >
     <!-- Thumbnails on the left -->
     <div class="thumbnails-container">
-      <div
+      <button
+        type="button"
         *ngFor="
           let url of mediaItem.presignedThumbnailUrls?.length
             ? mediaItem.presignedThumbnailUrls
@@ -119,6 +172,9 @@
         class="thumbnail"
         [class.active]="i === selectedIndex"
         [class.audio-thumb]="isAudio"
+        [attr.aria-label]="
+          isAudio ? 'Select Track ' + (i + 1) : 'Select item ' + (i + 1)
+        "
         (click)="selectMedia(i)"
         [matTooltip]="isAudio ? 'Track ' + (i + 1) : ''"
       >
@@ -128,7 +184,26 @@
             <mat-icon>graphic_eq</mat-icon>
             <span class="track-num">{{ i + 1 }}</span>
         </div>
-      </div>
+      </button>
+    </div>
+
+    <!-- Personal workspace origin & promote CTA -->
+    <div
+      *ngIf="isInPersonalWorkspace && showWorkspacePromoteBar"
+      class="lightbox-workspace-bar"
+    >
+      <span class="workspace-origin-label">In My Workspace</span>
+      <button
+        id="lightbox-promote-btn"
+        mat-flat-button
+        color="primary"
+        type="button"
+        class="lightbox-promote-btn"
+        (click)="openPromoteDialog()"
+      >
+        <mat-icon>publish</mat-icon>
+        <span>{{ promoteButtonLabel }}</span>
+      </button>
     </div>
 
     <!-- Actions Toolbar on the right -->
@@ -187,7 +262,7 @@
       </studio-button>
 
       <studio-button
-        *ngIf="showMoveButton"
+        *ngIf="showMoveButton && canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"
@@ -228,6 +303,7 @@
       </studio-button>
 
       <studio-button
+        *ngIf="canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"
@@ -238,7 +314,7 @@
       </studio-button>
 
       <studio-button
-        *ngIf="showDeleteButton"
+        *ngIf="showDeleteButton && canEditItemWorkspace"
         variant="primary"
         shape="circle"
         size="medium"
@@ -247,7 +323,18 @@
       >
         <mat-icon>delete</mat-icon>
       </studio-button>
-      
+      <studio-button
+        *ngIf="canIterateAudio"
+        variant="primary"
+        size="medium"
+        class="iterate-audio-btn"
+        (click)="onIterateAudioClick()"
+        matTooltip="Iterate on this track in Audio Studio"
+      >
+        <mat-icon>tune</mat-icon>
+        Iterate
+      </studio-button>
+
       <studio-button
         *ngIf="isVideo && !isYoutubeVideo && showOmni"
         variant="primary"

@@ -11,27 +11,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import datetime
+"""Repository for unified gallery pagination and workflow loop queries."""
+
 from collections.abc import Iterable
+import datetime
+from enum import Enum
 from typing import Any
 
-from src.workspaces.schema.workspace_model import Workspace
-from src.users.user_model import User
-
-
 from fastapi import Depends
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, any_, exists, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
 from src.common.dto.pagination_response_dto import PaginationResponseDto
-from src.common.schema.media_item_model import JobStatusEnum
+from src.common.schema.media_item_model import JobStatusEnum, MediaItem
 from src.common.schema.unified_gallery_view import UnifiedGalleryView
 from src.database import get_db
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
 )
+from src.galleries.revision_lineage import latest_completed_take_predicate
+from src.source_assets.schema.source_asset_model import SourceAsset
+from src.tags.schema.tags_model import (
+    Tag,
+    media_item_tags,
+    source_asset_tags,
+)
+from src.users.user_model import User
+from src.workspaces.schema.workspace_model import Workspace, WorkspaceScopeEnum
 
 # ``item_type`` values of the unified gallery view.
 LOOP_MEDIA_ITEM = "media_item"
@@ -50,146 +58,328 @@ class UnifiedGalleryRepository(
             db=db,
         )
 
+    def _apply_common_filters(
+        self,
+        stmt: Any,
+        table: type[MediaItem] | type[SourceAsset],
+        search_dto: GallerySearchDto,
+        user_id: int | None,
+        requesting_user_id: int | None = None,
+    ) -> Any:
+        """Applies shared gallery filters to a base-table key query."""
+        if not search_dto.include_deleted:
+            stmt = stmt.where(table.deleted_at.is_(None))
+
+        if search_dto.workspace_id is not None:
+            stmt = stmt.where(table.workspace_id == search_dto.workspace_id)
+        else:
+            stmt = stmt.join(Workspace, table.workspace_id == Workspace.id)
+            if requesting_user_id is not None:
+                stmt = stmt.where(
+                    (Workspace.scope != WorkspaceScopeEnum.PERSONAL.value)
+                    | (Workspace.owner_id == requesting_user_id)
+                )
+            else:
+                stmt = stmt.where(
+                    Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+                )
+
+        if user_id is not None:
+            stmt = stmt.where(table.user_id == user_id)
+
+        if search_dto.user_email:
+            users_tbl = User.__table__
+            stmt = stmt.join(users_tbl, table.user_id == users_tbl.c.id).where(
+                users_tbl.c.email == search_dto.user_email
+            )
+
+        if search_dto.mime_type:
+            mime_val = (
+                search_dto.mime_type.value
+                if isinstance(search_dto.mime_type, Enum)
+                else search_dto.mime_type
+            )
+            if "*" in mime_val:
+                stmt = stmt.where(
+                    table.mime_type.like(mime_val.replace("*", "%"))
+                )
+            else:
+                stmt = stmt.where(table.mime_type == mime_val)
+
+        if search_dto.start_date:
+            stmt = stmt.where(table.created_at >= search_dto.start_date)
+
+        if search_dto.end_date:
+            stmt = stmt.where(
+                table.created_at
+                < search_dto.end_date + datetime.timedelta(days=1)
+            )
+
+        if search_dto.is_root:
+            stmt = stmt.where(table.folder_id.is_(None))
+        elif search_dto.folder_id is not None:
+            stmt = stmt.where(table.folder_id == search_dto.folder_id)
+
+        return stmt
+
+    def _build_filtered_keys_subquery(
+        self,
+        search_dto: GallerySearchDto,
+        user_id: int | None = None,
+        requesting_user_id: int | None = None,
+        *,
+        top_n: int | None = None,
+    ) -> Any | None:
+        """Builds a base-table subquery yielding (id, item_type, created_at).
+
+        Filtering and sorting directly against the indexed base tables avoids
+        scanning all rows through ``unified_gallery_view`` (and constructing
+        per-row JSONB + tag aggregation) just to count or discard non-page rows.
+        When ``top_n`` is supplied for page-key selection across multiple
+        branches, each branch is pre-limited by ``(created_at DESC, id DESC)``
+        so Postgres can merge-append top keys without sorting the full table.
+        """
+        item_type = search_dto.item_type
+        include_media = True
+        include_source = True
+        if item_type == LOOP_MEDIA_ITEM:
+            include_source = False
+        elif item_type == LOOP_SOURCE_ASSET:
+            include_media = False
+        elif item_type:
+            include_media = False
+            include_source = False
+
+        if search_dto.status and search_dto.status != JobStatusEnum.COMPLETED:
+            include_source = False
+        if search_dto.model:
+            include_source = False
+
+        branches: list[Any] = []
+        tags = search_dto.tags or []
+        search_text = search_dto.query
+        search_pattern = f"%{search_text}%" if search_text else None
+
+        if include_media:
+            media_stmt = select(
+                MediaItem.id.label("id"),
+                literal(LOOP_MEDIA_ITEM).label("item_type"),
+                MediaItem.created_at.label("created_at"),
+            )
+            media_stmt = self._apply_common_filters(
+                media_stmt, MediaItem, search_dto, user_id, requesting_user_id
+            )
+            if not search_dto.include_deleted:
+                # Collapse completed stacks to latest take via shared predicate
+                # backed by ix_media_items_stack_root_active while keeping
+                # processing/failed jobs visible alongside latest cover.
+                latest_completed_filter = latest_completed_take_predicate()
+                if search_dto.status == JobStatusEnum.COMPLETED:
+                    media_stmt = media_stmt.where(latest_completed_filter)
+                else:
+                    media_stmt = media_stmt.where(
+                        or_(
+                            MediaItem.status != JobStatusEnum.COMPLETED.value,
+                            latest_completed_filter,
+                        )
+                    )
+            if search_dto.status:
+                media_stmt = media_stmt.where(
+                    MediaItem.status == search_dto.status.value
+                )
+            if search_dto.model:
+                media_stmt = media_stmt.where(
+                    MediaItem.model == search_dto.model.value
+                )
+            for tag_name in tags:
+                media_stmt = media_stmt.where(
+                    exists(
+                        select(1)
+                        .select_from(
+                            media_item_tags.join(
+                                Tag, media_item_tags.c.tag_id == Tag.id
+                            )
+                        )
+                        .where(
+                            media_item_tags.c.media_item_id == MediaItem.id,
+                            Tag.name == tag_name,
+                        )
+                    )
+                )
+            if search_pattern:
+                media_stmt = media_stmt.where(
+                    func.coalesce(MediaItem.prompt, "").ilike(search_pattern)
+                    | func.coalesce(MediaItem.comment, "").ilike(search_pattern)
+                    | func.coalesce(MediaItem.model, "").ilike(search_pattern)
+                )
+            if top_n is not None and include_source:
+                media_stmt = media_stmt.order_by(
+                    MediaItem.created_at.desc(),
+                    MediaItem.id.desc(),
+                ).limit(top_n)
+            branches.append(media_stmt)
+
+        if include_source:
+            source_stmt = select(
+                SourceAsset.id.label("id"),
+                literal(LOOP_SOURCE_ASSET).label("item_type"),
+                SourceAsset.created_at.label("created_at"),
+            )
+            source_stmt = self._apply_common_filters(
+                source_stmt,
+                SourceAsset,
+                search_dto,
+                user_id,
+                requesting_user_id,
+            )
+            if not search_dto.include_external:
+                source_stmt = source_stmt.where(
+                    SourceAsset.external_url.is_(None)
+                    | (SourceAsset.external_url == "")
+                )
+            for tag_name in tags:
+                source_stmt = source_stmt.where(
+                    exists(
+                        select(1)
+                        .select_from(
+                            source_asset_tags.join(
+                                Tag, source_asset_tags.c.tag_id == Tag.id
+                            )
+                        )
+                        .where(
+                            source_asset_tags.c.source_asset_id
+                            == SourceAsset.id,
+                            Tag.name == tag_name,
+                        )
+                    )
+                )
+            if search_pattern:
+                source_stmt = source_stmt.where(
+                    func.coalesce(SourceAsset.original_filename, "").ilike(
+                        search_pattern
+                    )
+                )
+            if top_n is not None and include_media:
+                source_stmt = source_stmt.order_by(
+                    SourceAsset.created_at.desc(),
+                    SourceAsset.id.desc(),
+                ).limit(top_n)
+            branches.append(source_stmt)
+
+        if not branches:
+            return None
+        if len(branches) == 1:
+            return branches[0].subquery("filtered_keys")
+        return union_all(*branches).subquery("filtered_keys")
+
     async def query(
         self,
         search_dto: GallerySearchDto,
         user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> PaginationResponseDto[UnifiedGalleryItemResponse]:
-        """Performs a paginated query on the unified view.
-        user_id is successfully resolved from search_dto.user_email in the Service layer if present.
+        """Runs a two-stage paginated query on gallery base tables and view.
+
+        Contract note: relies on the columns, eligibility, and metadata shape of
+        ``unified_gallery_view`` defined in
+        ``d4e5f6a7b8c9_create_folders_and_hierarchy.py``. ``user_id`` is
+        resolved from ``search_dto.user_email`` in the service layer when set.
         """
-        # 1. Build the base query
-        query = select(self.model)
+        page = (search_dto.offset // search_dto.limit) + 1
+        page_size = search_dto.limit
 
-        # Soft Delete Filter
-        if not search_dto.include_deleted:
-            query = query.where(self.model.deleted_at.is_(None))
-
-        # External resource filter: filter out external resources if include_external is False
-        if not search_dto.include_external:
-            query = query.where(
-                self.model.metadata_["external_url"].astext.is_(None)
-                | (self.model.metadata_["external_url"].astext == "")
+        count_keys_subq = self._build_filtered_keys_subquery(
+            search_dto,
+            user_id=user_id,
+            requesting_user_id=requesting_user_id,
+        )
+        if count_keys_subq is None:
+            return PaginationResponseDto[UnifiedGalleryItemResponse](
+                count=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+                data=[],
             )
 
-        # Filter by workspace (conditional for admins)
-        if search_dto.workspace_id is not None:
-            query = query.where(
-                self.model.workspace_id == search_dto.workspace_id
-            )
-
-        # Filter by status
-        if search_dto.status:
-            # We cast to string because JobStatusEnum is an enum but DB view column is string
-            query = query.where(self.model.status == search_dto.status.value)
-
-        # Filter by user_id
-        if user_id is not None:
-            query = query.where(self.model.user_id == user_id)
-
-        # Filter by user_email directly if provided in search_dto
-        if hasattr(search_dto, "user_email") and search_dto.user_email:
-            query = query.where(self.model.user_email == search_dto.user_email)
-
-        # Filter by metadata using JSONB operators
-        # 1. Mime Type
-        if search_dto.mime_type:
-            # Use .astext (->>) to get the unquoted string value from JSONB
-            mime_val = (
-                search_dto.mime_type.value
-                if hasattr(search_dto.mime_type, "value")
-                else search_dto.mime_type
-            )
-            if "*" in mime_val:
-                # PostgreSQL: metadata->>'mime_type' LIKE 'image/%'
-                prefix = mime_val.replace("*", "%")
-                query = query.where(
-                    self.model.metadata_["mime_type"].astext.like(prefix),
-                )
-            else:
-                query = query.where(
-                    self.model.metadata_["mime_type"].astext == mime_val,
-                )
-
-        # 2. Model
-        if search_dto.model:
-            query = query.where(
-                self.model.metadata_["model"].astext == search_dto.model.value,
-            )
-
-        # 3. Item Type
-        if hasattr(search_dto, "item_type") and search_dto.item_type:
-            query = query.where(self.model.item_type == search_dto.item_type)
-
-        # 4. Date Range
-        if hasattr(search_dto, "start_date") and search_dto.start_date:
-            query = query.where(self.model.created_at >= search_dto.start_date)
-
-        if hasattr(search_dto, "end_date") and search_dto.end_date:
-            # Add one day to include the full end date
-            query = query.where(
-                self.model.created_at
-                < search_dto.end_date + datetime.timedelta(days=1)
-            )
-
-        # 4.5 Tags Filter
-        if hasattr(search_dto, "tags") and search_dto.tags:
-            for tag_name in search_dto.tags:
-                query = query.where(
-                    self.model.metadata_["tags"].contains([{"name": tag_name}])
-                )
-
-        # 4.6 Folder Filter
-        if getattr(search_dto, "is_root", False):
-            query = query.where(self.model.folder_id.is_(None))
-        elif getattr(search_dto, "folder_id", None) is not None:
-            query = query.where(self.model.folder_id == search_dto.folder_id)
-
-        # 5. Full-Text Word Search
-        if hasattr(search_dto, "query") and search_dto.query:
-            search_pattern = f"%{search_dto.query}%"
-            query = query.where(
-                func.coalesce(self.model.metadata_["prompt"].astext, "").ilike(
-                    search_pattern
-                )
-                | func.coalesce(
-                    self.model.metadata_["file_name"].astext, ""
-                ).ilike(search_pattern)
-                | func.coalesce(self.model.metadata_["model"].astext, "").ilike(
-                    search_pattern
-                )
-                | func.coalesce(
-                    self.model.metadata_["original_filename"].astext, ""
-                ).ilike(search_pattern)
-            )
-
-        # 2. Get total count
-        count_query = select(func.count()).select_from(query.subquery())
+        # Stage 1: Count matching keys on base tables without view JSONB work.
+        count_query = select(func.count()).select_from(count_keys_subq)
+        if search_dto.include_deleted:
+            count_query = count_query.execution_options(include_deleted=True)
         count_result = await self.db.execute(count_query)
         total_count = count_result.scalar_one()
 
-        # 3. Add ordering and pagination
-        # Default ordering by created_at DESC
-        query = query.order_by(
-            self.model.created_at.desc(), self.model.id.desc()
+        total_pages = (total_count + page_size - 1) // page_size
+        if total_count == 0 or search_dto.offset >= total_count:
+            return PaginationResponseDto[UnifiedGalleryItemResponse](
+                count=total_count,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                data=[],
+            )
+
+        # Stage 2: Page keys on base tables, then push branch IDs into
+        # unified_gallery_view so Postgres resolves only page rows via PKs.
+        page_keys_subq = self._build_filtered_keys_subquery(
+            search_dto,
+            user_id=user_id,
+            requesting_user_id=requesting_user_id,
+            top_n=search_dto.offset + search_dto.limit,
         )
+        page_keys = (
+            select(
+                page_keys_subq.c.id,
+                page_keys_subq.c.item_type,
+                page_keys_subq.c.created_at,
+            )
+            .order_by(
+                page_keys_subq.c.created_at.desc(),
+                page_keys_subq.c.id.desc(),
+                page_keys_subq.c.item_type.desc(),
+            )
+            .offset(search_dto.offset)
+            .limit(search_dto.limit)
+            .cte("page_keys")
+        )
+        # Filter each UNION ALL branch of unified_gallery_view by a constant
+        # item_type + scalar ARRAY(...) so the planner pushes Index Scans down.
+        query = (
+            select(self.model)
+            .where(
+                or_(
+                    *(
+                        and_(
+                            self.model.item_type == branch_type,
+                            self.model.id
+                            == any_(
+                                func.array(
+                                    select(page_keys.c.id)
+                                    .where(page_keys.c.item_type == branch_type)
+                                    .scalar_subquery()
+                                )
+                            ),
+                        )
+                        for branch_type in (
+                            LOOP_MEDIA_ITEM,
+                            LOOP_SOURCE_ASSET,
+                        )
+                    )
+                )
+            )
+            .order_by(
+                self.model.created_at.desc(),
+                self.model.id.desc(),
+                self.model.item_type.desc(),
+            )
+        )
+        if search_dto.include_deleted:
+            query = query.execution_options(include_deleted=True)
 
-        # Offset-based pagination
-        query = query.offset(search_dto.offset).limit(search_dto.limit)
-
-        # 4. Execute
         result = await self.db.execute(query)
         rows = result.scalars().all()
 
-        data = []
-        for item in rows:
-            item_data = self.schema.model_validate(item)
-            data.append(item_data)
-
-        # 5. Determine next cursor (offset)
-        page = (search_dto.offset // search_dto.limit) + 1
-        page_size = search_dto.limit
-        total_pages = (total_count + page_size - 1) // page_size
+        data = [self.schema.model_validate(item) for item in rows]
 
         return PaginationResponseDto[UnifiedGalleryItemResponse](
             count=total_count,
@@ -199,19 +389,12 @@ class UnifiedGalleryRepository(
             data=data,
         )
 
-    def _loop_item_conditions(
-        self, *, workspace_id: int, mime_type_prefix: str
+    def _eligible_item_conditions(
+        self, *, mime_type_prefix: str
     ) -> tuple[Any, ...]:
-        """Conditions of a row a workflow ``Loop`` step may iterate over.
-
-        Non-deleted rows of the workspace whose ``mime_type`` starts with
-        ``"<mime_type_prefix>/"``: completed generated ``media_item`` rows
-        and uploaded ``source_asset`` rows. External resources
-        (``external_url`` set) are skipped, as in the default gallery view.
-        """
+        """Conditions for non-deleted gallery rows matching a MIME prefix."""
         external_url = self.model.metadata_["external_url"].astext
         return (
-            self.model.workspace_id == workspace_id,
             self.model.deleted_at.is_(None),
             self.model.metadata_["mime_type"].astext.like(
                 f"{mime_type_prefix}/%"
@@ -224,6 +407,21 @@ class UnifiedGalleryRepository(
                 ),
                 self.model.item_type == LOOP_SOURCE_ASSET,
             ),
+        )
+
+    def _loop_item_conditions(
+        self, *, workspace_id: int, mime_type_prefix: str
+    ) -> tuple[Any, ...]:
+        """Conditions of a row a workflow ``Loop`` step may iterate over.
+
+        Non-deleted rows of the workspace whose ``mime_type`` starts with
+        ``"<mime_type_prefix>/"``: completed generated ``media_item`` rows
+        and uploaded ``source_asset`` rows. External resources
+        (``external_url`` set) are skipped, as in the default gallery view.
+        """
+        return (
+            self.model.workspace_id == workspace_id,
+            *self._eligible_item_conditions(mime_type_prefix=mime_type_prefix),
         )
 
     async def list_folder_loop_items(
@@ -258,6 +456,7 @@ class UnifiedGalleryRepository(
             *self._loop_item_conditions(
                 workspace_id=workspace_id, mime_type_prefix=mime_type_prefix
             ),
+            self.model.is_latest_revision.is_(True),
             self.model.folder_id == folder_id,
         )
         count_result = await self.db.execute(
@@ -276,6 +475,21 @@ class UnifiedGalleryRepository(
         )
         rows = [(item_type, item_id) for item_type, item_id in rows_result]
         return rows, total
+
+    @staticmethod
+    def _build_loop_id_filters(
+        model: Any,
+        media_item_ids: Iterable[int],
+        source_asset_ids: Iterable[int],
+    ) -> list[Any]:
+        return [
+            and_(model.item_type == item_type, model.id.in_(ids))
+            for item_type, ids in (
+                (LOOP_MEDIA_ITEM, sorted(set(media_item_ids))),
+                (LOOP_SOURCE_ASSET, sorted(set(source_asset_ids))),
+            )
+            if ids
+        ]
 
     async def filter_linked_loop_items(
         self,
@@ -303,14 +517,9 @@ class UnifiedGalleryRepository(
             ``"media_item"`` or ``"source_asset"``). Empty, without any
             query, when no id is given.
         """
-        id_filters = [
-            and_(self.model.item_type == item_type, self.model.id.in_(ids))
-            for item_type, ids in (
-                (LOOP_MEDIA_ITEM, sorted(set(media_item_ids))),
-                (LOOP_SOURCE_ASSET, sorted(set(source_asset_ids))),
-            )
-            if ids
-        ]
+        id_filters = self._build_loop_id_filters(
+            self.model, media_item_ids, source_asset_ids
+        )
         if not id_filters:
             return set()
         result = await self.db.execute(
@@ -323,3 +532,34 @@ class UnifiedGalleryRepository(
             )
         )
         return {(item_type, item_id) for item_type, item_id in result}
+
+    async def lookup_linked_loop_item_workspaces(
+        self,
+        *,
+        media_item_ids: Iterable[int],
+        source_asset_ids: Iterable[int],
+        mime_type_prefix: str,
+    ) -> dict[tuple[str, int], int]:
+        """Returns workspace_id for eligible linked loop items across workspaces."""
+        id_filters = self._build_loop_id_filters(
+            self.model, media_item_ids, source_asset_ids
+        )
+        if not id_filters:
+            return {}
+        result = await self.db.execute(
+            select(
+                self.model.item_type,
+                self.model.id,
+                self.model.workspace_id,
+            ).where(
+                *self._eligible_item_conditions(
+                    mime_type_prefix=mime_type_prefix
+                ),
+                or_(*id_filters),
+            )
+        )
+        return {
+            (item_type, item_id): workspace_id
+            for item_type, item_id, workspace_id in result
+            if workspace_id is not None
+        }

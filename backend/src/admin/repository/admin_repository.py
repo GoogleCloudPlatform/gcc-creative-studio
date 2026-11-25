@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, update
 from src.database import get_db
 from src.users.user_model import User
-from src.workspaces.schema.workspace_model import Workspace
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceScopeEnum,
+)
 from src.source_assets.schema.source_asset_model import SourceAsset
 from src.common.schema.media_item_model import MediaItem, JobStatusEnum
 from src.admin.dto.admin_response_dto import (
@@ -52,8 +55,12 @@ class AdminRepository:
         self, start_date: str | None = None, end_date: str | None = None
     ) -> AdminOverviewStats:
         users_query = select(func.count(User.id))
-        workspaces_query = select(func.count(Workspace.id))
-        uploaded_query = select(func.count(SourceAsset.id))
+        workspaces_query = select(func.count(Workspace.id)).where(
+            Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+        )
+        uploaded_query = select(func.count(SourceAsset.id)).where(
+            SourceAsset.promoted_from_source_asset_id.is_(None)
+        )
 
         if end_date:
             users_query = users_query.where(
@@ -103,7 +110,7 @@ class AdminRepository:
                     else_=0,
                 )
             ).label("audios"),
-        )
+        ).where(MediaItem.promoted_from_media_item_id.is_(None))
         query_media = self._apply_date_filters(
             query_media, MediaItem, start_date, end_date
         )
@@ -158,7 +165,7 @@ class AdminRepository:
                     else_=0,
                 )
             ).label("audios"),
-        )
+        ).where(MediaItem.promoted_from_media_item_id.is_(None))
         query = self._apply_date_filters(query, MediaItem, start_date, end_date)
         query = query.group_by(func.date(MediaItem.created_at)).order_by(
             func.date(MediaItem.created_at)
@@ -211,6 +218,7 @@ class AdminRepository:
                 )
             ).label("audios"),
         ).join(Workspace, Workspace.id == MediaItem.workspace_id)
+        stmt = stmt.where(Workspace.scope != WorkspaceScopeEnum.PERSONAL.value)
 
         stmt = self._apply_date_filters(stmt, MediaItem, start_date, end_date)
 
@@ -237,7 +245,11 @@ class AdminRepository:
     async def get_active_roles(
         self, start_date: str | None = None, end_date: str | None = None
     ) -> list[AdminActiveRole]:
-        active_emails = select(MediaItem.user_email).distinct()
+        active_emails = (
+            select(MediaItem.user_email)
+            .where(MediaItem.promoted_from_media_item_id.is_(None))
+            .distinct()
+        )
         active_emails = self._apply_date_filters(
             active_emails, MediaItem, start_date, end_date
         )
@@ -264,7 +276,7 @@ class AdminRepository:
         query = select(
             MediaItem.status.label("status"),
             func.count(MediaItem.id).label("count"),
-        )
+        ).where(MediaItem.promoted_from_media_item_id.is_(None))
         query = self._apply_date_filters(query, MediaItem, start_date, end_date)
         query = query.group_by(MediaItem.status)
         health_stats = (await self.db.execute(query)).all()
@@ -280,7 +292,7 @@ class AdminRepository:
         query = select(
             func.to_char(MediaItem.created_at, "YYYY-MM").label("month"),
             func.count(func.distinct(MediaItem.user_email)).label("count"),
-        )
+        ).where(MediaItem.promoted_from_media_item_id.is_(None))
         query = self._apply_date_filters(query, MediaItem, start_date, end_date)
         query = query.group_by("month").order_by("month")
         results = (await self.db.execute(query)).all()

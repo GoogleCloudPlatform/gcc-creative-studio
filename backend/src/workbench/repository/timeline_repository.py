@@ -14,7 +14,7 @@
 """Repository for timeline database operations."""
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_repository import BaseRepository
@@ -90,7 +90,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                     first_frame_asset_ref=first_frame_ref,
                     last_frame_asset_ref=last_frame_ref,
                     placeholder=c.placeholder,
-                    presigned_url=getattr(c, "presigned_url", None),
+                    presigned_url=c.presigned_url,
                 )
             )
 
@@ -158,7 +158,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                         else 0.0
                     ),
                     placeholder=ac.placeholder,
-                    presigned_url=getattr(ac, "presigned_url", None),
+                    presigned_url=ac.presigned_url,
                 )
             )
 
@@ -176,11 +176,17 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                 duration_seconds=db_timeline.transition_out_duration or 0.0,
             )
 
+        ws_id = (db_timeline.workspace_id or "").strip()
+        if not ws_id:
+            loaded_sb = sa_inspect(db_timeline).dict.get("storyboard")
+            if loaded_sb is not None and loaded_sb.workspace_id is not None:
+                ws_id = str(loaded_sb.workspace_id)
+
         return VideoTimeline(
             timeline_id=db_timeline.id,
             storyboard_id=db_timeline.storyboard_id,
-            workspace_id=db_timeline.workspace_id
-            or str(db_timeline.storyboard_id or 1),
+            project_id=db_timeline.project_id,
+            workspace_id=ws_id,
             user_id=db_timeline.user_id,
             session_id=db_timeline.session_id,
             title=db_timeline.title or "",
@@ -317,6 +323,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             select(self.model)
             .where(self.model.id == timeline_id)
             .options(
+                selectinload(self.model.storyboard),
                 selectinload(self.model.video_clips),
                 selectinload(self.model.audio_clips),
             )
@@ -327,6 +334,23 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             return None
         return self._model_to_dto(item)
 
+    async def get_access_info(
+        self, timeline_id: int
+    ) -> tuple[int | None, int | None, str | None] | None:
+        """``(project_id, storyboard_id, user_id)`` of a timeline, or None.
+
+        A light query for ``TimelineAuth``: no clips are loaded.
+        """
+        result = await self.db.execute(
+            select(
+                self.model.project_id,
+                self.model.storyboard_id,
+                self.model.user_id,
+            ).where(self.model.id == timeline_id)
+        )
+        row = result.first()
+        return (row[0], row[1], row[2]) if row else None
+
     async def find_by_storyboard(
         self, storyboard_id: int
     ) -> list[TimelineResponse]:
@@ -335,6 +359,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             select(self.model)
             .where(self.model.storyboard_id == storyboard_id)
             .options(
+                selectinload(self.model.storyboard),
                 selectinload(self.model.video_clips),
                 selectinload(self.model.audio_clips),
             )
@@ -348,13 +373,14 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
     ) -> TimelineResponse:
         """Creates a new timeline along with its video and audio clips."""
         sb_id = None
-        if getattr(timeline_create, "storyboard_id", None) is not None:
+        if timeline_create.storyboard_id is not None:
             try:
                 sb_id = int(timeline_create.storyboard_id)  # type: ignore
             except (ValueError, TypeError):
                 sb_id = None
         db_timeline = Timeline(
             storyboard_id=sb_id,
+            project_id=timeline_create.project_id,
             workspace_id=str(timeline_create.workspace_id),
             user_id=(
                 str(timeline_create.user_id)
@@ -406,6 +432,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             select(self.model)
             .where(self.model.id == timeline_id)
             .options(
+                selectinload(self.model.storyboard),
                 selectinload(self.model.video_clips),
                 selectinload(self.model.audio_clips),
             )
@@ -418,11 +445,16 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
         if timeline_update.title is not None:
             db_timeline.title = timeline_update.title
 
-        if getattr(timeline_update, "storyboard_id", None) is not None:
+        if timeline_update.storyboard_id is not None:
             try:
                 db_timeline.storyboard_id = int(timeline_update.storyboard_id)  # type: ignore
             except (ValueError, TypeError):
                 pass
+
+        # The owning project never moves on update. A legacy row the migration
+        # could not attribute (NULL) is the only one an update may claim.
+        if db_timeline.project_id is None and timeline_update.project_id:
+            db_timeline.project_id = timeline_update.project_id
 
         db_timeline.workspace_id = str(timeline_update.workspace_id)
         if timeline_update.user_id is not None:

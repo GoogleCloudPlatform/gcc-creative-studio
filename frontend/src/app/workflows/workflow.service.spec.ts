@@ -173,7 +173,7 @@ describe('WorkflowService', () => {
     };
 
     service
-      .getRuns('wf-1', 20, 0, WorkflowRunStatusEnum.QUEUED)
+      .getRuns('wf-1', 7, 20, 0, WorkflowRunStatusEnum.QUEUED)
       .subscribe(res => {
         expect(res).toEqual(mockListResponse);
       });
@@ -181,6 +181,7 @@ describe('WorkflowService', () => {
     const req = httpMock.expectOne(
       r =>
         r.url === `${environment.backendURL}/workflows/wf-1/runs` &&
+        r.params.get('workspace_id') === '7' &&
         r.params.get('limit') === '20' &&
         r.params.get('offset') === '0' &&
         r.params.get('status') === 'queued',
@@ -195,13 +196,14 @@ describe('WorkflowService', () => {
       data: [],
     };
 
-    service.getRuns('wf-1', 10, 20, 'ALL').subscribe(res => {
+    service.getRuns('wf-1', 7, 10, 20, 'ALL').subscribe(res => {
       expect(res).toEqual(mockListResponse);
     });
 
     const req = httpMock.expectOne(
       r =>
         r.url === `${environment.backendURL}/workflows/wf-1/runs` &&
+        r.params.get('workspace_id') === '7' &&
         r.params.get('limit') === '10' &&
         r.params.get('offset') === '20' &&
         !r.params.has('status'),
@@ -347,8 +349,12 @@ describe('WorkflowService', () => {
     };
 
     const results: WorkflowRunListResponse[] = [];
-    service.getRuns('wf-1', 20, 0, 'ALL').subscribe(res => results.push(res));
-    service.getRuns('wf-1', 20, 0, 'ALL').subscribe(res => results.push(res));
+    service
+      .getRuns('wf-1', 7, 20, 0, 'ALL')
+      .subscribe(res => results.push(res));
+    service
+      .getRuns('wf-1', 7, 20, 0, 'ALL')
+      .subscribe(res => results.push(res));
 
     const req = httpMock.expectOne(
       r =>
@@ -361,7 +367,9 @@ describe('WorkflowService', () => {
     expect(results.length).toBe(2);
 
     // Subsequent call after completion triggers a fresh HTTP request
-    service.getRuns('wf-1', 20, 0, 'ALL').subscribe(res => results.push(res));
+    service
+      .getRuns('wf-1', 7, 20, 0, 'ALL')
+      .subscribe(res => results.push(res));
     const req2 = httpMock.expectOne(
       r =>
         r.url === `${environment.backendURL}/workflows/wf-1/runs` &&
@@ -370,6 +378,21 @@ describe('WorkflowService', () => {
     );
     req2.flush(mockListResponse);
     expect(results.length).toBe(3);
+  });
+
+  it('should not share an in-flight getRuns request across workspaces', () => {
+    const emptyResponse: WorkflowRunListResponse = {count: 0, data: []};
+    const runsUrl = `${environment.backendURL}/workflows/wf-1/runs`;
+
+    service.getRuns('wf-1', 7, 20, 0, 'ALL').subscribe();
+    service.getRuns('wf-1', 8, 20, 0, 'ALL').subscribe();
+
+    const requests = httpMock.match(r => r.url === runsUrl);
+    expect(requests.map(r => r.request.params.get('workspace_id'))).toEqual([
+      '7',
+      '8',
+    ]);
+    requests.forEach(r => r.flush(emptyResponse));
   });
 
   it('should keep in-flight getRunDetails request in pollRunDetails and ignore new timer ticks on slow network', fakeAsync(() => {

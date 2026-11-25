@@ -44,6 +44,7 @@ def fixture_mock_audio_service():
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
     auth.authorize = AsyncMock()
+    auth.authorize_write = AsyncMock()
     return auth
 
 
@@ -149,4 +150,37 @@ def test_generate_audio_rejects_invalid_folder_id(
     )
 
     assert response.status_code == 422
+    mock_audio_service.start_audio_generation_job.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"metadataGenerationModel": "../../publishers/google/models/foo"},
+        {"metadataGenerationModel": "lyria-002"},
+        {"workspaceId": 0},
+        {"workspaceId": -5},
+    ],
+)
+def test_generate_audio_rejects_unallowed_metadata_model_and_invalid_workspace_id(
+    client, mock_audio_service, override
+):
+    response = client.post(
+        "/api/audios/generate", json={**AUDIO_PAYLOAD, **override}
+    )
+
+    assert response.status_code == 422
+    mock_audio_service.start_audio_generation_job.assert_not_called()
+
+
+def test_generate_audio_rejects_unauthorized_403(
+    client, mock_audio_service, mock_workspace_auth
+):
+    from fastapi import HTTPException
+
+    mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden workspace access"
+    )
+    response = client.post("/api/audios/generate", json=AUDIO_PAYLOAD)
+    assert response.status_code == 403
     mock_audio_service.start_audio_generation_job.assert_not_called()

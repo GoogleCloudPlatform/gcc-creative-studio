@@ -14,12 +14,21 @@
  * limitations under the License.
  */
 
-import {Component, OnDestroy, OnInit, computed, signal} from '@angular/core';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute} from '@angular/router';
-import {Subscription} from 'rxjs';
+import {distinctUntilChanged, skip, Subscription} from 'rxjs';
 import {AuthService} from '../../common/services/auth.service';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -86,6 +95,8 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
   readonly currentOffset = signal<number>(0);
   readonly selectedStatus = signal<string>('ALL');
   readonly canRunBatch = signal<boolean>(false);
+  /** Workspace the listed runs belong to; runs are not fetched while null. */
+  private readonly activeWorkspaceId = signal<number | null>(null);
 
   readonly returnUrl = computed<string>(() => {
     const id = this.workflowId();
@@ -123,6 +134,25 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
           this.authService?.isUserWorkflows?.(),
       ),
     );
+    const workspaceState = inject(WorkspaceStateService);
+    this.activeWorkspaceId.set(workspaceState.getActiveWorkspaceId());
+    // Skip the current value: the initial load is driven by the route params.
+    workspaceState.activeWorkspaceId$
+      .pipe(distinctUntilChanged(), skip(1), takeUntilDestroyed())
+      .subscribe(workspaceId => {
+        this.activeWorkspaceId.set(workspaceId);
+        this.reloadForWorkspaceChange();
+      });
+  }
+
+  /** Drops runs and paging from the previous workspace and reloads. */
+  private reloadForWorkspaceChange(): void {
+    this.stopPolling();
+    this.runs.set([]);
+    this.currentOffset.set(0);
+    this.nextPageToken.set(null);
+    this.isLoading.set(false);
+    this.loadRuns(true);
   }
 
   ngOnInit(): void {
@@ -156,15 +186,18 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
 
   loadRuns(reset = false): void {
     const id = this.workflowId();
-    if (!id || this.isLoading()) return;
+    const workspaceId = this.activeWorkspaceId();
+    if (!id || workspaceId === null || this.isLoading()) return;
 
     this.isLoading.set(true);
     const offset = reset ? 0 : this.currentOffset();
 
     this.workflowService
-      .getRuns(id, this.pageSize, offset, this.selectedStatus())
+      .getRuns(id, workspaceId, this.pageSize, offset, this.selectedStatus())
       .subscribe({
         next: response => {
+          // A workspace switch happened while this page was loading.
+          if (workspaceId !== this.activeWorkspaceId()) return;
           const incomingRuns = response?.data ?? response?.runs ?? [];
           if (reset) {
             this.runs.set(incomingRuns);
@@ -192,6 +225,7 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
         },
         error: err => {
           console.error('Failed to load workflow runs', err);
+          if (workspaceId !== this.activeWorkspaceId()) return;
           this.isLoading.set(false);
         },
       });
@@ -373,7 +407,12 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
 
   private startPolling(): void {
     const id = this.workflowId();
-    if ((this.pollingSubscription && !this.pollingSubscription.closed) || !id) {
+    const workspaceId = this.activeWorkspaceId();
+    if (
+      (this.pollingSubscription && !this.pollingSubscription.closed) ||
+      !id ||
+      workspaceId === null
+    ) {
       return;
     }
 
@@ -381,7 +420,7 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     this.pollingSubscription = sub;
     sub.add(
       this.pollingService
-        .pollRuns(id, this.pageSize, this.selectedStatus())
+        .pollRuns(id, workspaceId, this.pageSize, this.selectedStatus())
         .subscribe({
           next: updatedRuns => this.handlePollingUpdate(updatedRuns),
           error: err => console.error('Polling error', err),

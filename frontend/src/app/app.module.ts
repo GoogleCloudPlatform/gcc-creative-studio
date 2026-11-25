@@ -100,7 +100,7 @@ import {LoginComponent} from './login/login.component';
 import {VideoComponent} from './video/video.component';
 import {VtoComponent} from './vto/vto.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
-import {ProjectsComponent} from './projects/projects.component';
+import {ProjectSwitcherComponent} from './workbench/components/project-switcher/project-switcher.component';
 import {ChatInterfaceComponent} from './workbench/components/chat-interface/chat-interface.component';
 import {BatchExecutionModalComponent} from './workflows/execution-history/batch-execution-modal/batch-execution-modal.component';
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
@@ -112,6 +112,7 @@ import {AddStepModalComponent} from './workflows/workflow-editor/add-step-modal/
 import {RunWorkflowModalComponent} from './workflows/workflow-editor/run-workflow-modal/run-workflow-modal.component';
 import {StepInputFieldComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-input-field/step-input-field.component';
 import {StepMediaInputComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-media-input/step-media-input.component';
+import {StepFolderInputComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-folder-input/step-folder-input.component';
 import {GenericStepComponent} from './workflows/workflow-editor/step-components/generic-step/generic-step.component';
 import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-editor.component';
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
@@ -125,6 +126,7 @@ import {TransitionIndicatorComponent} from './workbench/components/transition-in
 import {AudioClipInspectorComponent} from './workbench/components/audio-clip-inspector/audio-clip-inspector.component';
 import {ApprovalGateComponent} from './workbench/components/approval-gate/approval-gate.component';
 import {FeedbackFabComponent} from './common/components/feedback-fab/feedback-fab.component';
+import {RevisionHistoryStripComponent} from './gallery/media-detail/revision-history-strip/revision-history-strip.component';
 import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
 
 @NgModule({
@@ -156,6 +158,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     GenericStepComponent,
     StepInputFieldComponent,
     StepMediaInputComponent,
+    StepFolderInputComponent,
     RunWorkflowModalComponent,
     ExecutionHistoryComponent,
     ExecutionDetailsModalComponent,
@@ -164,7 +167,6 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     StepHistorySidebarDialogComponent,
     BatchExecutionModalComponent,
     UpscaleComponent,
-    ProjectsComponent,
     FeedbackFabComponent,
   ],
   imports: [
@@ -216,7 +218,9 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     AudioClipInspectorComponent,
     ApprovalGateComponent,
     TextFieldModule,
+    RevisionHistoryStripComponent,
     SafeUrlPipe,
+    ProjectSwitcherComponent,
   ],
   providers: [
     provideClientHydration(),
