@@ -198,6 +198,27 @@ export class WorkspaceStateService {
     this.canManageWorkspace(this.activeWorkspace()),
   );
 
+  isPersonalItem(
+    item:
+      | {workspaceId?: number | null; workspaceScope?: WorkspaceScope | string}
+      | null
+      | undefined,
+  ): boolean {
+    if (!item) {
+      return false;
+    }
+    if (item.workspaceScope === WorkspaceScope.PERSONAL) {
+      return true;
+    }
+    const personalId = this.personalWorkspaceId();
+    return (
+      personalId !== null &&
+      item.workspaceId !== undefined &&
+      item.workspaceId !== null &&
+      item.workspaceId === personalId
+    );
+  }
+
   setWorkspaces(list: Workspace[]): void {
     this.reconcileStorageUser();
     this.workspaces.set(list);

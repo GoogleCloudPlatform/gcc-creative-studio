@@ -53,6 +53,18 @@ export enum JobStatus {
 }
 
 /**
+ * Summary of an active promotion copy in a shared workspace.
+ */
+export interface PromotionSummary {
+  targetWorkspaceId: number;
+  targetWorkspaceName: string;
+  targetItemId: number;
+  targetFolderId?: number | null;
+  promotedRevisionNumber?: number | null;
+  promotedFromMediaItemId?: number | null;
+}
+
+/**
  * Represents a single media item, mirroring the Pydantic model from the backend.
  */
 export interface MediaItem {
@@ -63,6 +75,15 @@ export interface MediaItem {
   createdAt?: string; // ISO 8601 date string
   updatedAt?: string; // ISO 8601 date string
   // itemType and assetType removed as per refactoring
+
+  revisionRootId?: number | null;
+  revisionParentId?: number | null;
+  revisionNumber?: number;
+  revisionCount?: number;
+  isLatestRevision?: boolean;
+  promotedFromMediaItemId?: number | null;
+  promotedFromRootId?: number | null;
+  promotions?: PromotionSummary[];
 
   // Common fields across media types
   titles?: string[];

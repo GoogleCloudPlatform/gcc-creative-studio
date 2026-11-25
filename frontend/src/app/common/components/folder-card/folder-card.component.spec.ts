@@ -168,4 +168,17 @@ describe('FolderCardComponent', () => {
       jasmine.stringMatching(/"folderIds":\[1\]/),
     );
   });
+
+  it('should close menu and emit promoteRequested on onPromote', () => {
+    spyOn(component.promoteRequested, 'emit');
+    component.menuTrigger = {
+      closeMenu: jasmine.createSpy('closeMenu'),
+    } as never;
+    const event = new MouseEvent('click');
+    component.onPromote(event);
+    expect(component.menuTrigger.closeMenu).toHaveBeenCalled();
+    expect(component.promoteRequested.emit).toHaveBeenCalledWith(
+      component.folder,
+    );
+  });
 });

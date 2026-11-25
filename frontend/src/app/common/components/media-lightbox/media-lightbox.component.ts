@@ -60,6 +60,8 @@ import {
 import {FolderService} from '../../services/folder.service';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {UserService} from '../../services/user.service';
+import {PromoteDialogResult} from '../promote-dialog/promote-dialog.component';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -78,6 +80,7 @@ export class MediaLightboxComponent
   @Input() showMoveButton = false;
   @Input() showOmni = true;
   @Input() showIterateAudio = true;
+  @Input() showWorkspacePromoteBar = false;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
@@ -131,6 +134,7 @@ export class MediaLightboxComponent
   @Output() slideChanged = new EventEmitter<number>();
   /** Emits the destination folder id (null = All Media) after a successful move. */
   @Output() moved = new EventEmitter<number | null>();
+  @Output() promoted = new EventEmitter<PromoteDialogResult>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -163,7 +167,32 @@ export class MediaLightboxComponent
     private folderService: FolderService,
     private galleryService: GalleryService,
     private userService: UserService,
+    private promoteLauncher: PromoteLauncherService,
   ) {}
+
+  get isInPersonalWorkspace(): boolean {
+    return this.workspaceStateService.isPersonalItem(
+      this.mediaItem as GalleryItem | undefined,
+    );
+  }
+
+  get promoteButtonLabel(): string {
+    return this.promoteLauncher.getPromoteButtonLabel();
+  }
+
+  openPromoteDialog(): void {
+    if (!this.mediaItem) {
+      return;
+    }
+    const item = this.mediaItem as GalleryItem;
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: item.workspaceId,
+        items: [{id: item.id, type: item.itemType || 'media_item'}],
+        itemLabel: item.titles?.[0] || item.prompt || 'Selected item',
+      })
+      .subscribe(result => this.promoted.emit(result));
+  }
 
   private permissionUser(): PermissionUser {
     const details = this.userService.getUserDetails();
