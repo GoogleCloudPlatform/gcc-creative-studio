@@ -214,6 +214,8 @@ async def test_list_folder_loop_items_is_scoped_and_ordered(mock_db):
         assert "external_url" in sql
     assert "created_at ASC" in sqls[1]
     assert "LIMIT 100" in sqls[1]
+    assert "is_latest_revision" in sqls[0]
+    assert "is_latest_revision" in sqls[1]
 
 
 def _compiled_sql(statement) -> str:
@@ -247,6 +249,8 @@ async def test_filter_linked_loop_items_is_one_scoped_query(mock_db):
     assert "IN (3, 9)" in sql
     assert "IN (4)" in sql
     assert "folder_id" not in sql
+    # Pinned workflow links must stay resolvable across newer takes
+    assert "is_latest_revision" not in sql
 
 
 @pytest.mark.anyio
@@ -335,6 +339,8 @@ async def test_lookup_linked_loop_item_workspaces_maps_and_skips_empty(mock_db):
     sql = _compiled_sql(mock_db.execute.await_args.args[0])
     assert "workspace_id =" not in sql
     assert "deleted_at IS NULL" in sql
+    # Pinned item workspace resolution includes superseded takes
+    assert "is_latest_revision" not in sql
 
 
 @pytest.mark.anyio

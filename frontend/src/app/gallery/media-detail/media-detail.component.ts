@@ -32,7 +32,10 @@ import {
   getAudioTrackAnalysis,
   getAudioTrackMusicalProfile,
 } from '../../common/models/media-item.model';
-import {GalleryItem} from '../../common/models/gallery-item.model';
+import {
+  GalleryItem,
+  RevisionHistoryResponse,
+} from '../../common/models/gallery-item.model';
 import {CreatePromptMediaDto} from '../../common/models/prompt.model';
 import {SourceMediaItemLink} from '../../common/models/search.model';
 import {AuthService} from '../../common/services/auth.service';
@@ -132,6 +135,13 @@ export class MediaDetailComponent implements OnDestroy {
   isPromptExpanded = false;
   isSynthesizedPromptExpanded = false;
   public isIdentityExpanded = false;
+  public selectedAssetForLightbox: GalleryItem | null = null;
+  public lightboxInitialIndex = 0;
+  public revisionHistory: RevisionHistoryResponse | null = null;
+  public revisionHistoryError = false;
+  public isDeletingTake = false;
+  private revisionSub?: Subscription;
+  private revisionLoadSeq = 0;
 
   /**
    * Root→leaf ancestors of the folder that holds this item ([] = All Media).
@@ -423,9 +433,15 @@ export class MediaDetailComponent implements OnDestroy {
     this.routeSub?.unsubscribe();
     this.mediaSub?.unsubscribe();
     this.breadcrumbSub?.unsubscribe();
+    this.revisionSub?.unsubscribe();
   }
 
   fetchMediaDetails(id: number, isAsset = false): void {
+    this.mediaSub?.unsubscribe();
+    if (!this.revisionHistory?.takes.some(t => t.id === id)) {
+      this.revisionHistory = null;
+      this.revisionHistoryError = false;
+    }
     const fetchObs = isAsset
       ? this.galleryService.getAsset(id)
       : this.galleryService.getMedia(id);
@@ -441,6 +457,12 @@ export class MediaDetailComponent implements OnDestroy {
         this.loadingService.hide();
         this.readInitialIndexFromUrl();
         this.loadFolderBreadcrumbs();
+        if (!isAsset) {
+          this.loadRevisionHistory(data.id);
+        } else {
+          this.revisionHistory = null;
+          this.revisionHistoryError = false;
+        }
       },
       error: err => {
         console.error('Failed to fetch media details', err);
@@ -449,6 +471,99 @@ export class MediaDetailComponent implements OnDestroy {
         handleErrorSnackbar(this._snackBar, err, 'Fetch details');
       },
     });
+  }
+
+  loadRevisionHistory(itemId: number): void {
+    this.revisionSub?.unsubscribe();
+    this.revisionHistoryError = false;
+    const seq = ++this.revisionLoadSeq;
+    this.revisionSub = this.galleryService.getItemRevisions(itemId).subscribe({
+      next: history => {
+        if (seq !== this.revisionLoadSeq) {
+          return;
+        }
+        this.revisionHistory = history;
+        this.revisionHistoryError = false;
+      },
+      error: err => {
+        if (seq !== this.revisionLoadSeq) {
+          return;
+        }
+        console.error('Failed to load revision history', err);
+        this.revisionHistory = null;
+        this.revisionHistoryError = true;
+      },
+    });
+  }
+
+  onRevisionTakeSelected(take: GalleryItem): void {
+    if (!this.mediaItem) {
+      return;
+    }
+    this.mediaItem = {...take};
+    this.initialSlideIndex = 0;
+    this.currentImageIndex = 0;
+    this.loadFolderBreadcrumbs();
+  }
+
+  onEditFromRevisionTake(take: GalleryItem): void {
+    const selectedIdx =
+      this.mediaItem?.id === take.id ? this.currentImageIndex : 0;
+    this.onRevisionTakeSelected(take);
+    const mime = take.mimeType || '';
+    if (mime.startsWith('video/')) {
+      this.handleEditWithOmni({mediaItem: take, selectedIndex: selectedIdx});
+      return;
+    }
+    if (mime.startsWith('audio/')) {
+      const model = take.model;
+      if (model && !model.toLowerCase().startsWith('lyria')) {
+        return;
+      }
+      this.handleIterateAudio({mediaItem: take, selectedIndex: selectedIdx});
+      return;
+    }
+    this.generateWithThisImage(selectedIdx);
+  }
+
+  onDeleteRevisionTake(take: GalleryItem): void {
+    const takes = this.revisionHistory?.takes ?? [];
+    if (takes.length <= 1 || this.isDeletingTake) {
+      return;
+    }
+    const workspaceId =
+      take.workspaceId ??
+      this.mediaItem?.workspaceId ??
+      this.workspaceStateService.personalWorkspaceId();
+    if (!workspaceId) {
+      return;
+    }
+    const removedIdx = takes.findIndex(t => t.id === take.id);
+    this.isDeletingTake = true;
+    this.galleryService
+      .bulkDelete(
+        [{id: take.id, type: take.itemType || 'media_item'}],
+        workspaceId,
+      )
+      .subscribe({
+        next: () => {
+          this.isDeletingTake = false;
+          handleSuccessSnackbar(this._snackBar, 'Version deleted');
+          const remaining = takes.filter(t => t.id !== take.id);
+          const nextTake =
+            remaining[
+              Math.min(Math.max(0, removedIdx), remaining.length - 1)
+            ] ?? remaining[0];
+          if (nextTake) {
+            this.onRevisionTakeSelected(nextTake);
+            this.loadRevisionHistory(nextTake.id);
+          }
+        },
+        error: err => {
+          this.isDeletingTake = false;
+          handleErrorSnackbar(this._snackBar, err, 'Delete version');
+        },
+      });
   }
 
   /**
@@ -611,6 +726,10 @@ export class MediaDetailComponent implements OnDestroy {
       state: {
         remixState: {
           sourceMediaItems: [sourceMediaItem],
+          parentMediaItemId:
+            this.mediaItem.itemType === 'media_item'
+              ? this.mediaItem.id
+              : undefined,
           prompt: this.mediaItem.prompt,
           previewUrl: this.mediaItem.presignedUrls?.[index],
         },
@@ -693,12 +812,13 @@ export class MediaDetailComponent implements OnDestroy {
   }
 
   handleIterateAudio(event: {
-    mediaItem: MediaItem;
+    mediaItem: GalleryItem | MediaItem;
     selectedIndex: number;
   }): void {
-    if (!this.mediaItem) return;
+    const targetItem = event.mediaItem ?? this.mediaItem;
+    if (!targetItem) return;
     const remixState = buildAudioIterationRemixState(
-      this.mediaItem,
+      targetItem,
       event.selectedIndex,
     );
     void this.router.navigate(['/audio'], {state: {remixState}});
@@ -776,6 +896,10 @@ export class MediaDetailComponent implements OnDestroy {
 
     const remixState = {
       sourceMediaItems: [sourceMediaItem],
+      parentMediaItemId:
+        this.mediaItem.itemType === 'media_item'
+          ? this.mediaItem.id
+          : undefined,
       startImagePreviewUrl:
         this.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
       startConcatenation: true,
@@ -800,8 +924,10 @@ export class MediaDetailComponent implements OnDestroy {
   public deleteCurrentMedia(): void {
     if (!this.mediaItem?.id) return;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId === null) return;
+    const workspaceId =
+      this.mediaItem.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null || workspaceId === undefined) return;
 
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {

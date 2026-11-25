@@ -157,6 +157,12 @@ async def upload_upscale(
         alias="imagePreservationFactor",
     ),
     folder_id: int | None = Form(None, alias="folderId", gt=0),
+    parent_media_item_id: int | None = Form(
+        None, alias="parent_media_item_id", gt=0
+    ),
+    parent_media_item_id_camel: int | None = Form(
+        None, alias="parentMediaItemId", gt=0
+    ),
     current_user: UserModel = Depends(get_current_user),
     service: ImagenService = Depends(),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -179,6 +185,11 @@ async def upload_upscale(
         if image_preservation_factor is not None
         else image_preservation_factor_camel
     )
+    effective_parent_media_item_id = (
+        parent_media_item_id
+        if parent_media_item_id is not None
+        else parent_media_item_id_camel
+    )
 
     executor = request.app.state.executor
 
@@ -199,6 +210,7 @@ async def upload_upscale(
         enhance_input_image=effective_enhance_input_image,
         image_preservation_factor=effective_image_preservation_factor,
         folder_id=folder_id,
+        parent_media_item_id=effective_parent_media_item_id,
     )
 
 

@@ -89,6 +89,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   activeWorkspaceId$: Observable<number | null>;
   referenceVideo: ReferenceVideo | null = null;
   externalUrl: string | null = null;
+  parentMediaItemId: number | null = null;
 
   @HostListener('window:keydown.control.enter', ['$event'])
   handleCtrlEnter(event: Event) {
@@ -706,6 +707,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   onModeChanged(mode: string) {
     const previousMode = this.currentMode;
     this.currentMode = mode;
+    if (mode === 'Text to Image') {
+      this.parentMediaItemId = null;
+    }
     if (
       mode === 'Video to Image' &&
       !this.selectedGenerationModelObject?.capabilities?.supportsVideoReference
@@ -833,6 +837,16 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       };
     }
 
+    const parentId =
+      this.currentMode === 'Ingredients to Image' &&
+      validSourceMediaItems.length > 0
+        ? validSourceMediaItems.some(
+            item => item.mediaItemId === this.parentMediaItemId,
+          )
+          ? this.parentMediaItemId
+          : (validSourceMediaItems[0]?.mediaItemId ?? null)
+        : null;
+
     const payload: ImagenRequest = {
       ...this.searchRequest,
       negativePrompt: this.negativePhrases.join(', '),
@@ -847,6 +861,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           : undefined,
       workspaceId,
       contextWorkspaceId,
+      ...(parentId !== null && parentId !== undefined
+        ? {parentMediaItemId: parentId}
+        : {}),
       referenceVideo,
       externalUrl: this.externalUrl,
     };
@@ -924,6 +941,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.negativePhrases = [];
     this.referenceImages = [];
     this.sourceMediaItems = [];
+    this.parentMediaItemId = null;
     this.selectedGenerationModel = this.generationModels[0].viewValue;
     this.selectedGenerationModelObject = this.generationModels[0];
     this.selectedAspectRatio =
@@ -971,6 +989,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
 
     // Add to reference images
+    this.parentMediaItemId = mediaItemId;
     const refImage: ReferenceImage = {
       previewUrl: imageUrl,
       sourceMediaItem: {
@@ -1003,6 +1022,11 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.negativePhrases = state.negativePrompt
       ? state.negativePrompt.split(', ')
       : [];
+    if (state.parentMediaItemId !== undefined) {
+      this.parentMediaItemId = state.parentMediaItemId ?? null;
+    } else if (state.sourceMediaItems && state.sourceMediaItems.length > 0) {
+      this.parentMediaItemId = state.sourceMediaItems[0].mediaItemId ?? null;
+    }
 
     if (state.sourceAssetIds && state.sourceAssetIds.length > 0) {
       state.sourceAssetIds.forEach((assetId: number, index: number) => {
@@ -1240,7 +1264,13 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   clearImage(index: number, event: MouseEvent) {
     event.stopPropagation();
     if (index >= 0 && index < this.referenceImages.length) {
-      this.referenceImages.splice(index, 1);
+      const [removed] = this.referenceImages.splice(index, 1);
+      if (
+        removed?.sourceMediaItem?.mediaItemId === this.parentMediaItemId ||
+        this.referenceImages.length === 0
+      ) {
+        this.parentMediaItemId = null;
+      }
     }
   }
 

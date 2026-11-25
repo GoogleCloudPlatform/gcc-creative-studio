@@ -647,21 +647,43 @@ describe('AudioComponent', () => {
     expect(component.lyriaModel).toBe(GenerationModelEnum.LYRIA_002);
     expect(component.prompt).toBe('');
     expect(component.seed).toBeUndefined();
+    expect(component.parentMediaItemId).toBe(512);
     expect(component.referenceAudio).toEqual({
       id: 512,
       type: 'media_item',
       index: 1,
       name: 'Velvet Groove (Track 2)',
     });
+
+    component.prompt = 'Add warm upright bass';
+    component.generate();
+    expect(searchServiceSpy.startAudioGeneration).toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        parentMediaItemId: 512,
+        referenceAudio: {id: 512, type: 'media_item', index: 1},
+      }),
+    );
+
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.parentMediaItemId).toBeNull();
+    component.prompt = 'Fresh track without parent';
+    component.generate();
+    const freshPayload =
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0];
+    expect(freshPayload.parentMediaItemId).toBeUndefined();
   });
 
-  it('should strip consumed remixState from history.state via history.replaceState on init', () => {
+  it('should strip consumed remixState from history.state via history.replaceState on init and propagate parentMediaItemId', () => {
     const originalState = history.state;
     history.replaceState(
       {
         navigationId: 7,
         remixState: {
           lyriaModel: GenerationModelEnum.LYRIA_002,
+          parentMediaItemId: 901,
           referenceAudio: {
             id: 901,
             type: 'media_item',
@@ -677,12 +699,103 @@ describe('AudioComponent', () => {
     try {
       const freshFixture = TestBed.createComponent(AudioComponent);
       freshFixture.detectChanges();
-      expect(freshFixture.componentInstance.referenceAudio?.id).toBe(901);
+      const freshComponent = freshFixture.componentInstance;
+      expect(freshComponent.referenceAudio?.id).toBe(901);
+      expect(freshComponent.parentMediaItemId).toBe(901);
       expect(replaceSpy).toHaveBeenCalledWith({navigationId: 7}, '');
       expect(history.state?.remixState).toBeUndefined();
+
+      freshComponent.prompt = 'Brighter brass layer';
+      freshComponent.generate();
+      expect(searchServiceSpy.startAudioGeneration).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          parentMediaItemId: 901,
+          referenceAudio: {id: 901, type: 'media_item', index: 0},
+        }),
+      );
     } finally {
       history.replaceState(originalState, '');
     }
+  });
+
+  it('should clear or omit parentMediaItemId when replacing referenceAudio, switching to TTS, or remixing a source_asset', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 512,
+        model: GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        titles: ['Original Groove'],
+      }),
+      selectedIndex: 0,
+    });
+    expect(component.parentMediaItemId).toBe(512);
+
+    // Switching to TTS omits parentMediaItemId
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.onModeChanged('Text to Speech');
+    component.prompt = 'Speak cleanly';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0]
+        .parentMediaItemId,
+    ).toBeUndefined();
+
+    // Selecting a different media_item via picker clears stale parentMediaItemId
+    component.onModeChanged('Music');
+    dialogSpy.open.and.returnValue({
+      afterClosed: () =>
+        of({
+          mediaItem: makeAudioJob({id: 610, titles: ['Picked Track']}),
+          selectedIndex: 0,
+        }),
+    } as any);
+    component.openAudioSelectorForReference();
+    expect(component.referenceAudio?.id).toBe(610);
+    expect(component.parentMediaItemId).toBeNull();
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.prompt = 'Blend with picker track';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0]
+        .parentMediaItemId,
+    ).toBeUndefined();
+
+    // Dropping an uploaded audio file clears stale parentMediaItemId
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 512,
+        model: GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+      }),
+      selectedIndex: 0,
+    });
+    expect(component.parentMediaItemId).toBe(512);
+    sourceAssetServiceSpy.uploadAsset.and.returnValue(
+      of({
+        id: 700,
+        gcsUri: 'gs://bucket/upload.mp3',
+        originalFilename: 'upload.mp3',
+      } as any),
+    );
+    component.onReferenceAudioDrop(
+      makeDropEvent(new File(['mp3'], 'upload.mp3', {type: 'audio/mpeg'})),
+    );
+    expect(component.referenceAudio).toEqual({
+      id: 700,
+      type: 'source_asset',
+      name: 'upload.mp3',
+      index: 0,
+    });
+    expect(component.parentMediaItemId).toBeNull();
+
+    // Iterating on a source_asset keeps parentMediaItemId null
+    component.handleIterateAudio({
+      mediaItem: {
+        ...makeAudioJob({id: 701}),
+        itemType: 'source_asset',
+      } as any,
+      selectedIndex: 0,
+    });
+    expect(component.referenceAudio?.type).toBe('source_asset');
+    expect(component.parentMediaItemId).toBeNull();
   });
 
   it("should normalize legacy localStorage model IDs ('lyria-002', 'chirp_3', 'gemini-3.1-flash-tts-preview') to UI families on restoreState", () => {

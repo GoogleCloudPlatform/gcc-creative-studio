@@ -46,6 +46,7 @@ export interface ConcatenationInput {
 }
 export interface ConcatenateVideosDto {
   workspaceId: number;
+  parentMediaItemId?: number | null;
   name: string;
   inputs: ConcatenationInput[];
   aspectRatio: string;

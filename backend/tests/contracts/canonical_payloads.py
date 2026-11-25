@@ -159,6 +159,7 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
             "prompt": "Hero shoe shot with shared brand context",
             "workspaceId": 1,
             "contextWorkspaceId": 5,
+            "parentMediaItemId": 10,
             "aspectRatio": "1:1",
             "numberOfMedia": 1,
             "useBrandGuidelines": True,
@@ -184,6 +185,7 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
             "prompt": "Slow pan with shared context",
             "workspaceId": 1,
             "contextWorkspaceId": 5,
+            "parentMediaItemId": 10,
             "aspectRatio": "16:9",
             "numberOfMedia": 1,
         },
@@ -194,6 +196,7 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
         {
             "name": "Concatenated Video",
             "workspaceId": 1,
+            "parentMediaItemId": 10,
             "inputs": [
                 {"id": 10, "type": "media_item"},
                 {"id": 11, "type": "source_asset"},
@@ -219,6 +222,7 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
         {
             "workspaceId": 1,
             "contextWorkspaceId": 5,
+            "parentMediaItemId": 9,
             "numberOfMedia": 4,
             "personImage": {"sourceAssetId": 5},
             "topImage": {
@@ -229,7 +233,12 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
     (
         "POST",
         "/api/audios/generate",
-        {"prompt": "Upbeat synth bed", "workspaceId": 1, "sampleCount": 1},
+        {
+            "prompt": "Upbeat synth bed",
+            "workspaceId": 1,
+            "sampleCount": 1,
+            "parentMediaItemId": 8,
+        },
     ),
     (
         "POST",

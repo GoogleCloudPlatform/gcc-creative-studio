@@ -1,0 +1,110 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<section class="revision-strip" aria-label="Revision History">
+  <header class="revision-header">
+    <div class="revision-summary tabular-nums">
+      <span class="revision-title">Revision History</span>
+      <span class="sep">·</span>
+      <span class="revision-count">{{ takes.length }} {{ takes.length === 1 ? 'version' : 'versions' }}</span>
+    </div>
+  </header>
+
+  <div class="takes-scroller">
+    @for (take of takes; track take.id; let idx = $index) {
+      <button
+        type="button"
+        class="take-card"
+        [class.active]="activeTake?.id === take.id"
+        [attr.aria-current]="activeTake?.id === take.id ? 'true' : null"
+        (click)="selectTake(take)"
+      >
+        <div class="take-thumb">
+          @if (take.mimeType?.startsWith('audio/')) {
+            <mat-icon class="take-media-icon">graphic_eq</mat-icon>
+          } @else {
+            @if (getTakePreviewUrl(take); as thumbUrl) {
+              @if (take.mimeType?.startsWith('video/') && !take.presignedThumbnailUrls?.length) {
+                <mat-icon class="take-media-icon">videocam</mat-icon>
+              } @else {
+                <img [src]="thumbUrl" [alt]="'Version ' + getTakeVersionNumber(take, idx)" />
+              }
+            } @else {
+              <mat-icon class="take-media-icon">image</mat-icon>
+            }
+          }
+        </div>
+        <div class="take-meta tabular-nums">
+          <span class="take-version">v{{ getTakeVersionNumber(take, idx) }}</span>
+        </div>
+      </button>
+    }
+  </div>
+
+  @if (activeTake; as currentTake) {
+    <div class="take-actions">
+      @if (canEditTake(currentTake)) {
+        <button
+          id="revision-edit-btn"
+          mat-stroked-button
+          type="button"
+          class="action-btn tabular-nums"
+          (click)="requestEditFrom()"
+        >
+          Edit from v{{ getActiveVersionNumber() }}
+        </button>
+      }
+
+      @if (pendingDeleteTakeId() === currentTake.id) {
+        <div class="delete-confirm-group">
+          <button
+            id="revision-confirm-delete-btn"
+            mat-flat-button
+            color="warn"
+            type="button"
+            class="action-btn tabular-nums"
+            [disabled]="isDeleting"
+            (click)="confirmDeleteTake()"
+          >
+            Confirm delete v{{ getActiveVersionNumber() }}
+          </button>
+          <button
+            id="revision-cancel-delete-btn"
+            mat-button
+            type="button"
+            class="action-btn"
+            (click)="cancelDeleteConfirmation()"
+          >
+            Cancel
+          </button>
+        </div>
+      } @else {
+        <span [matTooltip]="takes.length <= 1 ? 'Use item delete to remove the only version' : 'Delete this version'">
+          <button
+            id="revision-delete-btn"
+            mat-stroked-button
+            type="button"
+            class="action-btn"
+            [disabled]="takes.length <= 1 || isDeleting"
+            (click)="startDeleteConfirmation()"
+          >
+            Delete take
+          </button>
+        </span>
+      }
+    </div>
+  }
+</section>

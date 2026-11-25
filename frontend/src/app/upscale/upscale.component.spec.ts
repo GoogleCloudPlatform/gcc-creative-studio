@@ -102,4 +102,28 @@ describe('UpscaleComponent', () => {
       workspaceId: 11,
     });
   });
+
+  it('includes parentMediaItemId when upscaling an existing media_item', () => {
+    component.selectedAsset = {
+      id: 42,
+      itemType: 'media_item',
+      gcsUri: 'gs://bucket/gen.png',
+      originalFilename: 'gen.png',
+      mimeType: 'image/png',
+      aspectRatio: '16:9',
+    } as any;
+    component.upscaleFactor = 'x4';
+
+    component.startUpscale();
+
+    expect(
+      mockSourceAssetService.upscaleExistingAsset,
+    ).toHaveBeenCalledOnceWith(component.selectedAsset, {
+      upscaleFactor: 'x4',
+      enhance_input_image: component.enhanceInputImage,
+      image_preservation_factor: component.imagePreservationFactor,
+      workspaceId: 11,
+      parentMediaItemId: 42,
+    });
+  });
 });

@@ -34,6 +34,8 @@ import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialo
 import {MediaItem} from '../../models/media-item.model';
 import {TagModel} from '../../services/tags.service';
 import {GalleryDragPayload} from '../../models/folder.model';
+import {WorkspaceScope} from '../../models/workspace.model';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 
 @Component({
   selector: 'app-gallery-card',
@@ -48,6 +50,7 @@ export class GalleryCardComponent implements OnDestroy {
     private userService: UserService,
     public dialog: MatDialog,
     @Inject(PLATFORM_ID) private platformId: Object,
+    private workspaceStateService: WorkspaceStateService,
   ) {
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
@@ -107,6 +110,26 @@ export class GalleryCardComponent implements OnDestroy {
   loadedMedia: Record<number, boolean> = {};
   hoveredVideoId: number | null = null;
   hoveredAudioId: number | null = null;
+
+  get isInPersonalWorkspace(): boolean {
+    const personalId = this.workspaceStateService.personalWorkspaceId();
+    if (!this.item) {
+      return false;
+    }
+    if (this.item.workspaceScope === WorkspaceScope.PERSONAL) {
+      return true;
+    }
+    return personalId !== null && this.item.workspaceId === personalId;
+  }
+
+  get cardStatusText(): string {
+    if (!this.item) {
+      return '';
+    }
+    const revCount = this.item.revisionCount ?? 1;
+    const revNum = this.item.revisionNumber ?? revCount;
+    return revCount > 1 ? `v${revNum} · ${revCount} versions` : '';
+  }
 
   get displayUrls(): string[] {
     if (

@@ -54,6 +54,7 @@ export interface CreateAudioDto {
   sourceAssetIds?: number[];
   sourceMediaItems?: SourceMediaItemLink[];
   referenceAudio?: AssetReferenceDto | null;
+  parentMediaItemId?: number | null;
 
   // TTS Specific
   languageCode?: LanguageEnum;

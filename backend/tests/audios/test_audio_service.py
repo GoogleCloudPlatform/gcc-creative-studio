@@ -54,6 +54,10 @@ from src.audios.audio_constants import LanguageEnum, VoiceEnum
 @pytest.fixture(name="mock_media_repo")
 def fixture_mock_media_repo():
     repo = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = None
+    repo.db = MagicMock()
+    repo.db.execute = AsyncMock(return_value=execute_result)
     repo.create = AsyncMock()
     repo.update = AsyncMock()
     return repo
@@ -2704,3 +2708,209 @@ class TestReferenceAudioIteration:
                     ),
                 },
             )
+
+
+class TestAudioServiceRevisionLineage:
+    """Behavioral tests for audio parent_media_item_id authorization and lineage."""
+
+    @pytest.mark.anyio
+    async def test_start_audio_job_authorizes_parent_and_inherits_stack_folder(
+        self,
+        audio_service,
+        mock_media_repo,
+        sample_create_lyria_dto,
+        sample_user,
+    ):
+        from src.galleries.revision_lineage import RevisionLineage
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured: list[MediaItemModel] = []
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured.append(item)
+            item.id = 810
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        dto = sample_create_lyria_dto.model_copy(
+            update={"workspace_id": 10, "parent_media_item_id": 805}
+        )
+
+        with (
+            patch(
+                "src.audios.audio_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=set()),
+            ) as ensure_refs,
+            patch(
+                "src.audios.audio_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=800,
+                        revision_parent_id=805,
+                        revision_number=2,
+                        inherited_folder_id=33,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await audio_service.start_audio_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert res.id == 810
+        assert ensure_refs.await_args.kwargs["media_item_ids"] == [805]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 805
+        assert mock_lineage.await_args.kwargs["source_media_items"] is None
+        assert captured[0].revision_root_id == 800
+        assert captured[0].revision_parent_id == 805
+        assert captured[0].revision_number == 2
+        assert captured[0].folder_id == 33
+
+    @pytest.mark.anyio
+    async def test_start_audio_job_falls_back_to_media_item_reference_audio_for_lineage(
+        self,
+        audio_service,
+        mock_media_repo,
+        sample_create_lyria_dto,
+        sample_user,
+    ):
+        from src.galleries.revision_lineage import RevisionLineage
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured: list[MediaItemModel] = []
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured.append(item)
+            item.id = 811
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        media_ref_dto = sample_create_lyria_dto.model_copy(
+            update={
+                "workspace_id": 10,
+                "reference_audio": AssetReferenceDto(
+                    id=805, type="media_item", index=1
+                ),
+            }
+        )
+        asset_ref_dto = sample_create_lyria_dto.model_copy(
+            update={
+                "workspace_id": 10,
+                "reference_audio": AssetReferenceDto(
+                    id=905, type="source_asset", index=0
+                ),
+            }
+        )
+
+        with (
+            patch(
+                "src.audios.audio_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=set()),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    side_effect=[
+                        RevisionLineage(
+                            revision_root_id=800,
+                            revision_parent_id=805,
+                            revision_number=2,
+                            inherited_folder_id=33,
+                        ),
+                        RevisionLineage(None, None, 1, None),
+                    ]
+                ),
+            ) as mock_lineage,
+        ):
+            await audio_service.start_audio_generation_job(
+                request_dto=media_ref_dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+            media_call = mock_lineage.await_args_list[0].kwargs
+            assert media_call["explicit_parent_id"] is None
+            assert len(media_call["source_media_items"]) == 1
+            assert media_call["source_media_items"][0].media_item_id == 805
+            assert media_call["source_media_items"][0].media_index == 1
+            assert (
+                media_call["source_media_items"][0].role
+                == AssetRoleEnum.AUDIO_REFERENCE
+            )
+
+            await audio_service.start_audio_generation_job(
+                request_dto=asset_ref_dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+            asset_call = mock_lineage.await_args_list[1].kwargs
+            assert asset_call["explicit_parent_id"] is None
+            assert asset_call["source_media_items"] is None
+
+        assert captured[0].revision_root_id == 800
+        assert captured[0].revision_number == 2
+        assert captured[1].revision_root_id is None
+        assert captured[1].revision_number == 1
+
+    @pytest.mark.anyio
+    async def test_start_audio_job_does_not_link_lyria3_reference_images_into_stack(
+        self,
+        audio_service,
+        mock_media_repo,
+        sample_user,
+    ):
+        from src.galleries.revision_lineage import RevisionLineage
+        from src.workspaces.generation_workspace import GenerationContext
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            item.id = 812
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        dto = CreateAudioDto(
+            workspace_id=10,
+            prompt="Moody synth score inspired by image",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=701, media_index=0, role=AssetRoleEnum.INPUT
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "src.audios.audio_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=set()),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(None, None, 1, None)
+                ),
+            ) as mock_lineage,
+        ):
+            await audio_service.start_audio_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] is None
+        assert mock_lineage.await_args.kwargs["source_media_items"] is None
