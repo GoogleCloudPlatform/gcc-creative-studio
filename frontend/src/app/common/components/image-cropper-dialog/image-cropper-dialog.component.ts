@@ -65,12 +65,13 @@ interface AspectRatio {
   stringValue: string;
 }
 
-interface ImageCropperDialogData {
+export interface ImageCropperDialogData {
   imageFile?: File;
   imageUrl?: string;
   assetType?: AssetTypeEnum;
   aspectRatios?: AspectRatio[];
   enableUpscale?: boolean;
+  targetWorkspaceId?: number | null;
 }
 
 interface TextInputCanvas {
@@ -158,24 +159,26 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     data: {index: number; ref: ReferenceImage},
     referenceImages: ReferenceImage[],
     saveState: () => void,
+    targetWorkspaceId?: number | null,
   ): void {
     const previewUrl = data.ref?.previewUrl;
     if (!previewUrl) return;
 
-    ImageCropperDialogComponent.open(dialog, {imageUrl: previewUrl}).subscribe(
-      result => {
-        if (result && result.id) {
-          referenceImages[data.index] = {
-            ...referenceImages[data.index],
-            sourceAssetId: result.id,
-            sourceMediaItem: undefined,
-            previewUrl:
-              result.presignedUrl || result.presignedThumbnailUrl || previewUrl,
-          };
-          saveState();
-        }
-      },
-    );
+    ImageCropperDialogComponent.open(dialog, {
+      imageUrl: previewUrl,
+      targetWorkspaceId,
+    }).subscribe(result => {
+      if (result && result.id) {
+        referenceImages[data.index] = {
+          ...referenceImages[data.index],
+          sourceAssetId: result.id,
+          sourceMediaItem: undefined,
+          previewUrl:
+            result.presignedUrl || result.presignedThumbnailUrl || previewUrl,
+        };
+        saveState();
+      }
+    });
   }
 
   constructor(
@@ -635,10 +638,15 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     file: File,
     aspectRatio: string,
   ): Observable<SourceAssetResponseDto> {
-    return this.sourceAssetService.uploadAsset(file, {
-      aspectRatio: aspectRatio,
-      scope: AssetScopeEnum.PRIVATE,
-      assetType: this.data.assetType || AssetTypeEnum.GENERIC_IMAGE,
-    });
+    return this.sourceAssetService.uploadAsset(
+      file,
+      {
+        aspectRatio: aspectRatio,
+        scope: AssetScopeEnum.PRIVATE,
+        assetType: this.data.assetType || AssetTypeEnum.GENERIC_IMAGE,
+      },
+      this.data.targetWorkspaceId ?? null,
+      null,
+    );
   }
 }

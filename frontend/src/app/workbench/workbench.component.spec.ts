@@ -93,6 +93,20 @@ describe('WorkbenchComponent', () => {
       activeProjectId: signal<number | null>(null),
       activeProjectWorkspaceId: signal<number | null>(null),
     };
+    let activeWorkspaceId: number | null = 1;
+    const mockWorkspaceStateService = {
+      getActiveWorkspaceId: jasmine
+        .createSpy('getActiveWorkspaceId')
+        .and.callFake(() => activeWorkspaceId),
+      setActiveWorkspaceId: jasmine
+        .createSpy('setActiveWorkspaceId')
+        .and.callFake((id: number | null) => {
+          activeWorkspaceId = id;
+        }),
+      personalWorkspaceId: jasmine
+        .createSpy('personalWorkspaceId')
+        .and.returnValue(1),
+    };
 
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
@@ -101,6 +115,7 @@ describe('WorkbenchComponent', () => {
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: MatSnackBar, useValue: mockMatSnackBar},
         {provide: ActivatedRoute, useValue: mockActivatedRoute},
+        {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     })
@@ -1718,12 +1733,14 @@ describe('WorkbenchComponent', () => {
       );
     });
 
-    it('falls back to the switcher workspace while no project is active', () => {
+    it('falls back to the switcher workspace while no project or personal workspace is active', () => {
       const create = spyOn(
         TestBed.inject(WorkbenchService),
         'createTimeline',
       ).and.returnValue(new Subject<TimelineDTO>());
-      TestBed.inject(WorkspaceStateService).setActiveWorkspaceId(20);
+      const ws = TestBed.inject(WorkspaceStateService) as any;
+      ws.personalWorkspaceId.and.returnValue(null);
+      ws.setActiveWorkspaceId(20);
       TestBed.inject(TimelineStateService).timelineClips.set([clip]);
 
       component.saveTimeline();
@@ -1983,5 +2000,124 @@ describe('WorkbenchComponent', () => {
       // "already loaded": pre-selecting it left the chat empty on entry.
       expect(TestBed.inject(AgentChatService).selectedSessionId()).toBeNull();
     });
+  });
+
+  it('should align saveTimeline workspace_id with activeProjectWorkspaceId in a shared workspace', () => {
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    const workbenchService = TestBed.inject(WorkbenchService);
+    const stateService = TestBed.inject(TimelineStateService);
+    projectState.activeProjectId.set(77);
+    projectState.activeProjectWorkspaceId.set(22);
+    workspaceStateService.personalWorkspaceId.and.returnValue(11);
+    workspaceStateService.getActiveWorkspaceId.and.returnValue(22);
+    stateService.loadedTimelineId.set(undefined);
+    stateService.timelineClips.set([
+      {
+        id: 'c1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 5,
+        offset: 0,
+        trackIndex: 0,
+        color: 'blue',
+        mediaItemId: 101,
+      },
+    ]);
+    const createSpy = spyOn(workbenchService, 'createTimeline').and.returnValue(
+      of({timeline_id: 99, workspace_id: 22, project_id: 77} as any),
+    );
+
+    component.saveTimeline();
+
+    expect(createSpy).toHaveBeenCalled();
+    const sent = createSpy.calls.mostRecent().args[0];
+    expect(sent.project_id).toBe(77);
+    expect(sent.workspace_id).toBe(22);
+  });
+
+  it('should route new manual timeline saves without an active project to personal workspace while shared is active', () => {
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    const workbenchService = TestBed.inject(WorkbenchService);
+    const stateService = TestBed.inject(TimelineStateService);
+    projectState.activeProjectId.set(null);
+    projectState.activeProjectWorkspaceId.set(null);
+    workspaceStateService.personalWorkspaceId.and.returnValue(11);
+    workspaceStateService.getActiveWorkspaceId.and.returnValue(22);
+    stateService.loadedTimelineId.set(undefined);
+    stateService.timelineClips.set([
+      {
+        id: 'c1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 5,
+        offset: 0,
+        trackIndex: 0,
+        color: 'blue',
+        mediaItemId: 101,
+      },
+    ]);
+    const createSpy = spyOn(workbenchService, 'createTimeline').and.returnValue(
+      of({timeline_id: 99, workspace_id: 11} as any),
+    );
+
+    component.saveTimeline();
+
+    expect(createSpy).toHaveBeenCalled();
+    expect(createSpy.calls.mostRecent().args[0].workspace_id).toBe(11);
+  });
+
+  it('should preserve loaded shared timeline workspace_id across saves and omit context_workspace_id on render', () => {
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    const workbenchService = TestBed.inject(WorkbenchService);
+    const stateService = TestBed.inject(TimelineStateService);
+    workspaceStateService.personalWorkspaceId.and.returnValue(11);
+    workspaceStateService.getActiveWorkspaceId.and.returnValue(22);
+    component.processGeneratedData({
+      timeline_id: 55,
+      workspace_id: 22,
+      title: 'Shared Timeline',
+      video_clips: [],
+      audio_clips: [],
+    });
+    stateService.loadedTimelineId.set(55);
+    const updateSpy = spyOn(workbenchService, 'updateTimeline').and.returnValue(
+      of({timeline_id: 55, workspace_id: 22} as any),
+    );
+    const renderSpy = spyOn(workbenchService, 'renderVideo').and.returnValue(
+      of({id: 300, status: 'completed', presignedUrls: []} as any),
+    );
+
+    component.saveTimeline();
+    expect(updateSpy.calls.mostRecent().args[1].workspace_id).toBe(22);
+
+    component.downloadVideo();
+    expect(renderSpy).toHaveBeenCalledOnceWith({timeline_id: 55});
+  });
+
+  it('should fail closed when no workspace is available on saveTimeline', () => {
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    const workbenchService = TestBed.inject(WorkbenchService);
+    const stateService = TestBed.inject(TimelineStateService);
+    projectState.activeProjectWorkspaceId.set(null);
+    stateService.timelineClips.set([
+      {
+        id: 'c1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 5,
+        offset: 0,
+        trackIndex: 0,
+        color: 'blue',
+        mediaItemId: 101,
+      },
+    ]);
+    workspaceStateService.personalWorkspaceId.and.returnValue(null);
+    workspaceStateService.getActiveWorkspaceId.and.returnValue(null);
+    const createSpy = spyOn(workbenchService, 'createTimeline');
+
+    component.saveTimeline();
+
+    expect(component.lastSavedText()).toBe('Workspace required');
+    expect(createSpy).not.toHaveBeenCalled();
   });
 });

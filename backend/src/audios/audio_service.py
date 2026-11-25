@@ -67,7 +67,6 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
-from src.folders.output_folder import resolve_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
@@ -79,6 +78,10 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.source_assets.schema.source_asset_model import AssetScopeEnum
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,13 +182,19 @@ async def _resolve_workspace_source_asset(
     asset_id: int,
     workspace_id: int,
     kind: str,
+    allowed_workspace_ids: frozenset[int] | None = None,
 ) -> tuple[str, str]:
+    valid_workspaces = (
+        allowed_workspace_ids
+        if allowed_workspace_ids is not None
+        else frozenset({workspace_id})
+    )
     asset = await source_asset_repo.get_by_id(asset_id)
     if (
         not asset
         or _is_asset_deleted(asset)
         or (
-            asset.workspace_id != workspace_id
+            asset.workspace_id not in valid_workspaces
             and asset.scope != AssetScopeEnum.SYSTEM
         )
     ):
@@ -206,9 +215,19 @@ async def _resolve_workspace_media_item(
     media_index: int,
     workspace_id: int,
     kind: str,
+    allowed_workspace_ids: frozenset[int] | None = None,
 ) -> tuple[Any, str, str]:
+    valid_workspaces = (
+        allowed_workspace_ids
+        if allowed_workspace_ids is not None
+        else frozenset({workspace_id})
+    )
     item = await media_repo.get_by_id(media_item_id)
-    if not item or _is_asset_deleted(item) or item.workspace_id != workspace_id:
+    if (
+        not item
+        or _is_asset_deleted(item)
+        or item.workspace_id not in valid_workspaces
+    ):
         raise AudioGenerationError(
             f"Media item {media_item_id} was not found in this workspace."
         )
@@ -232,6 +251,7 @@ async def _resolve_lyria3_reference_images(
     request_dto: CreateAudioDto,
     media_repo: MediaRepository,
     source_asset_repo: SourceAssetRepository,
+    allowed_workspace_ids: frozenset[int] | None = None,
 ) -> tuple[
     list[dict[str, str]],
     list[SourceAssetLink],
@@ -244,7 +264,11 @@ async def _resolve_lyria3_reference_images(
 
     for asset_id in request_dto.source_asset_ids or []:
         gcs_uri, mime_val = await _resolve_workspace_source_asset(
-            source_asset_repo, asset_id, request_dto.workspace_id, "image"
+            source_asset_repo,
+            asset_id,
+            request_dto.workspace_id,
+            "image",
+            allowed_workspace_ids=allowed_workspace_ids,
         )
         source_assets.append(
             SourceAssetLink(asset_id=asset_id, role=AssetRoleEnum.INPUT)
@@ -260,6 +284,7 @@ async def _resolve_lyria3_reference_images(
             gen_input.media_index,
             request_dto.workspace_id,
             "image",
+            allowed_workspace_ids=allowed_workspace_ids,
         )
         source_media_items.append(
             SourceMediaItemLink(
@@ -291,6 +316,7 @@ async def _resolve_reference_audio(
     request_dto: CreateAudioDto,
     media_repo: MediaRepository,
     source_asset_repo: SourceAssetRepository,
+    allowed_workspace_ids: frozenset[int] | None = None,
 ) -> tuple[
     dict[str, Any],
     SourceAssetLink | None,
@@ -303,7 +329,11 @@ async def _resolve_reference_audio(
 
     if ref.type == "source_asset":
         gcs_uri, mime_val = await _resolve_workspace_source_asset(
-            source_asset_repo, ref.id, request_dto.workspace_id, "audio"
+            source_asset_repo,
+            ref.id,
+            request_dto.workspace_id,
+            "audio",
+            allowed_workspace_ids=allowed_workspace_ids,
         )
         mime_val = _resolve_audio_uri_mime(gcs_uri, mime_val)
         return (
@@ -317,7 +347,12 @@ async def _resolve_reference_audio(
     if ref.type == "media_item":
         media_index = ref.index if ref.index is not None else 0
         parent_item, gcs_uri, mime_val = await _resolve_workspace_media_item(
-            media_repo, ref.id, media_index, request_dto.workspace_id, "audio"
+            media_repo,
+            ref.id,
+            media_index,
+            request_dto.workspace_id,
+            "audio",
+            allowed_workspace_ids=allowed_workspace_ids,
         )
         mime_val = _resolve_audio_uri_mime(gcs_uri, mime_val)
 
@@ -565,6 +600,7 @@ def _process_audio_in_background(
     request_dto: CreateAudioDto,
     user_email: str,
     user_id: int,
+    allowed_workspace_ids: frozenset[int] | None = None,
 ):
     from src.database import WorkerDatabase
 
@@ -648,6 +684,7 @@ def _process_audio_in_background(
                                 request_dto=request_dto,
                                 media_repo=media_repo,
                                 source_asset_repo=source_asset_repo,
+                                allowed_workspace_ids=allowed_workspace_ids,
                             )
 
                         if (
@@ -662,6 +699,7 @@ def _process_audio_in_background(
                                 request_dto=request_dto,
                                 media_repo=media_repo,
                                 source_asset_repo=source_asset_repo,
+                                allowed_workspace_ids=allowed_workspace_ids,
                             )
                             if ref_audio_asset_link is not None:
                                 source_assets.append(ref_audio_asset_link)
@@ -1305,13 +1343,28 @@ class AudioService:
         user: UserModel,
         executor: ThreadPoolExecutor,
     ) -> MediaItemResponse:
-
         is_music = request_dto.model in self.MUSIC_MODELS
-        folder_id = await resolve_output_folder_id(
+        ref_media_ids = [
+            item.media_item_id
+            for item in (request_dto.source_media_items or [])
+        ]
+        ref_asset_ids = list(request_dto.source_asset_ids or [])
+        if request_dto.reference_audio is not None:
+            if request_dto.reference_audio.type == "media_item":
+                ref_media_ids.append(request_dto.reference_audio.id)
+            elif request_dto.reference_audio.type == "source_asset":
+                ref_asset_ids.append(request_dto.reference_audio.id)
+        authorized_input_workspaces = await ensure_can_reference_inputs(
+            self.media_repo.db,
+            user,
+            media_item_ids=ref_media_ids,
+            source_asset_ids=ref_asset_ids,
+        )
+        ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
             user,
-            request_dto.folder_id,
+            requested_folder_id=request_dto.folder_id,
         )
         media_post_to_save = MediaItemModel(
             user_email=user.email,
@@ -1319,8 +1372,8 @@ class AudioService:
             mime_type=MimeTypeEnum.AUDIO_WAV,
             model=request_dto.model,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
-            workspace_id=request_dto.workspace_id,
-            folder_id=folder_id,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=ctx.resolved_folder_id,
             prompt=request_dto.prompt,
             original_prompt=request_dto.prompt,
             num_media=request_dto.sample_count,
@@ -1335,13 +1388,24 @@ class AudioService:
             descriptions=request_dto.descriptions,
         )
         saved_item = await self.media_repo.create(media_post_to_save)
+        worker_dto = request_dto.model_copy(
+            update={"workspace_id": ctx.output_workspace_id}
+        )
+        allowed_workspace_ids = frozenset(
+            {
+                ctx.output_workspace_id,
+                request_dto.workspace_id,
+                *authorized_input_workspaces,
+            }
+        )
 
         executor.submit(
             _process_audio_in_background,
             saved_item.id,
-            request_dto,
+            worker_dto,
             user.email,
             user.id,
+            allowed_workspace_ids,
         )
 
         return MediaItemResponse(

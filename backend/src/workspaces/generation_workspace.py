@@ -154,12 +154,15 @@ async def ensure_can_reference_inputs(
     user: UserModel,
     media_item_ids: Iterable[int] = (),
     source_asset_ids: Iterable[int] = (),
-) -> None:
-    """Verifies read access for referenced MediaItems and non-SYSTEM SourceAssets."""
+) -> set[int]:
+    """Verifies read access for referenced MediaItems and non-SYSTEM SourceAssets.
+
+    Returns the set of authorized workspace IDs verified for those inputs.
+    """
     media_ids = sorted({m for m in media_item_ids if m and m > 0})
     asset_ids = sorted({a for a in source_asset_ids if a and a > 0})
     if not media_ids and not asset_ids:
-        return
+        return set()
 
     ws_auth, authorized = WorkspaceAuth(WorkspaceRepository(db)), set()
 
@@ -181,3 +184,4 @@ async def ensure_can_reference_inputs(
         for ws_id, scope in (await db.execute(q)).all():
             if scope != AssetScopeEnum.SYSTEM:
                 await _auth(ws_id)
+    return authorized

@@ -143,13 +143,13 @@ class TestWorkbenchController:
         assert response_legacy.json()["id"] == 10
         assert mock_timeline_auth.authorize.await_count == 2
         for call in mock_timeline_auth.authorize.await_args_list:
-            assert call.kwargs == {"write": True}
+            assert call.kwargs == {}
 
-    def test_render_timeline_viewer_forbidden_403(
+    def test_render_timeline_unauthorized_403(
         self, api_client, mock_workbench_service, mock_timeline_auth
     ):
         mock_timeline_auth.authorize.side_effect = HTTPException(
-            status_code=403, detail="Viewers have read-only access"
+            status_code=403, detail="Forbidden workspace access"
         )
         assert (
             api_client.post("/api/workbench/timelines/1/render").status_code
@@ -576,6 +576,6 @@ class TestTimelineAuthorization:
         api_client.delete("/api/workbench/timelines/4")
         assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
         api_client.post("/api/workbench/timelines/4/render")
-        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
+        assert mock_timeline_auth.authorize.await_args.kwargs == {}
         api_client.post("/api/workbench/render", json={"timeline_id": 4})
-        assert mock_timeline_auth.authorize.await_args.kwargs == {"write": True}
+        assert mock_timeline_auth.authorize.await_args.kwargs == {}

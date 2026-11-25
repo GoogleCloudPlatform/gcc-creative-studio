@@ -78,7 +78,7 @@ async def render_timeline_by_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     timeline_auth: TimelineAuth = Depends(),
 ):
-    await timeline_auth.authorize(timeline_id, current_user, write=True)
+    await timeline_auth.authorize(timeline_id, current_user)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         timeline_id, current_user, executor
@@ -99,7 +99,7 @@ async def render_timeline(
 ):
     if not req.timeline_id:
         raise HTTPException(status_code=400, detail="timeline_id is required")
-    await timeline_auth.authorize(req.timeline_id, current_user, write=True)
+    await timeline_auth.authorize(req.timeline_id, current_user)
     executor = request.app.state.executor
     result = await service.render_timeline_by_id(
         req.timeline_id, current_user, executor

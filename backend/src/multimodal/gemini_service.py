@@ -76,6 +76,8 @@ from src.source_assets.repository.source_asset_repository import (
 from src.multimodal.dto.multimodal_generation_request_dto import (
     MultimodalGenerationRequestDto,
 )
+from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import ensure_can_reference_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -463,13 +465,23 @@ class GeminiService:
             return dto.prompt
 
         # --- Prepend Brand Guidelines if available ---
-        if dto.use_brand_guidelines and dto.workspace_id and not is_gemini_i2i:
+        guideline_workspace_id = (
+            dto.context_workspace_id
+            if isinstance(dto, (CreateImagenDto, CreateVeoDto))
+            and dto.context_workspace_id
+            else dto.workspace_id
+        )
+        if (
+            dto.use_brand_guidelines
+            and guideline_workspace_id
+            and not is_gemini_i2i
+        ):
             search_dto = BrandGuidelineSearchDto(
-                workspace_id=dto.workspace_id, limit=1
+                workspace_id=guideline_workspace_id, limit=1
             )
             guideline_response = await self.brand_guideline_repo.query(
                 search_dto,
-                workspace_id=dto.workspace_id,
+                workspace_id=guideline_workspace_id,
             )
 
             if guideline_response and guideline_response.data:
@@ -493,7 +505,7 @@ class GeminiService:
             else:
                 logger.info(
                     "No brand guidelines found for workspace '%s'.",
-                    dto.workspace_id,
+                    guideline_workspace_id,
                 )
 
         prompt_template = (
@@ -872,50 +884,49 @@ class GeminiService:
     async def generate_multimodal(
         self,
         request: MultimodalGenerationRequestDto,
+        current_user: UserModel,
     ) -> str:
         """Generates text from a multimodal prompt combining text and media."""
         contents = []
 
-        # Add MediaItems
         media_item_ids = request.media_items or request.media_item_ids
+        source_asset_ids = request.assets or request.source_asset_ids
+        if media_item_ids or source_asset_ids:
+            db = (
+                self.media_item_repo.db
+                if media_item_ids
+                else self.source_asset_repo.db
+            )
+            await ensure_can_reference_inputs(
+                db,
+                current_user,
+                media_item_ids=media_item_ids or (),
+                source_asset_ids=source_asset_ids or (),
+            )
+
+        # Add MediaItems
         if media_item_ids:
             for item_id in media_item_ids:
                 media_item = await self.media_item_repo.get_by_id(item_id)
-                if media_item:
-                    if media_item.workspace_id != request.workspace_id:
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"Media item {item_id} does not belong to workspace {request.workspace_id}",
+                if media_item and media_item.gcs_uris:
+                    contents.append(
+                        types.Part.from_uri(
+                            file_uri=media_item.gcs_uris[0],
+                            mime_type=media_item.mime_type or "image/png",
                         )
-                    if (
-                        getattr(media_item, "gcs_uris", None)
-                        and len(media_item.gcs_uris) > 0
-                    ):
-                        contents.append(
-                            types.Part.from_uri(
-                                file_uri=media_item.gcs_uris[0],
-                                mime_type=media_item.mime_type or "image/png",
-                            )
-                        )
+                    )
 
         # Add SourceAssets
-        source_asset_ids = request.assets or request.source_asset_ids
         if source_asset_ids:
             for asset_id in source_asset_ids:
                 asset = await self.source_asset_repo.get_by_id(asset_id)
-                if asset:
-                    if asset.workspace_id != request.workspace_id:
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"Asset {asset_id} does not belong to workspace {request.workspace_id}",
+                if asset and asset.gcs_uri:
+                    contents.append(
+                        types.Part.from_uri(
+                            file_uri=asset.gcs_uri,
+                            mime_type=asset.mime_type or "image/png",
                         )
-                    if asset.gcs_uri:
-                        contents.append(
-                            types.Part.from_uri(
-                                file_uri=asset.gcs_uri,
-                                mime_type=asset.mime_type or "image/png",
-                            )
-                        )
+                    )
 
         # Append the text prompt
         contents.append(request.prompt)

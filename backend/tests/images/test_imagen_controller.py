@@ -98,7 +98,7 @@ def test_generate_images_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 123
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
     mock_service.start_image_generation_job.assert_called_once()
 
 
@@ -127,7 +127,7 @@ def test_generate_images_vto_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 222
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
 
 
 def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
@@ -156,7 +156,7 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
 
     assert response.status_code == 200
     assert response.json()["id"] == 333
-    mock_workspace_auth.authorize_write.assert_called_once()
+    mock_workspace_auth.authorize.assert_called_once()
     mock_service.start_upload_upscale_job.assert_called_once()
     kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
     assert kwargs["enhance_input_image"] is True
@@ -449,13 +449,13 @@ def test_upscale_image_api_general_exception(client, mock_service):
     assert response.status_code == 500
 
 
-def test_generation_routes_forbid_viewer_403(
+def test_generation_routes_reject_unauthorized_403(
     client, mock_service, mock_workspace_auth
 ):
     from fastapi import HTTPException
 
-    mock_workspace_auth.authorize_write.side_effect = HTTPException(
-        status_code=403, detail="Viewers have read-only access"
+    mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden workspace access"
     )
     assert (
         client.post(

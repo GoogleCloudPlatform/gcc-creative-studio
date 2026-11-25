@@ -22,12 +22,14 @@ import {
   EventEmitter,
   Input,
   NgZone,
+  OnChanges,
   OnDestroy,
   OnInit,
   Output,
   Inject,
   PLATFORM_ID,
   HostListener,
+  SimpleChanges,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {MatDialog} from '@angular/material/dialog';
@@ -102,7 +104,9 @@ import {
     ]),
   ],
 })
-export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
+export class MediaGalleryComponent
+  implements OnInit, OnChanges, OnDestroy, AfterViewInit
+{
   @Output() mediaItemSelected = new EventEmitter<MediaItemSelection>();
   @Input() filterByType:
     | 'image/png'
@@ -125,9 +129,19 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   @Input() firstIndexOnly = false;
   /** Folder opened first in selector/selection mode (null = root). */
   @Input() initialFolderId: number | null = null;
+  /** Optional explicit workspace to browse without mutating WorkspaceStateService. */
+  @Input() workspaceIdOverride: number | null = null;
+  /** Optional externally managed selection keys (used by ImageSelectorComponent). */
+  @Input() selectedKeys: ReadonlySet<string> | null = null;
   /** Emits the current folder location once its breadcrumbs are resolved. */
   @Output() currentFolderChange = new EventEmitter<GalleryFolderLocation>();
+  /** Emits when the user clears all selections (e.g. Escape key). */
+  @Output() selectionCleared = new EventEmitter<void>();
   private isInitialized = false;
+  private searchOverrideSub: Subscription | undefined;
+  private overrideCurrentPage = 0;
+  private overrideLastFilters: GallerySearchDto | null = null;
+  private readonly overridePageSize = 40;
 
   @Input() set itemType(value: string) {
     if (this.assetTypeFilter === value) {
@@ -311,10 +325,42 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.userId = user?.id as number;
   }
 
+  private get effectiveWorkspaceId(): number | null {
+    return (
+      this.workspaceIdOverride ??
+      this.workspaceStateService.getActiveWorkspaceId()
+    );
+  }
+
+  private resetSelectionFromExternal(): void {
+    this.selectedItems = this.selectedKeys
+      ? new Set(this.selectedKeys)
+      : new Set();
+    this.lastSelectedIndex = null;
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['selectedKeys']) {
+      this.selectedItems = this.selectedKeys
+        ? new Set(this.selectedKeys)
+        : new Set();
+    }
+    if (changes['workspaceIdOverride'] && this.isInitialized) {
+      this.searchOverrideSub?.unsubscribe();
+      this.currentFolderId = null;
+      this.breadcrumbs = [];
+      this.currentFolderChange.emit({folderId: null, breadcrumbs: []});
+      this.reload();
+    }
+  }
+
   ngOnInit(): void {
     this.isInitialized = true;
+    this.resetSelectionFromExternal();
     this.waitingForInitialWorkspace =
-      this.isBrowser && !this.workspaceStateService.getActiveWorkspaceId();
+      this.isBrowser &&
+      this.workspaceIdOverride === null &&
+      !this.workspaceStateService.getActiveWorkspaceId();
     const userDetails = this.userService.getUserDetails();
     this.workspaceStateService.syncUser(userDetails);
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
@@ -339,6 +385,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     this.loadingSubscription = this.galleryService.isLoading$.subscribe(
       loading => {
+        if (this.workspaceIdOverride !== null) {
+          return;
+        }
         this.isGalleryServiceLoading = loading;
         this.isLoading = loading || this.waitingForInitialWorkspace;
         if (!loading && this.isBrowser) {
@@ -351,6 +400,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     );
 
     this.imagesSubscription = this.galleryService.images$.subscribe(images => {
+      if (this.workspaceIdOverride !== null) {
+        return;
+      }
       if (images) {
         // Find only the new images that have been added
         const newImages = images.slice(this.images.length);
@@ -364,6 +416,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     this.allImagesLoadedSubscription =
       this.galleryService.allImagesLoaded.subscribe(loaded => {
+        if (this.workspaceIdOverride !== null) {
+          return;
+        }
         this.allImagesLoaded = loaded;
       });
 
@@ -379,7 +434,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     this.showFeaturesHint();
 
-    let lastWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    let lastWorkspaceId = this.effectiveWorkspaceId;
 
     if (this.isSelectionMode || this.isSelectorMode) {
       const initialFolderId = this.initialFolderId;
@@ -421,7 +476,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     this.workspaceSub = this.workspaceStateService.activeWorkspaceId$.subscribe(
       workspaceId => {
-        if (!workspaceId) {
+        if (this.workspaceIdOverride !== null || !workspaceId) {
           return;
         }
         this.waitingForInitialWorkspace = false;
@@ -454,13 +509,13 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.loadTags();
     this.loadFolders();
     this.loadBreadcrumbs();
-    if (this.workspaceStateService.getActiveWorkspaceId()) {
+    if (this.effectiveWorkspaceId) {
       this.searchTerm();
     }
   }
 
   private loadTags(search?: string): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (workspaceId) {
       const filterUserId = this.onlyMyTags ? this.userId : undefined;
       this.tagsService
@@ -511,7 +566,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
-        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+        const workspaceId = this.effectiveWorkspaceId;
         if (workspaceId && tag) {
           this.tagsService.deleteTag(workspaceId, tag.id).subscribe({
             next: () => {
@@ -562,6 +617,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.allImagesLoadedSubscription?.unsubscribe();
     this.resizeSubscription?.unsubscribe();
     this.uploadBatchSubscription?.unsubscribe();
+    this.searchOverrideSub?.unsubscribe();
     this.foldersSub?.unsubscribe();
     this._hostVisibilityObserver?.disconnect();
     this._scrollObserver?.disconnect();
@@ -570,21 +626,29 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   onFilesSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
-      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+      const workspaceId = this.effectiveWorkspaceId;
       if (workspaceId !== null) {
-        this.uploadService.uploadFiles(workspaceId, Array.from(input.files));
+        this.uploadService.uploadFiles(
+          workspaceId,
+          Array.from(input.files),
+          this.currentFolderId,
+        );
       }
       input.value = '';
     }
   }
 
   openGoogleDrivePicker(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (workspaceId === null) return;
 
     this.googleDriveService.openPicker().subscribe(files => {
       if (files && files.length > 0) {
-        this.uploadService.uploadFiles(workspaceId, files);
+        this.uploadService.uploadFiles(
+          workspaceId,
+          files,
+          this.currentFolderId,
+        );
       }
     });
   }
@@ -599,7 +663,11 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
   public loadMore(): void {
     if (!this.isLoading && !this.allImagesLoaded) {
-      this.galleryService.loadGallery();
+      if (this.workspaceIdOverride !== null) {
+        this.fetchOverrideGalleryPage(true);
+      } else {
+        this.galleryService.loadGallery();
+      }
     }
   }
 
@@ -676,6 +744,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   deselectAll(): void {
     this.selectedItems.clear();
     this.lastSelectedIndex = null;
+    this.selectionCleared.emit();
   }
 
   toggleSelectAll(): void {
@@ -707,8 +776,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       confirm(`Are you sure you want to delete ${itemsToDelete.length} items?`)
     ) {
       this.isDeleting = true;
-      const workspaceId =
-        this.workspaceStateService.getActiveWorkspaceId() || 0;
+      const workspaceId = this.effectiveWorkspaceId || 0;
       this.galleryService.bulkDelete(itemsToDelete, workspaceId).subscribe({
         next: () => {
           // Remove deleted items from local state
@@ -728,7 +796,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   copySelected(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId || this.selectedItems.size === 0) return;
 
     const selected = Array.from(this.selectedItems);
@@ -839,7 +907,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     destinationName: string,
     conflictStrategy?: ConflictStrategy | null,
   ): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const totalCount =
@@ -923,7 +991,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       return {id: parseInt(itemId), type};
     });
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId() || 0;
+    const workspaceId = this.effectiveWorkspaceId || 0;
     this.galleryService.bulkDownload(itemsToDownload, workspaceId).subscribe({
       next: blob => {
         const url = window.URL.createObjectURL(blob);
@@ -966,6 +1034,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         assetId: 0,
         assetType: '',
         existingTags: this.getCombinedTags(),
+        workspaceId: this.effectiveWorkspaceId,
       },
     });
 
@@ -977,7 +1046,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private performBulkTag(selectedTags: string[]): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const selected = Array.from(this.selectedItems);
@@ -1165,7 +1234,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     // Reset local component state for a new search to show the main loader
     this.images = [];
     this.filterImages();
-    this.selectedItems.clear();
+    this.resetSelectionFromExternal();
     this.tagsCurrentPage = 1; // Reset tags pagination on search
 
     const filters: GallerySearchDto = {
@@ -1227,6 +1296,13 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       }
     }
 
+    if (this.workspaceIdOverride !== null) {
+      this.overrideCurrentPage = 0;
+      this.overrideLastFilters = filters;
+      this.fetchOverrideGalleryPage(false);
+      return;
+    }
+
     if (!this.isSelectionMode && !this.isSelectorMode) {
       const state: GalleryFiltersState = {
         query: this.queryFilter,
@@ -1243,13 +1319,46 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.galleryService.setFilters(filters);
   }
 
+  private fetchOverrideGalleryPage(append: boolean): void {
+    const workspaceId = this.workspaceIdOverride;
+    if (workspaceId === null || !this.overrideLastFilters) {
+      return;
+    }
+    this.isLoading = true;
+    this.searchOverrideSub?.unsubscribe();
+    const request: GallerySearchDto = {
+      ...this.overrideLastFilters,
+      offset: this.overrideCurrentPage * this.overridePageSize,
+      limit: this.overrideLastFilters.limit ?? this.overridePageSize,
+    };
+    this.searchOverrideSub = this.galleryService
+      .searchGalleryPage(request, workspaceId)
+      .subscribe({
+        next: response => {
+          const pageItems = response.data || [];
+          this.images = append ? [...this.images, ...pageItems] : pageItems;
+          this.overrideCurrentPage++;
+          this.allImagesLoaded =
+            response.totalPages <= this.overrideCurrentPage ||
+            pageItems.length === 0;
+          this.filterImages();
+          this.isLoading = false;
+        },
+        error: err => {
+          console.error('Error loading workspace gallery page:', err);
+          this.allImagesLoaded = true;
+          this.isLoading = false;
+        },
+      });
+  }
+
   public onTagChange(tags: string[]): void {
     this.tagsFilter = tags;
     this.searchTerm();
   }
 
   loadFolders(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) {
       this.folders = [];
       return;
@@ -1278,7 +1387,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       return;
     }
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     this.folderService
       .getBreadcrumbs(requestedFolderId, workspaceId ?? undefined)
       .subscribe({
@@ -1321,8 +1430,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           if (this.currentFolderId !== requestedFolderId) {
             return;
           }
-          const currentWorkspaceId =
-            this.workspaceStateService.getActiveWorkspaceId();
+          const currentWorkspaceId = this.effectiveWorkspaceId;
           if (folder.workspaceId && folder.workspaceId !== currentWorkspaceId) {
             this.isProgrammaticWorkspaceSwitch = true;
             this.snackBar.open("Switched to folder's workspace.", 'Close', {
@@ -1396,7 +1504,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   openCreateFolderDialog(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     if (this.breadcrumbs.length >= this.folderService.maxDepth) {
@@ -1445,7 +1553,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   openEditFolderDialog(folder: Folder): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const dialogRef = this.dialog.open(CreateFolderDialogComponent, {
@@ -1565,7 +1673,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   get canEditActiveWorkspace(): boolean {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) {
       return false;
     }
@@ -1613,7 +1721,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   openCopyFolderDialog(folder: Folder): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const dialogRef = this.dialog.open(CopyToFolderDialogComponent, {
@@ -1719,7 +1827,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   openMoveFolderDialog(folder: Folder): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const dialogRef = this.dialog.open(MoveToFolderDialogComponent, {
@@ -1764,7 +1872,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   openBatchMoveDialog(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId || this.selectedItems.size === 0) return;
 
     const selected = Array.from(this.selectedItems);
@@ -1896,7 +2004,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     destinationName: string,
     conflictStrategy?: ConflictStrategy | null,
   ): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.effectiveWorkspaceId;
     if (!workspaceId) return;
 
     const totalCount =

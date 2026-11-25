@@ -221,4 +221,31 @@ describe('WorkspaceStateService', () => {
     localService.setActiveWorkspaceId(10);
     expect(sessionStorage.getItem('cs_active_workspace_id:22')).toBe('10');
   });
+
+  it('builds private-first target and referenced generation workspace params', () => {
+    service.setWorkspaces([personalWs, publicWs, privateViewerWs]);
+
+    // Active is PERSONAL -> output to personal, omit contextWorkspaceId.
+    service.setActiveWorkspaceId(10);
+    expect(service.getTargetWorkspaceParam()).toEqual({workspaceId: 10});
+    expect(service.getReferencedGenerationWorkspaceParams()).toEqual({
+      workspaceId: 10,
+    });
+
+    // Active is shared -> output to personal, preserve shared contextWorkspaceId only when referenced.
+    service.setActiveWorkspaceId(30);
+    expect(service.getTargetWorkspaceParam()).toEqual({workspaceId: 10});
+    expect(service.getReferencedGenerationWorkspaceParams()).toEqual({
+      workspaceId: 10,
+      contextWorkspaceId: 30,
+    });
+
+    // Fallback when personal workspace is not loaded yet.
+    service.setWorkspaces([publicWs]);
+    service.setActiveWorkspaceId(20);
+    expect(service.getTargetWorkspaceParam()).toEqual({workspaceId: 20});
+    expect(service.getReferencedGenerationWorkspaceParams()).toEqual({
+      workspaceId: 20,
+    });
+  });
 });

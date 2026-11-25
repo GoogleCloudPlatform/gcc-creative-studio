@@ -164,6 +164,27 @@ export class GalleryService implements OnDestroy {
       .pipe(shareReplay(1));
   }
 
+  public searchGalleryPage(
+    filters: GallerySearchDto,
+    workspaceIdOverride?: number | null,
+  ): Observable<PaginatedGalleryResponse> {
+    const body: GallerySearchDto = {
+      ...filters,
+      workspaceId:
+        workspaceIdOverride ??
+        filters.workspaceId ??
+        this.workspaceStateService.getActiveWorkspaceId() ??
+        undefined,
+    };
+    const galleryUrl = `${environment.backendURL}/gallery/search`;
+    return this.http.post<PaginatedGalleryResponse>(galleryUrl, body).pipe(
+      map(response => ({
+        ...response,
+        data: this.mapUnifiedResponse(response.data || []),
+      })),
+    );
+  }
+
   private resetCache() {
     this.allFetchedImages = [];
     this.currentPage = 0;

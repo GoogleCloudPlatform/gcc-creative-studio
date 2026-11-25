@@ -46,7 +46,9 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px 32px;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 20px 32px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
 
@@ -55,6 +57,73 @@
     font-weight: 500;
     margin: 0;
     letter-spacing: 0.25px;
+  }
+
+  .selector-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+}
+
+.upload-target-group,
+.workspace-source-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-source-bar {
+  margin-bottom: 12px;
+}
+
+.workspace-control-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+  white-space: nowrap;
+}
+
+.segmented-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  gap: 2px;
+
+  .segment-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    gap: 6px;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+
+    mat-icon {
+      font-size: 15px;
+      width: 15px;
+      height: 15px;
+    }
+
+    &:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    &.active {
+      background: hsla(217, 89%, 61%, 0.28);
+      color: #fff;
+    }
   }
 }
 

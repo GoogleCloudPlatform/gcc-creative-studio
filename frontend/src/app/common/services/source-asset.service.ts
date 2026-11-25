@@ -64,6 +64,8 @@ export interface SourceAssetOptionsDto {
   upscaleFactor?: string;
   enhance_input_image?: boolean;
   image_preservation_factor?: number | null;
+  workspaceId?: number;
+  folderId?: number | null;
 }
 
 export interface SourceAssetSearchDto {
@@ -133,16 +135,35 @@ export class SourceAssetService {
     this.loadAssets(true);
   }
 
+  private resolveTargetWorkspaceId(
+    explicitWorkspaceId?: number | null,
+  ): number | null {
+    return (
+      explicitWorkspaceId ??
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId()
+    );
+  }
+
   uploadAsset(
     file: File,
     options: SourceAssetOptionsDto = {},
+    workspaceIdOverride?: number | null,
+    folderId?: number | null,
   ): Observable<SourceAssetResponseDto> {
     const formData = new FormData();
     formData.append('file', file);
 
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (activeWorkspaceId) {
-      formData.append('workspaceId', activeWorkspaceId.toString());
+    const targetWorkspaceId = this.resolveTargetWorkspaceId(
+      workspaceIdOverride ?? options.workspaceId,
+    );
+    if (targetWorkspaceId) {
+      formData.append('workspaceId', targetWorkspaceId.toString());
+    }
+
+    const targetFolderId = folderId ?? options.folderId;
+    if (targetFolderId !== undefined && targetFolderId !== null) {
+      formData.append('folderId', targetFolderId.toString());
     }
 
     if (options.aspectRatio) {
@@ -179,10 +200,11 @@ export class SourceAssetService {
     const formData = new FormData();
     formData.append('file', file);
 
-    // Declare activeWorkspaceId only once
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (activeWorkspaceId) {
-      formData.append('workspaceId', String(activeWorkspaceId));
+    const targetWorkspaceId = this.resolveTargetWorkspaceId(
+      options.workspaceId,
+    );
+    if (targetWorkspaceId) {
+      formData.append('workspaceId', String(targetWorkspaceId));
     }
 
     if (options.aspectRatio) {
@@ -245,7 +267,7 @@ export class SourceAssetService {
     formData.append('mimeType', asset.mimeType);
     formData.append('aspectRatio', asset.aspectRatio);
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = this.resolveTargetWorkspaceId(options.workspaceId);
     if (workspaceId) {
       formData.append('workspaceId', String(workspaceId));
     }

@@ -61,9 +61,21 @@ describe('AudioComponent', () => {
   let sourceAssetServiceSpy: jasmine.SpyObj<SourceAssetService>;
   let dialogSpy: jasmine.SpyObj<MatDialog>;
   let routerSpy: jasmine.SpyObj<Router>;
+  let workspaceStateServiceSpy: {
+    getActiveWorkspaceId: jasmine.Spy;
+    getTargetWorkspaceParam: jasmine.Spy;
+  };
 
   beforeEach(async () => {
     activeAudioJobSubject = new BehaviorSubject<MediaItem | null>(null);
+    workspaceStateServiceSpy = {
+      getActiveWorkspaceId: jasmine
+        .createSpy('getActiveWorkspaceId')
+        .and.returnValue(1),
+      getTargetWorkspaceParam: jasmine
+        .createSpy('getTargetWorkspaceParam')
+        .and.returnValue({workspaceId: 1}),
+    };
     searchServiceSpy = jasmine.createSpyObj(
       'SearchService',
       ['startAudioGeneration', 'clearActiveAudioJob', 'rewritePrompt'],
@@ -110,7 +122,7 @@ describe('AudioComponent', () => {
         {provide: SearchService, useValue: searchServiceSpy},
         {
           provide: WorkspaceStateService,
-          useValue: {getActiveWorkspaceId: () => 1},
+          useValue: workspaceStateServiceSpy,
         },
         {
           provide: AudioStateService,
@@ -791,5 +803,54 @@ describe('AudioComponent', () => {
         .args[0] as File;
       expect(normalized.type).toBe(expectedMime);
     }
+  });
+
+  it('should route generate to personal workspace without contextWorkspaceId when shared is active', () => {
+    workspaceStateServiceSpy.getActiveWorkspaceId.and.returnValue(22);
+    workspaceStateServiceSpy.getTargetWorkspaceParam.and.returnValue({
+      workspaceId: 11,
+    });
+    component.prompt = 'warm acoustic guitar';
+
+    component.generate();
+
+    expect(searchServiceSpy.startAudioGeneration).toHaveBeenCalledTimes(1);
+    const request =
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0];
+    expect(request.workspaceId).toBe(11);
+    expect('contextWorkspaceId' in request).toBeFalse();
+  });
+
+  it('should clear loading state when target workspace is missing', () => {
+    workspaceStateServiceSpy.getTargetWorkspaceParam.and.returnValue({
+      workspaceId: null,
+    });
+    component.prompt = 'warm acoustic guitar';
+
+    component.generate();
+
+    expect(component.isLoading).toBeFalse();
+    expect(searchServiceSpy.startAudioGeneration).not.toHaveBeenCalled();
+  });
+
+  it('should delete using active job workspaceId before falling back to active workspace', () => {
+    workspaceStateServiceSpy.getActiveWorkspaceId.and.returnValue(22);
+    dialogSpy.open.and.returnValue({afterClosed: () => of(true)} as any);
+    activeAudioJobSubject.next({
+      id: 505,
+      workspaceId: 11,
+      status: JobStatus.COMPLETED,
+    } as MediaItem);
+
+    component.deleteGeneratedMedia();
+
+    expect(dialogSpy.open).toHaveBeenCalledWith(
+      ConfirmationDialogComponent,
+      jasmine.any(Object),
+    );
+    expect(galleryServiceSpy.bulkDelete).toHaveBeenCalledOnceWith(
+      [{id: 505, type: 'media_item'}],
+      11,
+    );
   });
 });

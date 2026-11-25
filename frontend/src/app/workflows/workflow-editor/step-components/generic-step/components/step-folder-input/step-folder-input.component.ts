@@ -31,6 +31,7 @@ import {
 import {FormControl} from '@angular/forms';
 import {MatSelectChange} from '@angular/material/select';
 import {filter, startWith, switchMap} from 'rxjs';
+import {WorkspaceScope} from '../../../../../../common/models/workspace.model';
 import {WorkspaceStateService} from '../../../../../../services/workspace/workspace-state.service';
 import {RunFolderService} from '../../../../../shared/run-folder.service';
 import {WorkflowFolderTreeStore} from '../../../../workflow-folder-tree.store';
@@ -137,6 +138,19 @@ export class StepFolderInputComponent {
   readonly selectId = computed<string>(
     () => `${this.domNames().selectIdPrefix}${this.stepId()}`,
   );
+
+  /**
+   * True when this output-folder input saves into each runner's My Workspace
+   * instead of the active shared workspace, so a shared-workspace folder
+   * cannot be picked.
+   */
+  readonly isOutputFolderRoutedToPersonal = computed<boolean>(() => {
+    if (this.inputName() !== OUTPUT_FOLDER_INPUT_NAME) {
+      return false;
+    }
+    const ws = this.workspaceStateService.activeWorkspace();
+    return ws ? ws.scope !== WorkspaceScope.PERSONAL : false;
+  });
 
   /** Active workspace; its folder tree resolves the saved folder. */
   private readonly workspaceId = toSignal(
@@ -271,7 +285,7 @@ export class StepFolderInputComponent {
   /** Opens the Media Gallery in folder mode and stores the confirmed folder. */
   openFolderSelector(): void {
     const control = this.control();
-    if (control.disabled) return;
+    if (control.disabled || this.isOutputFolderRoutedToPersonal()) return;
     // The refreshed tree (requested on close) is the source of truth again.
     this.pickedFolders.set(new Map());
     this.runFolderService

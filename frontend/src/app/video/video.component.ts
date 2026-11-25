@@ -589,8 +589,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   searchTerm() {
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (!activeWorkspaceId) {
+    const {workspaceId, contextWorkspaceId} =
+      this.workspaceStateService.getReferencedGenerationWorkspaceParams();
+    if (!workspaceId) {
       handleErrorSnackbar(
         this._snackBar,
         {message: 'Please select a workspace first.'},
@@ -598,17 +599,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
       );
       return;
     }
-    this.searchRequest.workspaceId = activeWorkspaceId;
+    this.searchRequest.workspaceId = workspaceId;
+    this.searchRequest.contextWorkspaceId = contextWorkspaceId;
 
     if (this.isConcatenateMode) {
-      if (!activeWorkspaceId) {
-        handleErrorSnackbar(
-          this._snackBar,
-          {message: 'Workspace ID is missing'},
-          'Concatenate videos',
-        );
-        return;
-      }
       const inputs: ConcatenationInput[] = [];
 
       // Input 1
@@ -645,7 +639,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.isLoading = true;
       this.service
         .concatenateVideos({
-          workspaceId: activeWorkspaceId,
+          workspaceId,
           name,
           inputs,
           aspectRatio: this.searchRequest.aspectRatio,
@@ -1090,8 +1084,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   uploadImageDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     this.sourceAssetService
-      .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
+      .uploadAsset(
+        file,
+        {assetType: AssetTypeEnum.GENERIC_IMAGE},
+        uploadWorkspaceId,
+        null,
+      )
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
@@ -1106,23 +1108,31 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   openCropperDialog(file: File, imageNumber: NumPos) {
-    ImageCropperDialogComponent.open(this.dialog, {imageFile: file}).subscribe(
-      result => {
-        if (result && result.id) {
-          this.processInput(result, imageNumber);
-          this.updateModeAndNotify();
-          this.clearOtherImage(imageNumber);
-        }
-      },
-    );
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    ImageCropperDialogComponent.open(this.dialog, {
+      imageFile: file,
+      targetWorkspaceId,
+    }).subscribe(result => {
+      if (result && result.id) {
+        this.processInput(result, imageNumber);
+        this.updateModeAndNotify();
+        this.clearOtherImage(imageNumber);
+      }
+    });
   }
 
   onEditPromptImage(data: {num: NumPos}) {
     const previewUrl = data.num === 1 ? this.image1Preview : this.image2Preview;
     if (!previewUrl) return;
 
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     ImageCropperDialogComponent.open(this.dialog, {
       imageUrl: previewUrl,
+      targetWorkspaceId,
     }).subscribe(result => {
       if (result && result.id) {
         this.processInput(result, data.num);
@@ -1133,19 +1143,26 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   onEditPromptReferenceImage(data: {index: number; ref: ReferenceImage}) {
+    const targetWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     ImageCropperDialogComponent.openEditPromptReferenceImage(
       this.dialog,
       data,
       this.referenceImages,
       () => this.saveState(),
+      targetWorkspaceId,
     );
   }
 
   uploadVideoDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
-    // No aspectRatio is sent for videos, so we don't pass the second argument
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    // No aspectRatio is sent for videos
     this.sourceAssetService
-      .uploadAsset(file)
+      .uploadAsset(file, {}, uploadWorkspaceId, null)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
@@ -1745,11 +1762,14 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (files.length === 0) return;
 
     this.isLoading = true;
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     let completed = 0;
     let notifiedSkip = false;
     files.forEach(file => {
       this.sourceAssetService
-        .uploadAsset(file)
+        .uploadAsset(file, {}, uploadWorkspaceId, null)
         .pipe(
           finalize(() => {
             completed += 1;
@@ -1896,9 +1916,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (this.referenceImages.length >= maxReferenceImages) return;
     const file = event.dataTransfer?.files[0];
     if (file && file.type.startsWith('image/')) {
+      const targetWorkspaceId =
+        this.workspaceStateService.personalWorkspaceId() ??
+        this.workspaceStateService.getActiveWorkspaceId();
       // For a direct drop, go straight to the cropper
       ImageCropperDialogComponent.open(this.dialog, {
         imageFile: file,
+        targetWorkspaceId,
       }).subscribe(result => {
         if (result && result.id) {
           this.referenceImages.push({
@@ -2131,8 +2155,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.activeVideoJob$.pipe(first()).subscribe(job => {
       if (!job?.id) return;
 
-      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      if (workspaceId === null) return;
+      const workspaceId =
+        job.workspaceId ?? this.workspaceStateService.getActiveWorkspaceId();
+      if (workspaceId === null || workspaceId === undefined) return;
 
       const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
         data: {
