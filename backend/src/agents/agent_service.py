@@ -101,6 +101,9 @@ BUSY_CHAT_DELETE_DETAIL = (
 )
 DELETE_CHAT_FAILED_DETAIL = "Could not delete the chat. Try again."
 CHAT_IN_OTHER_WORKSPACE_DETAIL = "The chat belongs to another workspace."
+STORYBOARD_IN_OTHER_WORKSPACE_DETAIL = (
+    "The storyboard belongs to another workspace."
+)
 _active_runs: dict[str, float] = {}
 
 
@@ -911,9 +914,11 @@ class AgentService:
 
         if storyboard_id is not None:
             try:
-                storyboard = await self.project_service.get_storyboard(
-                    storyboard_id
+                storyboard = await self._load_authorized_storyboard(
+                    current_user, storyboard_id, workspace_id
                 )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error retrieving storyboard {storyboard_id}: {e}"
@@ -925,11 +930,6 @@ class AgentService:
             if not storyboard:
                 raise HTTPException(
                     status_code=404, detail="Storyboard not found"
-                )
-            if storyboard.user_id != current_user.id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Not authorized to access this storyboard",
                 )
             if storyboard.session_id:
                 resolved_session_id = storyboard.session_id
@@ -1044,7 +1044,7 @@ class AgentService:
 
         if storyboard_id is None and session_dto is not None:
             storyboard = await self._prefer_session_storyboard(
-                session_dto.state, storyboard, current_user
+                session_dto.state, storyboard, current_user, workspace_id
             )
 
         if storyboard is None and resolved_session_id is None:
@@ -1057,17 +1057,44 @@ class AgentService:
             session=session_dto, storyboard=storyboard
         )
 
+    async def _load_authorized_storyboard(
+        self, current_user: UserModel, storyboard_id: int, workspace_id: int
+    ) -> StoryboardResponse | None:
+        """Loads a storyboard for the session detail, authorized first.
+
+        Loading presigns a URL per scene, so nothing loads until
+        ``authorize_storyboard`` passes (owner, then ``ProjectAuth``: access
+        to the project's own workspace) and that workspace is the requested
+        one (400 ``STORYBOARD_IN_OTHER_WORKSPACE_DETAIL``), like a chat's.
+        Checking the owner after the load presigned every probed id, and
+        authorizing only the requested workspace let a member removed from
+        a private workspace keep reading their storyboards in it by naming
+        a workspace they can still use.
+        """
+        project = await self.project_service.authorize_storyboard(
+            current_user, storyboard_id
+        )
+        if project.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=STORYBOARD_IN_OTHER_WORKSPACE_DETAIL,
+            )
+        return await self.project_service.get_storyboard(storyboard_id)
+
     async def _prefer_session_storyboard(
         self,
         state: Any,
         storyboard: StoryboardResponse | None,
         current_user: UserModel,
+        workspace_id: int,
     ) -> StoryboardResponse | None:
         """Swaps in the storyboard the agent's state calls current.
 
         A session that restarted its pipeline before the create-or-reuse path
         existed owns several records; the newest row is a good guess, but
         ``current_storyboard_id`` is the one the agent renders and saves to.
+        That id comes from session state, so it goes through the same checks
+        as a ``storyboard_id`` query (``_load_authorized_storyboard``).
         Falls back to ``storyboard`` on any problem.
         """
         if not isinstance(state, dict):
@@ -1076,13 +1103,15 @@ class AgentService:
         if current_id is None or (storyboard and storyboard.id == current_id):
             return storyboard
         try:
-            candidate = await self.project_service.get_storyboard(current_id)
+            candidate = await self._load_authorized_storyboard(
+                current_user, current_id, workspace_id
+            )
         except Exception as e:
             logger.warning(
                 f"Could not load current_storyboard_id={current_id}: {e}"
             )
             return storyboard
-        if candidate is None or candidate.user_id != current_user.id:
+        if candidate is None:
             return storyboard
         return candidate
 

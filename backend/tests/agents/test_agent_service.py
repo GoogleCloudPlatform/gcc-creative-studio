@@ -143,6 +143,9 @@ async def test_get_session_detail_recreate_session():
         mock_timeline.title = "my timeline"
         mock_storyboard.timeline = mock_timeline
 
+        mock_project_service.authorize_storyboard.return_value = MagicMock(
+            workspace_id=1
+        )
         mock_project_service.get_storyboard.return_value = mock_storyboard
 
         mock_storyboard_repo = AsyncMock()
@@ -170,6 +173,9 @@ async def test_get_session_detail_recreate_session():
             storyboard_id=123,
         )
 
+        mock_project_service.authorize_storyboard.assert_awaited_once_with(
+            user, 123
+        )
         # Assert the chat's storyboards moved to the newly recreated session ID
         mock_storyboard_repo.reassign_session.assert_awaited_once_with(
             "session_old", "new_session_id", 999

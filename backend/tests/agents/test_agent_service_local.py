@@ -203,6 +203,9 @@ async def test_get_session_detail_local_recreates_missing_session(local_mode):
     storyboard.bg_music_description = "some music"
     storyboard.timeline = MagicMock(title="my timeline")
     project_service = AsyncMock()
+    project_service.authorize_storyboard.return_value = MagicMock(
+        workspace_id=1
+    )
     project_service.get_storyboard.return_value = storyboard
     storyboard_repo = AsyncMock()
 
@@ -219,6 +222,7 @@ async def test_get_session_detail_local_recreates_missing_session(local_mode):
     res = await service.get_session_detail(
         current_user=user, workspace_id=1, request=request, storyboard_id=123
     )
+    project_service.authorize_storyboard.assert_awaited_once_with(user, 123)
     local_client.get_session.assert_awaited_once_with("ads_x", "999", "old")
     storyboard_repo.reassign_session.assert_awaited_once_with(
         "old", "new_id", 999
