@@ -241,9 +241,16 @@ export class ChatInterfaceComponent
     () => this.isLoadingHistory() || this.timelineState.isLoadingTimeline(),
   );
   agentUnavailable = signal<boolean>(false);
+  /**
+   * The active workspace is view-only for the caller, who has no project in
+   * it (`ProjectStateService.viewOnly`): a banner replaces the chat.
+   */
+  viewOnly = this.projectState.viewOnly;
+  canOpenPersonalWorkspace = this.projectState.canOpenPersonalWorkspace;
   activeApprovalGate = signal<ApprovalGateInfo | null>(null);
   visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
-    return this.activeApprovalGate();
+    // A gate left from the previous workspace's chat must not show there.
+    return this.viewOnly() ? null : this.activeApprovalGate();
   });
   private submittedGateCallIds = new Set<string>();
   currentSessionId: string | null = this.agentChatService.selectedSessionId();
@@ -1348,6 +1355,12 @@ export class ChatInterfaceComponent
       window.open(route, '_blank');
     }
   }
+
+  /** The view-only banner's way out: the caller's personal workspace. */
+  openPersonalWorkspace() {
+    this.projectState.openPersonalWorkspace();
+  }
+
   startNewChat() {
     this.agentChatService.stopPolling();
     this.isLoadingHistory.set(false);

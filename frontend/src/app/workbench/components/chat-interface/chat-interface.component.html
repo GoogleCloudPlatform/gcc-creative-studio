@@ -19,6 +19,7 @@
     <h5 class="text-lg font-semibold">Izumi Agent</h5>
     <button
       mat-icon-button
+      *ngIf="!viewOnly()"
       (click)="startNewChat()"
       class="text-gray-500 hover:text-gray-700"
       title="New Chat"
@@ -225,19 +226,19 @@
         {{ msg.timestamp | date: 'shortTime' }}
       </div>
     </div>
-    <div *ngIf="isLoadingHistory()" class="chat-bubble agent">
+    <div *ngIf="isLoadingHistory() && !viewOnly()" class="chat-bubble agent">
       <div class="text-sm text-gray-400">Loading history...</div>
     </div>
-    <div *ngIf="isTyping()" class="chat-bubble agent">
+    <div *ngIf="isTyping() && !viewOnly()" class="chat-bubble agent">
       <div class="typing-indicator">
         <span></span><span></span><span></span>
       </div>
     </div>
   </div>
 
-  <!-- Selected Images Preview -->
+  <!-- Selected Images Preview (the composer's: hidden with it when view-only) -->
   <div
-    *ngIf="selectedImages().length > 0"
+    *ngIf="selectedImages().length > 0 && !viewOnly()"
     class="flex gap-2 pt-4 px-2 overflow-x-auto pb-2"
   >
     <div
@@ -278,7 +279,9 @@
   <!-- Restored Chat Banner: Izumi cannot continue a restored chat -->
   <div
     class="mt-2 flex flex-col gap-2"
-    *ngIf="isRestoredChat() && !agentUnavailable() && !isSessionLocked()"
+    *ngIf="
+      isRestoredChat() && !agentUnavailable() && !isSessionLocked() && !viewOnly()
+    "
     data-testid="restored-chat-banner"
   >
     <div
@@ -312,10 +315,47 @@
     </div>
   </div>
 
+  <!-- View-only Banner: the caller has no project in this workspace and may
+       not create one (a private workspace's viewer) -->
+  <div
+    class="mt-2 flex flex-col gap-2"
+    *ngIf="viewOnly()"
+    data-testid="view-only-banner"
+  >
+    <div
+      class="bg-gray-800 border border-sky-500/60 rounded-2xl px-4 py-3 flex items-start gap-3"
+    >
+      <mat-icon class="text-sky-400 shrink-0">visibility</mat-icon>
+      <div class="text-sm text-gray-200 flex-1">
+        <p class="font-semibold text-white">View-only access</p>
+        <p class="opacity-80">
+          You can view this workspace, but you can't start chats or create
+          projects in it. Ask an owner or admin for editor access, or work in
+          My Workspace.
+        </p>
+      </div>
+    </div>
+    <div class="flex justify-end" *ngIf="canOpenPersonalWorkspace()">
+      <studio-button
+        variant="primary"
+        size="small"
+        shape="pill"
+        data-testid="view-only-open-personal"
+        (click)="openPersonalWorkspace()"
+      >
+        <span class="flex items-center gap-1">
+          <mat-icon class="!w-4 !h-4 !text-[16px] leading-4">person</mat-icon>
+          Open My Workspace
+        </span>
+      </studio-button>
+    </div>
+  </div>
+
   <!-- Chat Input (a loaded restored chat shows its banner instead) -->
   <div
     class="mt-2 flex flex-col gap-2"
     *ngIf="
+      !viewOnly() &&
       !agentUnavailable() &&
       !visibleApprovalGate() &&
       (!isRestoredChat() || isSessionLocked())

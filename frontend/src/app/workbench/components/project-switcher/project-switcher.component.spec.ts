@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {DOWN_ARROW, END, HOME} from '@angular/cdk/keycodes';
+import {DOWN_ARROW, END, ESCAPE, HOME} from '@angular/cdk/keycodes';
 import {OverlayContainer} from '@angular/cdk/overlay';
 import {ApplicationRef, computed, signal} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
@@ -52,6 +52,7 @@ describe('ProjectSwitcherComponent', () => {
   ]);
   const activeProjectId = signal<number | null>(1);
   const loading = signal(false);
+  const viewOnly = signal(false);
   const state = {
     projects,
     activeProjectId,
@@ -59,6 +60,7 @@ describe('ProjectSwitcherComponent', () => {
       () => projects().find(p => p.id === activeProjectId()) ?? null,
     ),
     loading,
+    viewOnly,
     selectProject: jasmine.createSpy('selectProject'),
     createProject: jasmine.createSpy('createProject'),
     renameProject: jasmine.createSpy('renameProject'),
@@ -109,6 +111,7 @@ describe('ProjectSwitcherComponent', () => {
     projects.set([project(1, 'Default project', true), project(2, 'Launch')]);
     activeProjectId.set(1);
     loading.set(false);
+    viewOnly.set(false);
     for (const spy of [
       state.selectProject,
       state.createProject,
@@ -652,5 +655,67 @@ describe('ProjectSwitcherComponent', () => {
     expect(console.error).toHaveBeenCalled();
     // Not left deleting: that would lock every later project change.
     expect(component.deleting()).toBeFalse();
+  });
+
+  // A private workspace's viewer without a project of their own
+  // (`ProjectStateService` rule 5): nothing to switch to or create.
+  describe('in a view-only workspace', () => {
+    beforeEach(() => {
+      projects.set([]);
+      activeProjectId.set(null);
+      viewOnly.set(true);
+      fixture.detectChanges();
+    });
+
+    it('says so on the trigger', () => {
+      expect(trigger().textContent).toContain('No projects');
+      // WCAG 2.5.3 (Label in Name) still holds.
+      expect(trigger().getAttribute('aria-label')).toBe(
+        'No projects, view-only access',
+      );
+      expect(component.triggerTooltip()).toBe(
+        'View-only access: you have no projects in this workspace',
+      );
+    });
+
+    it('offers no New project, but a note that takes the focus', () => {
+      openMenu();
+      render();
+
+      expect(inMenu('#project-new-button')).toBeNull();
+      expect(inMenu('#project-view-only-note')?.textContent).toContain(
+        "you can't create projects in this workspace",
+      );
+      // The menu has no item: Material would leave the focus on the trigger.
+      expect(document.activeElement?.id).toBe('project-view-only-note');
+    });
+
+    it('closes on Escape from the note', () => {
+      openMenu();
+      render();
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+      });
+      Object.defineProperty(escape, 'keyCode', {get: () => ESCAPE});
+      document.activeElement!.dispatchEvent(escape);
+      fixture.detectChanges();
+
+      expect(trigger().getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('offers New project again once the workspace is not view-only', () => {
+      viewOnly.set(false);
+      projects.set([project(1, 'Default project', true)]);
+      activeProjectId.set(1);
+      fixture.detectChanges();
+
+      openMenu();
+
+      expect(trigger().textContent).toContain('Default project');
+      expect(inMenu('#project-new-button')).not.toBeNull();
+      expect(inMenu('#project-view-only-note')).toBeNull();
+    });
   });
 });

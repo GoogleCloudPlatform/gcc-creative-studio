@@ -347,6 +347,14 @@ $danger: #f28b82;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
+  .menu-note {
+    margin: 0;
+    padding: 8px 10px;
+    color: $muted;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+
   .new-project-button {
     display: flex;
     align-items: center;
