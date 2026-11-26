@@ -965,6 +965,14 @@ class AgentService:
                     agent_name, chat_app, user_id, resolved_session_id
                 )
                 if session is None:
+                    if not await self._may_recreate_session(
+                        current_user, workspace_id, resolved_session_id
+                    ):
+                        # Read-only: the detail comes back without the
+                        # session, as after a failed read.
+                        return SessionDetailResponseDto(
+                            session=None, storyboard=storyboard
+                        )
                     logger.warning(
                         "Session %s not found. Re-creating dynamic session.",
                         resolved_session_id,
@@ -1436,6 +1444,34 @@ class AgentService:
             return
         if row is not None and row.user_id == current_user.id:
             self._apply_registry_row(dto, row)
+
+    async def _may_recreate_session(
+        self, current_user: UserModel, workspace_id: int, session_id: str
+    ) -> bool:
+        """Whether the session detail may re-create a missing chat session.
+
+        Re-creating writes: a new agent session holding the caller's token,
+        the chat's storyboards and its registry row, which it can mark
+        restored. Like ``restore_session``, it needs write access
+        (``authorize_write``) to the chat's workspace, which
+        ``_ensure_chat_workspace`` made the requested one. A read-only
+        member (a ``VIEWER`` of a private workspace) only reads: the chat
+        is left alone, and the detail comes back without its session.
+        """
+        try:
+            await self.workspace_auth.authorize_write(
+                workspace_id=workspace_id, user=current_user
+            )
+        except HTTPException as e:
+            logger.info(
+                "Session %s is missing; not re-created without write access "
+                "to workspace %s: %s",
+                session_id,
+                workspace_id,
+                e.detail,
+            )
+            return False
+        return True
 
     async def _register_recreated_session(
         self,

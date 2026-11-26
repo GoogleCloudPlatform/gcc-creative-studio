@@ -44,6 +44,12 @@ from src.projects.project_auth_guard import ProjectAuth
 from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.users.user_model import UserModel
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceRoleEnum,
+    WorkspaceScopeEnum,
+)
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 USER = UserModel(id=7, email="owner@example.com", name="Owner", roles=["user"])
 
@@ -1103,6 +1109,8 @@ class TestSessionDetailRecovery:
     the backend reports missing (``_get_session_or_none``) is re-created: a
     failed read whose message merely contained "404" (a port, an id) moved
     a live chat onto a blank session and marked it restored, for good.
+    Re-creating writes, so it needs write access, like ``restore_session``:
+    a read-only member gets the detail without the session.
     """
 
     @staticmethod
@@ -1172,6 +1180,7 @@ class TestSessionDetailRecovery:
         assert res.session is None
         assert res.storyboard.session_id == "s1"
         self._assert_nothing_recreated(service, registry)
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -1191,6 +1200,10 @@ class TestSessionDetailRecovery:
         agent, app, user, state = service._sessions_create.await_args.args
         assert (agent, app, user) == ("agent", "ads_x", "7")
         assert state["workspace_id"] == 10
+        # Like restore_session: write access to the chat's workspace first.
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
         # Like restore_session: every storyboard of the chat follows it.
         service.storyboard_repo.reassign_session.assert_awaited_once_with(
             "s1", "s-new", USER.id
@@ -1283,6 +1296,53 @@ class TestSessionDetailRecovery:
         )
         assert service._sessions_create.await_args.args[1] == "other_app"
         assert res.session.appName == "other_app"
+
+    @staticmethod
+    def _viewer_auth():
+        """The real ``WorkspaceAuth``, with the caller a VIEWER of private
+        workspace 10: it may read there, but not write."""
+        repo = AsyncMock()
+        repo.get_scope.return_value = WorkspaceScopeEnum.PRIVATE
+        repo.is_member.return_value = True
+        repo.get_by_id.return_value = WorkspaceModel(
+            id=10, name="Team", owner_id=99, scope=WorkspaceScopeEnum.PRIVATE
+        )
+        repo.get_member_role.return_value = WorkspaceRoleEnum.VIEWER
+        return WorkspaceAuth(workspace_repo=repo)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "query", [{"session_id": "s1"}, {"storyboard_id": 14}]
+    )
+    async def test_a_viewer_never_recreates_the_chat(
+        self, service, registry, query
+    ):
+        # Re-creating writes (a new agent session holding the caller's
+        # token, the chat's storyboards, its registry row marked restored),
+        # all behind a read check: a VIEWER could trigger it at will.
+        self._chat(service, registry)
+        service.workspace_auth = self._viewer_auth()
+
+        res = await service.get_session_detail(USER, 10, _request(), **query)
+
+        # As after a failed read: the storyboard comes back on its own.
+        assert res.session is None
+        assert (res.storyboard.id, res.storyboard.session_id) == (14, "s1")
+        self._assert_nothing_recreated(service, registry)
+
+    @pytest.mark.anyio
+    async def test_a_viewer_still_reads_a_live_chat(self, service, registry):
+        # Only a re-creation needs write access: a live chat stays a read.
+        self._chat(service, registry)
+        service._sessions_get.return_value = _session()
+        service.workspace_auth = self._viewer_auth()
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        assert res.session.id == "s1"
+        self._assert_nothing_recreated(service, registry)
 
 
 class TestSessionDetailStoryboardAuthorization:
