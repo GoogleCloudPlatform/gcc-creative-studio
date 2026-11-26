@@ -14,11 +14,14 @@
 
 FROM node:20-alpine AS builder
 
+ARG BUILD_CONFIG=build-dev
+ENV NODE_OPTIONS=--max_old_space_size=4096
+
 WORKDIR /app
 COPY . /app/
 
 RUN npm ci
-RUN npm run build-dev
+RUN npm run build -- --configuration=${BUILD_CONFIG}
 
 FROM nginx:alpine
 COPY --from=builder /app/dist/creative-studio/browser /usr/share/nginx/html

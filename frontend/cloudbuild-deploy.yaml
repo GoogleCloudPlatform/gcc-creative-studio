@@ -69,20 +69,20 @@ steps:
     waitFor: ['Inject Environment Variables']
     dir: frontend
 
-  # 4. Deploy to Firebase Hosting
-  - name: 'node:20-alpine' # Use the same version
-    id: 'Deploy to Firebase Hosting'
-    entrypoint: 'npx'
-    args:
-      - 'firebase'
-      - 'deploy'
-      - '--project=${PROJECT_ID}'
-      - '--only=hosting:${_FIREBASE_SITE_ID}'
-      - '--non-interactive'
-    waitFor: ['Build Angular App']
-    dir: frontend
-    env:
-      - '_FIREBASE_SITE_ID=${_FIREBASE_SITE_ID}'
+  # 4. Deploy to Firebase Hosting (commented out: frontend now deploys to private Cloud Run via frontend/cloudbuild-frontend.yaml)
+  # - name: 'node:20-alpine' # Use the same version
+  #   id: 'Deploy to Firebase Hosting'
+  #   entrypoint: 'npx'
+  #   args:
+  #     - 'firebase'
+  #     - 'deploy'
+  #     - '--project=${PROJECT_ID}'
+  #     - '--only=hosting:${_FIREBASE_SITE_ID}'
+  #     - '--non-interactive'
+  #   waitFor: ['Build Angular App']
+  #   dir: frontend
+  #   env:
+  #     - '_FIREBASE_SITE_ID=${_FIREBASE_SITE_ID}'
 
 # This section makes the secrets available as environment variables during the build
 availableSecrets:

@@ -50,6 +50,7 @@ module "compute" {
     AGENT_LOCATION           = var.agent_location != "" ? var.agent_location : var.region
     WORKFLOWS_LOCATION       = var.region
     BACKEND_URL              = local.backend_url
+    FRONTEND_URL             = local.frontend_url
     WORKFLOWS_EXECUTOR_URL   = "${local.backend_url}/api/workflows-executor"
     SIGNING_SA_EMAIL         = google_service_account.bucket_reader_sa.email
   }
@@ -57,4 +58,55 @@ module "compute" {
   runtime_secrets = {
     "DB_PASS" = module.database.secret_id
   }
+}
+
+# --- Frontend Service Account & Private Cloud Run Service ---
+resource "google_service_account" "frontend_run_sa" {
+  account_id   = "${var.resource_prefix}-${var.environment}-fe-run"
+  display_name = "SA for ${local.frontend_service_name} (${var.environment}) Runtime"
+}
+
+resource "google_project_iam_member" "frontend_run_sa_logging_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.frontend_run_sa.email}"
+}
+
+resource "google_cloud_run_v2_service" "frontend" {
+  name                = local.frontend_service_name
+  location            = var.region
+  deletion_protection = false
+
+  # Private ingress: accessible only from internal VPCs and Cloud Load Balancing
+  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
+  template {
+    service_account = google_service_account.frontend_run_sa.email
+
+    containers {
+      image = var.app_version == "latest" ? "us-docker.pkg.dev/cloudrun/container/hello" : "${module.artifact.repository_url}/${local.frontend_service_name}:${var.app_version}"
+
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+    }
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 10
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
+
+  depends_on = [google_project_service.apis]
 }

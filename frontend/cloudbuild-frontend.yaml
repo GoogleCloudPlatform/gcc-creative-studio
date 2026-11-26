@@ -1,0 +1,116 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+steps:
+  # 1. Inject Secrets and Config from the build environment into environment.prod.ts
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Inject Environment Variables'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_API_URL="$${_BACKEND_URL%/}/api"
+        sed -i "s|BACKEND_URL_PLACEHOLDER|$${BACKEND_API_URL}|g" src/environments/environment.prod.ts
+        sed -i "s|GOOGLE_CLIENT_ID_PLACEHOLDER|$${GOOGLE_CLIENT_ID}|g" src/environments/environment.prod.ts
+        # Inject Firebase Auth / Identity Platform config
+        sed -i "s|FIREBASE_API_KEY_PLACEHOLDER|$${FIREBASE_API_KEY}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_AUTH_DOMAIN_PLACEHOLDER|$${FIREBASE_AUTH_DOMAIN}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_PROJECT_ID_PLACEHOLDER|$${FIREBASE_PROJECT_ID}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_STORAGE_BUCKET_PLACEHOLDER|$${FIREBASE_STORAGE_BUCKET}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_SENDER_ID_PLACEHOLDER|$${FIREBASE_MESSAGING_SENDER_ID}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_APP_ID_PLACEHOLDER|$${FIREBASE_APP_ID}|g" src/environments/environment.prod.ts
+        sed -i "s|FIREBASE_MEASUREMENT_ID_PLACEHOLDER|$${FIREBASE_MEASUREMENT_ID}|g" src/environments/environment.prod.ts
+    dir: 'frontend'
+    env:
+      - '_BACKEND_URL=${_BACKEND_URL}'
+    secretEnv:
+      - FIREBASE_API_KEY
+      - FIREBASE_AUTH_DOMAIN
+      - FIREBASE_PROJECT_ID
+      - FIREBASE_STORAGE_BUCKET
+      - FIREBASE_MESSAGING_SENDER_ID
+      - FIREBASE_APP_ID
+      - FIREBASE_MEASUREMENT_ID
+      - GOOGLE_CLIENT_ID
+
+  # 2. Build the frontend container image (Angular production bundle + Nginx)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build Frontend Image'
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'BUILD_CONFIG=production'
+      - '-t'
+      - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_FE_SERVICE_NAME}:$SHORT_SHA'
+      - '.'
+    dir: 'frontend'
+    waitFor: ['Inject Environment Variables']
+
+  # 3. Push the container image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push Frontend Image'
+    args:
+      - 'push'
+      - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_FE_SERVICE_NAME}:$SHORT_SHA'
+    waitFor: ['Build Frontend Image']
+
+  # 4. Deploy to private Cloud Run (Internal + Cloud Load Balancing ingress, IAM authenticated)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'Deploy Frontend to Cloud Run'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_FE_SERVICE_NAME}'
+      - '--image=${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_FE_SERVICE_NAME}:$SHORT_SHA'
+      - '--region=${_GCP_REGION}'
+      - '--project=$PROJECT_ID'
+      - '--port=8080'
+      - '--ingress=internal-and-cloud-load-balancing'
+      - '--no-allow-unauthenticated'
+      - '--quiet'
+    waitFor: ['Push Frontend Image']
+
+images:
+  - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_FE_SERVICE_NAME}:$SHORT_SHA'
+
+substitutions:
+  _FE_SERVICE_NAME: 'creative-studio-frontend'
+  _REPO_NAME: 'cs-development-repo'
+  _BACKEND_URL: ''
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/GOOGLE_CLIENT_ID/versions/latest
+      env: 'GOOGLE_CLIENT_ID'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_API_KEY/versions/latest
+      env: 'FIREBASE_API_KEY'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_AUTH_DOMAIN/versions/latest
+      env: 'FIREBASE_AUTH_DOMAIN'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_PROJECT_ID/versions/latest
+      env: 'FIREBASE_PROJECT_ID'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_STORAGE_BUCKET/versions/latest
+      env: 'FIREBASE_STORAGE_BUCKET'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_MESSAGING_SENDER_ID/versions/latest
+      env: 'FIREBASE_MESSAGING_SENDER_ID'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_APP_ID/versions/latest
+      env: 'FIREBASE_APP_ID'
+    - versionName: projects/${PROJECT_ID}/secrets/FIREBASE_MEASUREMENT_ID/versions/latest
+      env: 'FIREBASE_MEASUREMENT_ID'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+

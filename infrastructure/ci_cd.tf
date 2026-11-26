@@ -27,6 +27,13 @@ resource "google_service_account_iam_member" "backend_sa_user" {
   member             = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
+# Give the trigger SA permission to act as the frontend service account
+resource "google_service_account_iam_member" "frontend_sa_user" {
+  service_account_id = google_service_account.frontend_run_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.trigger_sa.email}"
+}
+
 # Give the trigger SA permission to access secrets
 resource "google_project_iam_member" "secret_accessor" {
   project = var.project_id
@@ -55,12 +62,12 @@ resource "google_project_iam_member" "storage_admin" {
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
-# Give the trigger SA permission to deploy to Firebase Hosting
-resource "google_project_iam_member" "firebase_admin" {
-  project = var.project_id
-  role    = "roles/firebasehosting.admin"
-  member  = "serviceAccount:${google_service_account.trigger_sa.email}"
-}
+# Commented out: Firebase Hosting is disabled in favor of private Cloud Run frontend
+# resource "google_project_iam_member" "firebase_admin" {
+#   project = var.project_id
+#   role    = "roles/firebasehosting.admin"
+#   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
+# }
 
 # Give the trigger SA permission to write to Artifact Registry
 resource "google_project_iam_member" "ar_writer" {
@@ -81,14 +88,13 @@ resource "google_cloudbuild_trigger" "frontend_trigger" {
   name            = "${var.resource_prefix}-${var.environment}-frontend-trigger"
   location        = var.region
   service_account = google_service_account.trigger_sa.id
-  filename        = "frontend/cloudbuild-deploy.yaml"
+  filename        = "frontend/cloudbuild-frontend.yaml"
   substitutions = {
-    _GCP_PROJECT_ID      = var.project_id
-    _GCP_REGION          = var.region
-    _BACKEND_URL         = "https://${google_firebase_hosting_site.frontend.site_id}.web.app"
-    _BACKEND_SERVICE_ID  = module.compute.service_name
-    _FIREBASE_SITE_ID    = google_firebase_hosting_site.frontend.site_id
-    _FE_SERVICE_NAME     = "${var.resource_prefix}-${var.environment}-frontend"
+    _GCP_PROJECT_ID  = var.project_id
+    _GCP_REGION      = var.region
+    _REPO_NAME       = module.artifact.repository_name
+    _BACKEND_URL     = local.backend_url
+    _FE_SERVICE_NAME = local.frontend_service_name
   }
 
   repository_event_config {

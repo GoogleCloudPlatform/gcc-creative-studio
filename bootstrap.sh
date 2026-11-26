@@ -603,7 +603,7 @@ asset_bucket_name_override = "${ASSET_BUCKET_OVERRIDE:-}"
 db_tier            = "$DB_TIER"
 db_availability_type = "$DB_AVAILABILITY"
 resource_prefix    = "cs"
-firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
+# firebase_site_id = "YOUR_FIREBASE_SITE_ID" # Disabled: frontend deployed privately on Cloud Run
 repo_host          = "$REPO_HOST"
 repo_owner         = "$REPO_OWNER"
 repo_name          = "$REPO_NAME"
@@ -685,23 +685,24 @@ setup_firebase_app() {
     AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then fail "Could not automatically fetch Firebase API Key. Please check your Firebase setup."; fi
-    
-    info "Resolving Firebase Hosting Site ID for project '$GCP_PROJECT_ID'..."
-    if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ] && [ "$AUTO_FIREBASE_SITE_ID" != "unassigned" ]; then
-        info "Using confirmed Firebase Hosting Site ID from profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
-    else
-        local default_site_name=$( (firebase hosting:sites:list --project "$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r 'try ((.result.sites // []) | (map(select(.type == "DEFAULT_SITE"))[0].name // .[0].name // "")) catch ""' 2>/dev/null || echo "" )
-        AUTO_FIREBASE_SITE_ID=$GCP_PROJECT_ID
-        [ -n "$default_site_name" ] && AUTO_FIREBASE_SITE_ID=$(basename "$default_site_name")
-        info "Discovered Firebase Hosting Site ID: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
-        write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
-    fi
 
-    local TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_NAME.tfvars"
-    if [ -f "$TFVARS_FILE_PATH" ]; then
-        sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$TFVARS_FILE_PATH" 2>/dev/null && rm -f "${TFVARS_FILE_PATH}.bak"
-    fi
-    
+    # Commented out: Firebase Hosting is disabled; frontend is deployed privately on Cloud Run.
+    # info "Resolving Firebase Hosting Site ID for project '$GCP_PROJECT_ID'..."
+    # if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ] && [ "$AUTO_FIREBASE_SITE_ID" != "unassigned" ]; then
+    #     info "Using confirmed Firebase Hosting Site ID from profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+    # else
+    #     local default_site_name=$( (firebase hosting:sites:list --project "$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r 'try ((.result.sites // []) | (map(select(.type == "DEFAULT_SITE"))[0].name // .[0].name // "")) catch ""' 2>/dev/null || echo "" )
+    #     AUTO_FIREBASE_SITE_ID=$GCP_PROJECT_ID
+    #     [ -n "$default_site_name" ] && AUTO_FIREBASE_SITE_ID=$(basename "$default_site_name")
+    #     info "Discovered Firebase Hosting Site ID: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+    #     write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
+    # fi
+    #
+    # local TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_NAME.tfvars"
+    # if [ -f "$TFVARS_FILE_PATH" ]; then
+    #     sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$TFVARS_FILE_PATH" 2>/dev/null && rm -f "${TFVARS_FILE_PATH}.bak"
+    # fi
+
     success "Firebase secrets have been fetched and will be populated automatically after Terraform runs."
 }
 
@@ -1110,9 +1111,14 @@ update_oauth_client() {
     info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$( (gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" 2>/dev/null || echo "[]") | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" 'try (.[]? | select(.name | contains($clientid)) | .name) catch ""' 2>/dev/null || echo "" )
     if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then warn "Could not resolve the full name for the OAuth client. Skipping URI update."; return; fi
     info "Ensuring OAuth Client has all required origins and redirect URIs..."; local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
-    local FIREBASEAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.firebaseapp.com"; local WEBAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.web.app"
-    local FIREBASEAPP_REDIRECT_URI="${FIREBASEAPP_ORIGIN}/__/auth/handler"; local WEBAPP_REDIRECT_URI="${WEBAPP_ORIGIN}/__/auth/handler"
-    gcloud iap oauth-clients update "$OAUTH_CLIENT_FULL_NAME" --add-javascript-origins="$FIREBASEAPP_ORIGIN" --add-javascript-origins="$WEBAPP_ORIGIN" --add-redirect-uris="$FIREBASEAPP_REDIRECT_URI" --add-redirect-uris="$WEBAPP_REDIRECT_URI" --project="$GCP_PROJECT_ID" --quiet
+    local FIREBASEAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.firebaseapp.com"
+    local FIREBASEAPP_REDIRECT_URI="${FIREBASEAPP_ORIGIN}/__/auth/handler"
+    local FE_RUN_ORIGIN=$(gcloud run services describe "$FE_SERVICE_NAME" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format='value(status.url)' 2>/dev/null || echo "")
+    if [ -n "$FE_RUN_ORIGIN" ]; then
+        gcloud iap oauth-clients update "$OAUTH_CLIENT_FULL_NAME" --add-javascript-origins="$FIREBASEAPP_ORIGIN" --add-javascript-origins="$FE_RUN_ORIGIN" --add-redirect-uris="$FIREBASEAPP_REDIRECT_URI" --project="$GCP_PROJECT_ID" --quiet
+    else
+        gcloud iap oauth-clients update "$OAUTH_CLIENT_FULL_NAME" --add-javascript-origins="$FIREBASEAPP_ORIGIN" --add-redirect-uris="$FIREBASEAPP_REDIRECT_URI" --project="$GCP_PROJECT_ID" --quiet
+    fi
     success "OAuth Client URIs configured automatically."
 }
 
@@ -1444,9 +1450,10 @@ trigger_builds() {
     if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
     export BE_BUILD_ID
     
-    info "Triggering frontend build..."
+    info "Triggering frontend build (Cloud Run)..."
     FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
+    export FE_BUILD_ID
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
 
@@ -1485,7 +1492,10 @@ deploy_izumi_agent() {
             ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
         fi
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
-        local FE_URL="https://${GCP_PROJECT_ID}.web.app"
+        local FE_URL=$(gcloud run services describe ${FE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
+        if [ -z "$FE_URL" ] && [ -d "$ENV_TF_DIR" ]; then
+            FE_URL=$(cd "$ENV_TF_DIR" && terraform output -raw frontend_service_url 2>/dev/null || echo "")
+        fi
 
         # Izumi is deployed exactly as upstream ships it: Vertex AI endpoint, model IDs and
         # mediagent_kit defaults are left untouched (global endpoint). The only location we
@@ -1906,16 +1916,11 @@ main() {
     local ENV_TF_DIR="$REPO_ROOT/infrastructure"
     cd "$ENV_TF_DIR"
 
-    # Try to get the frontend URL from terraform output, but handle the error
+    # Try to get the private frontend Cloud Run URL from terraform output, falling back to gcloud
     FRONTEND_URL=$(terraform output -raw frontend_service_url 2>/dev/null || echo "")
     if [ -z "$FRONTEND_URL" ]; then
-        warn "Could not find 'frontend_service_url' in Terraform outputs. Deducing from project ID."
-        # Construct the default Firebase Hosting URL using the discovered site ID
-        if [ -n "$AUTO_FIREBASE_SITE_ID" ]; then
-            FRONTEND_URL="https://${AUTO_FIREBASE_SITE_ID}.web.app"
-        else
-            FRONTEND_URL="https://$(echo "$GCP_PROJECT_ID" | tr '[:upper:]' '[:lower:]').web.app"
-        fi
+        warn "Could not find 'frontend_service_url' in Terraform outputs. Querying Cloud Run service '$FE_SERVICE_NAME'..."
+        FRONTEND_URL=$(gcloud run services describe "$FE_SERVICE_NAME" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
     fi
 
     # Get the backend URL
@@ -1925,7 +1930,8 @@ main() {
     fi
 
     success "Your infrastructure is ready."
-    echo "------------------------------------------------------------------"; echo -e "   Frontend URL: ${C_YELLOW}${FRONTEND_URL}${C_RESET}"; echo -e "   Backend URL:  ${C_YELLOW}${BACKEND_URL}${C_RESET}"; echo "------------------------------------------------------------------"
+    echo "------------------------------------------------------------------"; echo -e "   Frontend URL (Private Cloud Run): ${C_YELLOW}${FRONTEND_URL}${C_RESET}"; echo -e "   Backend URL:                      ${C_YELLOW}${BACKEND_URL}${C_RESET}"; echo "------------------------------------------------------------------"
+    info "Note: Frontend Cloud Run uses '--ingress=internal-and-cloud-load-balancing' (accessible via Internal VPC or Cloud Load Balancer)."
     info "It may take a few minutes for the builds to complete and the services to become available."
 
     echo # Add a blank line for spacing

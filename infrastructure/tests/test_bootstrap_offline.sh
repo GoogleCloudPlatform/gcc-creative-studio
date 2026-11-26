@@ -138,7 +138,7 @@ elif [[ "$1" == "apply" ]]; then
     exit 0
 elif [[ "$1" == "output" ]]; then
     if [[ "$*" == *"frontend_service_url"* ]]; then
-        echo "https://creative-studio-mock-f9d5d.web.app"
+        echo "https://cs-dev-test-frontend-xyz-uc.a.run.app"
     elif [[ "$*" == *"backend_service_url"* ]]; then
         echo "https://cstudio-be-xyz-uc.a.run.app"
     else
@@ -277,17 +277,17 @@ fi
 grep -q 'project_id[[:space:]]*=[[:space:]]*"creative-studio-mock-project"' "${TFVARS_FILE}" || { cat "${TEST_WORKSPACE}/test_output.log" >&2; fail "project_id missing from .tfvars!"; }
 grep -q 'region[[:space:]]*=[[:space:]]*"us-central1"' "${TFVARS_FILE}" || { cat "${TEST_WORKSPACE}/test_output.log" >&2; fail "region missing from .tfvars!"; }
 grep -q 'resource_prefix[[:space:]]*=[[:space:]]*"cs"' "${TFVARS_FILE}" || { cat "${TEST_WORKSPACE}/test_output.log" >&2; fail "resource_prefix missing from .tfvars!"; }
-grep -q 'firebase_site_id[[:space:]]*=[[:space:]]*"creative-studio-mock-f9d5d"' "${TFVARS_FILE}" || { cat "${TEST_WORKSPACE}/test_output.log" >&2; fail "firebase_site_id (mocked domain) missing from .tfvars!"; }
+grep -q '^# firebase_site_id' "${TFVARS_FILE}" || { cat "${TEST_WORKSPACE}/test_output.log" >&2; fail "Expected firebase_site_id to be commented out in .tfvars!"; }
 
-# Assert hosting domain is properly saved into persistent home profile (quote-agnostic match)
-if ! grep -q 'AUTO_FIREBASE_SITE_ID=.*creative-studio-mock-f9d5d' "${TEST_PROFILE_PATH}"; then
+# Assert frontend Cloud Run service name is saved into persistent home profile
+if ! grep -q 'FE_SERVICE_NAME=.*cs-dev-test-frontend' "${TEST_PROFILE_PATH}"; then
     echo "=== TEST OUTPUT LOG ===" >&2
     cat "${TEST_WORKSPACE}/test_output.log" >&2
     echo "=== PROFILE CONTENTS ===" >&2
     cat "${TEST_PROFILE_PATH}" >&2
-    fail "AUTO_FIREBASE_SITE_ID was not saved into persistent profile!"
+    fail "FE_SERVICE_NAME was not saved into persistent profile!"
 fi
-success "TEST CASE 2 PASSED: .tfvars generated with verified root parameters and hosting domain persisted!"
+success "TEST CASE 2 PASSED: .tfvars generated with verified root parameters and Cloud Run frontend service persisted!"
 
 # --- TEST CASE 3: Verify Resumption from Late Stage (Step 10) ---
 info "Executing TEST CASE 3: Verifying idempotent resumption from late stage..."

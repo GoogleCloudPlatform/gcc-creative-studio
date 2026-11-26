@@ -1,10 +1,11 @@
-output "firebase_dns_verification_records" {
-  description = "The target DNS records you must add to your domain registrar to verify ownership and activate SSL."
-  # Safely handle the output depending on whether the resource count is 0 or 1
-  value = length(google_firebase_hosting_custom_domain.custom_domain) > 0 ? (
-    google_firebase_hosting_custom_domain.custom_domain[0].required_dns_updates
-  ) : null
-}
+# Commented out: Firebase Hosting is disabled in favor of private Cloud Run frontend.
+# output "firebase_dns_verification_records" {
+#   description = "The target DNS records you must add to your domain registrar to verify ownership and activate SSL."
+#   # Safely handle the output depending on whether the resource count is 0 or 1
+#   value = length(google_firebase_hosting_custom_domain.custom_domain) > 0 ? (
+#     google_firebase_hosting_custom_domain.custom_domain[0].required_dns_updates
+#   ) : null
+# }
 
 output "cloud_sql_connection_name" {
   description = "The connection name of the Cloud SQL instance."
@@ -27,8 +28,8 @@ output "db_secret_id" {
 }
 
 output "frontend_service_url" {
-  description = "The default Firebase Hosting URL."
-  value       = "https://${google_firebase_hosting_site.frontend.site_id}.web.app"
+  description = "The URL of the private frontend Cloud Run service."
+  value       = google_cloud_run_v2_service.frontend.uri
 }
 
 output "backend_service_url" {
