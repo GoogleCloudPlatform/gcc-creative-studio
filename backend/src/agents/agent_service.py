@@ -1328,12 +1328,26 @@ class AgentService:
         adoption skips it, and opening or running it from this workspace
         answers 400. With ``include_expired``, the kept rows of ``app_name``
         are appended as expired chats (see ``_expired_session_dtos``).
+        Adopting and seeding write, so a read-only member gets the
+        registered chats as they are, and their unregistered ones stay
+        unlisted until a listing with write access files them
+        (``_may_update_chat_registry``).
         """
         registry = await self.agent_session_repo.map_for_user_workspace(
             current_user.id, workspace_id
         )
         listed_activity = _listed_activity(sessions)
         orphans = [s.id for s in sessions if s.id not in registry]
+        unseeded = {
+            session_id: used_at
+            for session_id, used_at in listed_activity.items()
+            if session_id in registry
+            and registry[session_id].last_used_at is None
+        }
+        if (orphans or unseeded) and not await self._may_update_chat_registry(
+            current_user, workspace_id
+        ):
+            orphans, unseeded = [], {}
         if orphans:
             default_project = (
                 await self.project_service.resolve_project_for_write(
@@ -1350,12 +1364,6 @@ class AgentService:
             registry = await self.agent_session_repo.map_for_user_workspace(
                 current_user.id, workspace_id
             )
-        unseeded = {
-            session_id: used_at
-            for session_id, used_at in listed_activity.items()
-            if session_id in registry
-            and registry[session_id].last_used_at is None
-        }
         if unseeded:
             await self.agent_session_repo.seed_last_used(
                 current_user.id, unseeded
@@ -1366,6 +1374,7 @@ class AgentService:
             if row is None:
                 # Registered in another workspace (adoption skips it): this
                 # workspace refuses to open or run it, so it is never listed.
+                # Nor is a chat a read-only caller could not file.
                 continue
             if project_id is not None and row.project_id != project_id:
                 continue
@@ -1385,6 +1394,34 @@ class AgentService:
                     dto.restorable = dto.id in restorable
             result.extend(expired)
         return result
+
+    async def _may_update_chat_registry(
+        self, current_user: UserModel, workspace_id: int
+    ) -> bool:
+        """Whether a listing may file and seed the caller's chats.
+
+        Adopting unregistered chats (into the default project, which
+        ``resolve_project_for_write`` creates when missing) and seeding
+        their activity times are writes, so they need write access
+        (``authorize_write``). The adoption's own check used to refuse the
+        whole listing to a read-only member (a ``VIEWER`` of a private
+        workspace), even when their only unregistered chat was one
+        registered in another workspace, which adoption skips anyway.
+        Asked only when there is something to write.
+        """
+        try:
+            await self.workspace_auth.authorize_write(
+                workspace_id=workspace_id, user=current_user
+            )
+        except HTTPException as e:
+            logger.info(
+                "[Projects] Listing chats in workspace %s without filing or "
+                "seeding them: %s",
+                workspace_id,
+                e.detail,
+            )
+            return False
+        return True
 
     @staticmethod
     def _expired_session_dtos(

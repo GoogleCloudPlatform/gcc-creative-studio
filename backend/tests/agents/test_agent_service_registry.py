@@ -117,6 +117,19 @@ def _session(user_id="7", events=None, **state):
     }
 
 
+def _viewer_auth():
+    """The real ``WorkspaceAuth``, with the caller a VIEWER of private
+    workspace 10: it may read there, but not write."""
+    repo = AsyncMock()
+    repo.get_scope.return_value = WorkspaceScopeEnum.PRIVATE
+    repo.is_member.return_value = True
+    repo.get_by_id.return_value = WorkspaceModel(
+        id=10, name="Team", owner_id=99, scope=WorkspaceScopeEnum.PRIVATE
+    )
+    repo.get_member_role.return_value = WorkspaceRoleEnum.VIEWER
+    return WorkspaceAuth(workspace_repo=repo)
+
+
 @pytest.fixture(name="registry")
 def fixture_registry():
     repo = AsyncMock(spec=AgentSessionRepository)
@@ -170,6 +183,10 @@ class TestApplySessionRegistry:
         project_service.resolve_project_for_write.assert_awaited_once_with(
             USER, 10
         )
+        # Filing writes: asked once, on the listed workspace.
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
         registry.adopt.assert_awaited_once_with(
             ["s2"], 1, USER.id, 10, last_used={}
         )
@@ -188,6 +205,8 @@ class TestApplySessionRegistry:
 
         registry.adopt.assert_not_called()
         project_service.resolve_project_for_write.assert_not_called()
+        # Nothing to write: no write check (and its queries) either.
+        service.workspace_auth.authorize_write.assert_not_called()
         assert result[0].projectId == 5
 
     @pytest.mark.anyio
@@ -288,6 +307,25 @@ class TestApplySessionRegistry:
         )
 
         assert len(result) == 4
+        registry.seed_last_used.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_viewer_gets_the_registered_chats_without_any_write(
+        self, service, registry, project_service
+    ):
+        # s1 is registered without activity (it would be seeded) and s2 is
+        # not registered here (it would be adopted): both writes are refused
+        # to a read-only member, and the listing answers with s1 as it is.
+        service.workspace_auth = _viewer_auth()
+        registry.map_for_user_workspace.return_value = {"s1": _row("s1")}
+
+        result = await service._apply_session_registry(
+            USER, 10, [_dto("s1", 1_780_100_000), _dto("s2", 1_780_200_000)]
+        )
+
+        assert [(d.id, d.projectId) for d in result] == [("s1", 5)]
+        project_service.resolve_project_for_write.assert_not_called()
+        registry.adopt.assert_not_called()
         registry.seed_last_used.assert_not_called()
 
 
@@ -511,6 +549,45 @@ class TestListAndCreateSessions:
 
         assert exc.value.status_code == 400
         service._sessions_list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_viewer_with_an_unregistered_chat_still_gets_the_listing(
+        self, service, registry
+    ):
+        # The real ProjectService and WorkspaceAuth: adopting s2 needs the
+        # default project, and its authorize_write answered the whole
+        # listing with a 403 for a VIEWER, although s1 is theirs to read.
+        viewer_auth = _viewer_auth()
+        projects = AsyncMock()
+        projects.get_by_id.return_value = _project(5, workspace_id=10)
+        projects.get_summary.return_value = _project(5, workspace_id=10)
+        service.workspace_auth = viewer_auth
+        service.project_service = ProjectService(
+            storyboard_repo=AsyncMock(),
+            media_repo=AsyncMock(),
+            iam_signer_credentials=MagicMock(),
+            project_repo=projects,
+            project_auth=ProjectAuth(
+                project_repo=projects, workspace_auth=viewer_auth
+            ),
+            workspace_auth=viewer_auth,
+            agent_session_repo=registry,
+        )
+        service._sessions_list = AsyncMock(
+            return_value=[
+                {"id": "s1", "session_state": {"workspace_id": 10}},
+                {"id": "s2", "session_state": {"workspace_id": 10}},
+            ]
+        )
+        registry.map_for_user_workspace.return_value = {"s1": _row("s1")}
+
+        result = await service.list_sessions(
+            USER, "7", _request(), workspace_id=10, project_id=5
+        )
+
+        assert [(d.id, d.projectId) for d in result] == [("s1", 5)]
+        projects.ensure_default.assert_not_called()
+        registry.adopt.assert_not_called()
 
     @pytest.mark.anyio
     async def test_create_in_a_project_without_workspace_id(
@@ -1297,19 +1374,6 @@ class TestSessionDetailRecovery:
         assert service._sessions_create.await_args.args[1] == "other_app"
         assert res.session.appName == "other_app"
 
-    @staticmethod
-    def _viewer_auth():
-        """The real ``WorkspaceAuth``, with the caller a VIEWER of private
-        workspace 10: it may read there, but not write."""
-        repo = AsyncMock()
-        repo.get_scope.return_value = WorkspaceScopeEnum.PRIVATE
-        repo.is_member.return_value = True
-        repo.get_by_id.return_value = WorkspaceModel(
-            id=10, name="Team", owner_id=99, scope=WorkspaceScopeEnum.PRIVATE
-        )
-        repo.get_member_role.return_value = WorkspaceRoleEnum.VIEWER
-        return WorkspaceAuth(workspace_repo=repo)
-
     @pytest.mark.anyio
     @pytest.mark.parametrize(
         "query", [{"session_id": "s1"}, {"storyboard_id": 14}]
@@ -1321,7 +1385,7 @@ class TestSessionDetailRecovery:
         # token, the chat's storyboards, its registry row marked restored),
         # all behind a read check: a VIEWER could trigger it at will.
         self._chat(service, registry)
-        service.workspace_auth = self._viewer_auth()
+        service.workspace_auth = _viewer_auth()
 
         res = await service.get_session_detail(USER, 10, _request(), **query)
 
@@ -1335,7 +1399,7 @@ class TestSessionDetailRecovery:
         # Only a re-creation needs write access: a live chat stays a read.
         self._chat(service, registry)
         service._sessions_get.return_value = _session()
-        service.workspace_auth = self._viewer_auth()
+        service.workspace_auth = _viewer_auth()
 
         res = await service.get_session_detail(
             USER, 10, _request(), session_id="s1"
