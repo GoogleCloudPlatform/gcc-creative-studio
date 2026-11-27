@@ -20,6 +20,7 @@ import {
   fakeAsync,
   tick,
 } from '@angular/core/testing';
+import {Clipboard} from '@angular/cdk/clipboard';
 import {provideRouter} from '@angular/router';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
@@ -28,8 +29,12 @@ import {MatMenuModule} from '@angular/material/menu';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA} from '@angular/core';
-import {Clipboard} from '@angular/cdk/clipboard';
+import {
+  CUSTOM_ELEMENTS_SCHEMA,
+  NO_ERRORS_SCHEMA,
+  NgZone,
+  SimpleChange,
+} from '@angular/core';
 
 import {MediaLightboxComponent} from './media-lightbox.component';
 import {TagsService} from '../../services/tags.service';
@@ -287,12 +292,30 @@ describe('MediaLightboxComponent', () => {
     });
   });
 
+  const mountAudioItem = (
+    overrides: Record<string, any>,
+    triggerOnChanges = false,
+  ): HTMLElement => {
+    component.mediaItem = {
+      id: 44,
+      workspaceId: 1,
+      mimeType: 'audio/mpeg',
+      presignedUrls: ['https://example.com/a.mp3'],
+      ...overrides,
+    } as any;
+    component.selectedIndex = 0;
+    if (triggerOnChanges) {
+      component.ngOnChanges({
+        mediaItem: new SimpleChange(null, component.mediaItem, true),
+      });
+    }
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  };
+
   describe('audio lyrics, song structure & iterate action', () => {
     beforeEach(() => {
-      component.mediaItem = {
-        id: 44,
-        workspaceId: 1,
-        mimeType: 'audio/mpeg',
+      mountAudioItem({
         prompt: 'Synthwave anthem',
         presignedUrls: [
           'https://example.com/a.mp3',
@@ -311,15 +334,13 @@ describe('MediaLightboxComponent', () => {
             null,
           ],
         },
-      } as any;
-      component.selectedIndex = 0;
-      fixture.detectChanges();
+      });
     });
 
     it('displays lyrics and structure for the selected track and updates on track switch', () => {
-      expect(component.hasCurrentTrackText).toBeTrue();
-      expect(component.currentTrackLyrics).toBe('[Verse 1]\nNeon skyline');
-      expect(component.currentTrackStructureEntries).toEqual([
+      expect(component.hasCurrentTrackText()).toBeTrue();
+      expect(component.currentTrackLyrics()).toBe('[Verse 1]\nNeon skyline');
+      expect(component.currentTrackStructureEntries()).toEqual([
         {label: 'Tempo', value: '124 BPM'},
         {label: 'Verse 1', value: '0:00-0:15'},
       ]);
@@ -331,7 +352,7 @@ describe('MediaLightboxComponent', () => {
 
       component.selectedIndex = 1;
       fixture.detectChanges();
-      expect(component.hasCurrentTrackText).toBeFalse();
+      expect(component.hasCurrentTrackText()).toBeFalse();
       expect(host.querySelector('.audio-lyrics-panel')).toBeNull();
     });
 
@@ -341,6 +362,19 @@ describe('MediaLightboxComponent', () => {
       expect(copySpy).toHaveBeenCalledWith(
         'Tempo: 124 BPM\nVerse 1: 0:00-0:15\n\n[Verse 1]\nNeon skyline',
       );
+    });
+
+    it('keeps structure chip DOM nodes stable across change detection', () => {
+      const host = fixture.nativeElement as HTMLElement;
+      const before = Array.from(host.querySelectorAll('.structure-chip'));
+      expect(before.length).toBe(2);
+
+      fixture.detectChanges();
+      fixture.detectChanges();
+
+      const after = Array.from(host.querySelectorAll('.structure-chip'));
+      expect(after.length).toBe(2);
+      after.forEach((chip, i) => expect(chip).toBe(before[i]));
     });
 
     it('renders Iterate action for audio clips without rendering Omni video button', () => {
@@ -372,10 +406,8 @@ describe('MediaLightboxComponent', () => {
     });
 
     it('renders backend-parsed Caption, Mosic and BPM separately from timestamped lyrics', () => {
-      component.mediaItem = {
+      const host = mountAudioItem({
         id: 45,
-        workspaceId: 1,
-        mimeType: 'audio/mpeg',
         prompt: 'Stormy symphonic metal',
         presignedUrls: ['https://example.com/storm.mp3'],
         audioAnalysis: {
@@ -392,20 +424,159 @@ describe('MediaLightboxComponent', () => {
             },
           ],
         },
-      } as any;
-      component.selectedIndex = 0;
-      fixture.detectChanges();
+      });
 
-      const host = fixture.nativeElement as HTMLElement;
-      expect(component.currentTrackCaption).toBe(
+      expect(component.currentTrackLyrics()).toBe(
+        '[0.0:5.3] Darkness descends',
+      );
+      expect(component.currentTrackCaption()).toBe(
         'Maximalist Symphonic Metal wall of sound.',
       );
-      expect(component.currentTrackStructureEntries).toEqual([
+      expect(component.currentTrackStructureEntries()).toEqual([
         {label: 'Mosic', value: '4.5'},
         {label: 'BPM', value: '90'},
       ]);
+      expect(host.querySelector('.lyrics-text')?.textContent).toBe(
+        '[0.0:5.3] Darkness descends',
+      );
       expect(host.querySelector('.structure-caption')?.textContent).toContain(
         'Maximalist Symphonic Metal wall of sound.',
+      );
+    });
+
+    it('shows raw_text verbatim instead of parsing it when the backend sent no lyrics or structure', () => {
+      const rawText = '[0.0:5.3] Darkness descends\n\nBPM: 90.0';
+      mountAudioItem({
+        id: 46,
+        presignedUrls: ['https://example.com/raw.mp3'],
+        audioAnalysis: {tracks: [{raw_text: rawText}]},
+      });
+
+      expect(component.currentTrackLyrics()).toBe(rawText);
+      expect(component.currentTrackStructureEntries()).toEqual([]);
+      expect(component.currentTrackCaption()).toBeNull();
+    });
+
+    it('renders collapsible song-structure blocks with vocals, captions, timestamp seeking, and formatted copy', () => {
+      const host = mountAudioItem({
+        id: 215,
+        prompt: 'Slide Drift',
+        presignedUrls: ['https://example.com/slide-drift.mp3'],
+        audioAnalysis: {
+          tracks: [
+            {
+              lyrics: '[Intro 0]\n(yeah, slide, drift)',
+              duration_seconds: 168.9,
+              structure: {
+                bpm: 125,
+                mosic: 4.5,
+                duration_secs: 184,
+                good_crop: 1,
+                sections: [
+                  {
+                    id: 'A0',
+                    letter: 'A',
+                    index: 0,
+                    role: 'Intro',
+                    name: 'Intro 0',
+                    start_seconds: 0,
+                    lyrics: '(yeah, slide, drift)',
+                    caption: 'A dark Drift Phonk intro.',
+                  },
+                  {
+                    id: 'B1',
+                    letter: 'B',
+                    index: 1,
+                    role: 'Chorus',
+                    name: 'Chorus 1',
+                    start_seconds: 15.4,
+                    caption: 'An explosive Drift Phonk chorus.',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      // Internal flags (duration_secs, good_crop) and collapsible sections stay out of top chips
+      expect(component.currentTrackStructureEntries()).toEqual([
+        {label: 'BPM', value: '125'},
+        {label: 'Mosic', value: '4.5'},
+      ]);
+      expect(host.querySelector('.lyrics-text')).toBeNull();
+
+      const blocks = host.querySelectorAll('.section-block');
+      expect(blocks.length).toBe(2);
+      expect(
+        blocks[0].querySelector('.section-index-badge')?.textContent?.trim(),
+      ).toBe('0');
+      expect(
+        blocks[0].querySelector('.section-role-title')?.textContent?.trim(),
+      ).toBe('Intro');
+      expect(
+        blocks[0].querySelector('.section-motif-badge')?.textContent?.trim(),
+      ).toBe('A');
+      expect(
+        blocks[0].querySelector('.section-time-pill')?.textContent?.trim(),
+      ).toBe('0:00 – 0:15');
+      expect(blocks[0].querySelector('.section-block-body')).toBeNull();
+
+      // Expand first block: shows vocals + caption
+      (
+        blocks[0].querySelector('.section-toggle-btn') as HTMLButtonElement
+      ).click();
+      fixture.detectChanges();
+      expect(blocks[0].querySelector('.section-vocals-text')?.textContent).toBe(
+        '(yeah, slide, drift)',
+      );
+      expect(
+        blocks[0].querySelector('.section-caption-text')?.textContent,
+      ).toBe('A dark Drift Phonk intro.');
+
+      // Expand all button opens remaining instrumental section, then collapses all
+      const toggleAllBtn = host.querySelector(
+        '.toggle-all-sections-btn',
+      ) as HTMLButtonElement;
+      expect(toggleAllBtn).toBeTruthy();
+      toggleAllBtn.click();
+      fixture.detectChanges();
+      expect(component.areAllSectionsExpanded()).toBeTrue();
+      expect(
+        blocks[1].querySelector('.section-instrumental-text')?.textContent,
+      ).toContain('Instrumental');
+
+      toggleAllBtn.click();
+      fixture.detectChanges();
+      expect(component.expandedSections().size).toBe(0);
+
+      // Clicking timestamp pill seeks audio without expanding section
+      const fakeAudio = {
+        duration: 168.9,
+        currentTime: 0,
+        paused: false,
+      } as unknown as HTMLAudioElement;
+      component.audioPlayerRef = {
+        nativeElement: fakeAudio,
+      } as typeof component.audioPlayerRef;
+      component.isPlaying = true;
+
+      const chorusTimeBtn = blocks[1].querySelector(
+        '.section-time-pill',
+      ) as HTMLButtonElement;
+      expect(chorusTimeBtn.textContent?.trim()).toBe('0:15 – 2:48');
+      chorusTimeBtn.click();
+      fixture.detectChanges();
+      expect(fakeAudio.currentTime).toBe(15.4);
+      expect(component.isSectionExpanded(1)).toBeFalse();
+      expect(blocks[1].classList.contains('is-playing')).toBeTrue();
+
+      const copySpy = spyOn(TestBed.inject(Clipboard), 'copy');
+      component.copyCurrentTrackText();
+      expect(copySpy).toHaveBeenCalledWith(
+        'BPM: 125\nMosic: 4.5\n\n' +
+          '[Intro 0] (0:00 – 0:15)\nVocals:\n(yeah, slide, drift)\nCaption: A dark Drift Phonk intro.\n\n' +
+          '[Chorus 1] (0:15 – 2:48)\nCaption: An explosive Drift Phonk chorus.',
       );
     });
 
@@ -452,6 +623,7 @@ describe('MediaLightboxComponent', () => {
     });
 
     it('clears pending selectMedia audio timer on ngOnDestroy and resets isPlaying if audio.play() rejects', fakeAsync(() => {
+      spyOn(console, 'warn');
       component.selectedUrl = 'https://example.com/a.mp3';
       fixture.detectChanges();
       const audioEl = component.audioPlayerRef.nativeElement;
@@ -475,5 +647,184 @@ describe('MediaLightboxComponent', () => {
       expect(loadSpy).not.toHaveBeenCalled();
       expect(playSpy).not.toHaveBeenCalled();
     }));
+  });
+
+  describe('interactive audio waveform scrubber', () => {
+    it('renders backend waveform bars when present and falls back to mat-slider line when absent', () => {
+      const host = mountAudioItem(
+        {
+          id: 80,
+          prompt: 'Ambient pulse',
+          presignedUrls: [
+            'https://example.com/with-waveform.mp3',
+            'https://example.com/legacy-no-waveform.mp3',
+          ],
+          audioAnalysis: {
+            tracks: [
+              {waveform: [0.1, 0.5, 1.0, 0.4]},
+              {raw_text: 'No waveform'},
+            ],
+          },
+        },
+        true,
+      );
+
+      expect(
+        host
+          .querySelector('.main-media-container')
+          ?.classList.contains('audio-stage-container'),
+      ).toBeTrue();
+      expect(component.currentTrackWaveform()).toEqual([0.1, 0.5, 1.0, 0.4]);
+      expect(host.querySelector('.waveform-scrubber')).toBeTruthy();
+      expect(host.querySelectorAll('.waveform-bar').length).toBe(4);
+      expect(host.querySelector('mat-slider')).toBeNull();
+
+      component.selectMedia(1);
+      fixture.detectChanges();
+
+      expect(component.currentTrackWaveform()).toBeNull();
+      expect(host.querySelector('.waveform-scrubber')).toBeNull();
+      expect(host.querySelector('mat-slider.custom-slider')).toBeTruthy();
+    });
+
+    it('scrubs audio position on pointer down/move and supports keyboard arrow seeking', () => {
+      const host = mountAudioItem(
+        {
+          id: 82,
+          presignedUrls: ['https://example.com/scrub.mp3'],
+          audioAnalysis: {tracks: [{waveform: [0.2, 0.4, 0.8, 1.0, 0.6, 0.3]}]},
+        },
+        true,
+      );
+
+      const fakeAudio = {
+        duration: 60,
+        currentTime: 0,
+        paused: true,
+        play: () => Promise.resolve(),
+        pause: () => {},
+        load: () => {},
+      } as unknown as HTMLAudioElement;
+      component.audioPlayerRef = {nativeElement: fakeAudio} as any;
+      component.onAudioLoaded();
+
+      const scrubber = host.querySelector('.waveform-scrubber') as HTMLElement;
+      expect(scrubber).toBeTruthy();
+
+      spyOn(scrubber, 'getBoundingClientRect').and.returnValue({
+        left: 100,
+        width: 200,
+        top: 0,
+        right: 300,
+        bottom: 40,
+        height: 40,
+        x: 100,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      scrubber.dispatchEvent(
+        new PointerEvent('pointerdown', {clientX: 200, pointerId: 1}),
+      );
+      fixture.detectChanges();
+
+      expect(component.isScrubbing()).toBeTrue();
+      expect(component.progressValue).toBeCloseTo(50, 1);
+      expect(fakeAudio.currentTime).toBeCloseTo(30, 1);
+      expect(component.hoverTimeLabel()).toBe('0:30');
+
+      scrubber.dispatchEvent(
+        new PointerEvent('pointermove', {clientX: 250, pointerId: 1}),
+      );
+      expect(component.progressValue).toBeCloseTo(75, 1);
+      expect(fakeAudio.currentTime).toBeCloseTo(45, 1);
+
+      scrubber.dispatchEvent(
+        new PointerEvent('pointerup', {clientX: 250, pointerId: 1}),
+      );
+      expect(component.isScrubbing()).toBeFalse();
+
+      scrubber.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft'}));
+      expect(component.progressValue).toBeCloseTo(70, 1);
+      expect(fakeAudio.currentTime).toBeCloseTo(42, 1);
+    });
+
+    it('keeps 120 waveform bars strictly inside the scrubber bounds and aligned with the playhead', () => {
+      const bars120 = Array.from(
+        {length: 120},
+        (_, idx) => 0.1 + ((idx % 10) / 10) * 0.9,
+      );
+      const host = mountAudioItem(
+        {
+          id: 83,
+          presignedUrls: ['https://example.com/120bars.mp3'],
+          audioAnalysis: {tracks: [{waveform: bars120}]},
+        },
+        true,
+      );
+      component.progressValue = 50;
+      const player = host.querySelector('.custom-audio-player') as HTMLElement;
+      player.style.width = '520px';
+      fixture.detectChanges();
+
+      const scrubberRect = (
+        host.querySelector('.waveform-scrubber') as HTMLElement
+      ).getBoundingClientRect();
+      const barsRect = (
+        host.querySelector('.waveform-bars') as HTMLElement
+      ).getBoundingClientRect();
+      const playheadRect = (
+        host.querySelector('.waveform-playhead') as HTMLElement
+      ).getBoundingClientRect();
+      const barEls = host.querySelectorAll('.waveform-bar');
+
+      expect(barEls.length).toBe(120);
+      expect(barsRect.right).toBeLessThanOrEqual(scrubberRect.right + 0.5);
+      expect(barEls[119].getBoundingClientRect().right).toBeLessThanOrEqual(
+        scrubberRect.right + 0.5,
+      );
+
+      const playheadCenter = playheadRect.left + playheadRect.width / 2;
+      expect(
+        Math.abs(playheadCenter - barEls[59].getBoundingClientRect().right),
+      ).toBeLessThan(3);
+    });
+
+    it('animates the playhead outside Angular without touching change-detected state', () => {
+      const host = mountAudioItem(
+        {
+          id: 84,
+          presignedUrls: ['https://example.com/smooth.mp3'],
+          audioAnalysis: {tracks: [{waveform: [0.2, 0.6, 1.0, 0.4]}]},
+        },
+        true,
+      );
+
+      component.audioPlayerRef = {
+        nativeElement: {duration: 60, currentTime: 15, paused: false},
+      } as any;
+
+      const scheduledInAngularZone: boolean[] = [];
+      let step: FrameRequestCallback | undefined;
+      spyOn(window, 'requestAnimationFrame').and.callFake(cb => {
+        scheduledInAngularZone.push(NgZone.isInAngularZone());
+        step = cb;
+        return 1;
+      });
+      const cancelSpy = spyOn(window, 'cancelAnimationFrame');
+
+      TestBed.inject(NgZone).run(() => component.onAudioPlay());
+      expect(scheduledInAngularZone).toEqual([false]);
+
+      step!(0);
+
+      const playhead = host.querySelector('.waveform-playhead') as HTMLElement;
+      expect(playhead.style.left).toBe('25%');
+      expect(component.progressValue).toBe(0);
+      expect(component.currentTime).toBe('0:00');
+
+      component.onAudioPause();
+      expect(cancelSpy).toHaveBeenCalledWith(1);
+    });
   });
 });

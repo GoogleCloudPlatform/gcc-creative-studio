@@ -19,21 +19,28 @@ import {
   Component,
   ElementRef,
   Input,
+  NgZone,
   OnChanges,
   OnDestroy,
   Output,
   SimpleChanges,
   ViewChild,
+  computed,
+  signal,
 } from '@angular/core';
 import {
   AudioTrackAnalysis,
   MediaItem,
   SongStructureEntry,
+  SongStructureSection,
+  formatAudioClock,
   formatSongStructureEntries,
   formatTrackAnalysisForCopy,
   getAudioTrackAnalysis,
   getAudioTrackCaption,
   getAudioTrackLyrics,
+  getAudioTrackSections,
+  getAudioTrackWaveform,
 } from '../../models/media-item.model';
 import {GalleryItem} from '../../models/gallery-item.model';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
@@ -71,7 +78,17 @@ import {PromoteLauncherService} from '../../services/promote-launcher.service';
 export class MediaLightboxComponent
   implements OnChanges, AfterViewInit, OnDestroy
 {
-  @Input() mediaItem: MediaItem | GalleryItem | undefined;
+  private readonly mediaItemSignal = signal<
+    MediaItem | GalleryItem | undefined
+  >(undefined);
+  private readonly selectedIndexSignal = signal<number>(0);
+
+  @Input() set mediaItem(val: MediaItem | GalleryItem | undefined) {
+    this.mediaItemSignal.set(val);
+  }
+  get mediaItem(): MediaItem | GalleryItem | undefined {
+    return this.mediaItemSignal();
+  }
   @Input() initialIndex = 0;
   @Input() showSeeMoreInfoButton = false;
   @Input() showShareButton = true;
@@ -136,7 +153,12 @@ export class MediaLightboxComponent
   @Output() moved = new EventEmitter<number | null>();
   @Output() promoted = new EventEmitter<PromoteDialogResult>();
 
-  selectedIndex = 0;
+  get selectedIndex(): number {
+    return this.selectedIndexSignal();
+  }
+  set selectedIndex(val: number) {
+    this.selectedIndexSignal.set(val);
+  }
   selectedUrl: string | undefined;
 
   // Properties for NgOptimizedImage
@@ -150,10 +172,71 @@ export class MediaLightboxComponent
 
   @ViewChild('audioPlayer') audioPlayerRef!: ElementRef<HTMLAudioElement>;
   @ViewChild('videoPlayer') videoPlayerRef!: ElementRef<HTMLVideoElement>;
+  @ViewChild('waveformPlayhead')
+  waveformPlayheadRef?: ElementRef<HTMLElement>;
   isPlaying = false;
   currentTime = '0:00';
   duration = '0:00';
   progressValue = 0;
+
+  readonly hoverProgress = signal<number | null>(null);
+  readonly isScrubbing = signal<boolean>(false);
+  readonly durationSeconds = signal<number>(0);
+  readonly currentTimeSeconds = signal<number>(0);
+  readonly expandedSections = signal<ReadonlySet<number>>(new Set());
+  readonly hoverTimeLabel = computed<string | null>(() => {
+    const pct = this.hoverProgress();
+    const dur = this.durationSeconds();
+    return pct === null || !dur || !Number.isFinite(dur)
+      ? null
+      : formatAudioClock((pct / 100) * dur);
+  });
+
+  readonly currentTrackAnalysis = computed<AudioTrackAnalysis | null>(() => {
+    const item = this.mediaItemSignal();
+    if (!item?.mimeType?.startsWith('audio/')) return null;
+    return getAudioTrackAnalysis(item, this.selectedIndexSignal());
+  });
+
+  readonly currentTrackWaveform = computed<number[] | null>(() =>
+    getAudioTrackWaveform(this.currentTrackAnalysis()),
+  );
+
+  readonly currentTrackLyrics = computed<string | null>(() =>
+    getAudioTrackLyrics(this.currentTrackAnalysis()),
+  );
+
+  readonly currentTrackCaption = computed<string | null>(() =>
+    getAudioTrackCaption(this.currentTrackAnalysis()),
+  );
+
+  readonly currentTrackStructureEntries = computed<SongStructureEntry[]>(() =>
+    formatSongStructureEntries(this.currentTrackAnalysis()),
+  );
+
+  readonly currentTrackSections = computed<SongStructureSection[]>(() =>
+    getAudioTrackSections(
+      this.currentTrackAnalysis(),
+      this.durationSeconds() || this.mediaItemSignal()?.duration,
+    ),
+  );
+
+  readonly areAllSectionsExpanded = computed<boolean>(() => {
+    const sections = this.currentTrackSections();
+    const expanded = this.expandedSections();
+    return sections.length > 0 && sections.every((_, idx) => expanded.has(idx));
+  });
+
+  readonly hasCurrentTrackText = computed<boolean>(() =>
+    Boolean(
+      this.currentTrackSections().length > 0 ||
+        this.currentTrackLyrics() ||
+        this.currentTrackStructureEntries().length > 0 ||
+        this.currentTrackCaption(),
+    ),
+  );
+
+  private playheadRafId: number | null = null;
 
   constructor(
     private clipboard: Clipboard,
@@ -168,6 +251,7 @@ export class MediaLightboxComponent
     private galleryService: GalleryService,
     private userService: UserService,
     private promoteLauncher: PromoteLauncherService,
+    private ngZone: NgZone,
   ) {}
 
   get isInPersonalWorkspace(): boolean {
@@ -228,6 +312,7 @@ export class MediaLightboxComponent
 
   ngOnDestroy(): void {
     this.clearSelectMediaAudioTimer();
+    this.stopPlayheadAnimation();
     this.lightbox?.destroy();
     this.lightbox = undefined;
   }
@@ -272,6 +357,12 @@ export class MediaLightboxComponent
     } else {
       this.selectedIndex = 0;
       this.selectedUrl = undefined;
+    }
+
+    if (this.isAudio) {
+      this.resetAudioState();
+    } else {
+      this.stopPlayheadAnimation();
     }
   }
 
@@ -621,9 +712,9 @@ export class MediaLightboxComponent
   }
 
   get aspectRatioClass(): string {
-    // Let the audio stage grow naturally when lyrics/structure are displayed
+    // Allow the audio stage to grow cleanly when lyrics / structure are shown.
     if (this.isAudio) {
-      return this.hasCurrentTrackText ? 'h-auto' : 'aspect-video h-auto';
+      return this.hasCurrentTrackText() ? 'h-auto' : 'aspect-video h-auto';
     }
 
     // For Videos, we can still use the aspect ratio if available
@@ -642,74 +733,129 @@ export class MediaLightboxComponent
     return '';
   }
 
-  get currentTrackAnalysis(): AudioTrackAnalysis | null {
-    if (!this.isAudio) return null;
-    return getAudioTrackAnalysis(this.mediaItem, this.selectedIndex);
+  isSectionExpanded(index: number): boolean {
+    return this.expandedSections().has(index);
   }
 
-  get currentTrackLyrics(): string | null {
-    return getAudioTrackLyrics(this.currentTrackAnalysis);
+  toggleSection(index: number): void {
+    const next = new Set(this.expandedSections());
+    if (next.has(index)) {
+      next.delete(index);
+    } else {
+      next.add(index);
+    }
+    this.expandedSections.set(next);
   }
 
-  get currentTrackCaption(): string | null {
-    return getAudioTrackCaption(this.currentTrackAnalysis);
-  }
-
-  get currentTrackStructureEntries(): SongStructureEntry[] {
-    return formatSongStructureEntries(this.currentTrackAnalysis);
-  }
-
-  get hasCurrentTrackText(): boolean {
-    return (
-      Boolean(this.currentTrackLyrics) ||
-      Boolean(this.currentTrackCaption) ||
-      this.currentTrackStructureEntries.length > 0
+  toggleAllSections(): void {
+    const sections = this.currentTrackSections();
+    if (!sections.length) return;
+    this.expandedSections.set(
+      this.areAllSectionsExpanded()
+        ? new Set()
+        : new Set(sections.map((_, idx) => idx)),
     );
   }
 
-  trackByIndex(index: number): number {
-    return index;
+  isSectionPlaying(index: number, sections: SongStructureSection[]): boolean {
+    const now = this.currentTimeSeconds();
+    if (!this.isPlaying && now <= 0) return false;
+    const sec = sections[index];
+    if (sec?.startSeconds === null || sec?.startSeconds === undefined) {
+      return false;
+    }
+    const end =
+      sec.endSeconds ??
+      sections.slice(index + 1).find(s => s.startSeconds !== null)
+        ?.startSeconds ??
+      Infinity;
+    return now >= sec.startSeconds && now < end;
+  }
+
+  seekToSeconds(seconds: number | null, event?: Event): void {
+    event?.stopPropagation();
+    if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return;
+    const audio = this.audioPlayerRef?.nativeElement;
+    if (!audio) return;
+    audio.currentTime = seconds;
+    this.currentTimeSeconds.set(seconds);
+    this.currentTime = formatAudioClock(seconds);
+    if (
+      audio.duration &&
+      Number.isFinite(audio.duration) &&
+      audio.duration > 0
+    ) {
+      this.progressValue = Math.max(
+        0,
+        Math.min(100, (seconds / audio.duration) * 100),
+      );
+    }
   }
 
   copyCurrentTrackText(): void {
-    const text = formatTrackAnalysisForCopy(this.currentTrackAnalysis);
+    const text = formatTrackAnalysisForCopy(
+      this.currentTrackAnalysis(),
+      this.durationSeconds() || this.mediaItemSignal()?.duration,
+    );
     if (!text) return;
     this.clipboard.copy(text);
     handleSuccessSnackbar(this.snackBar, 'Copied to clipboard!');
   }
 
-  // --- AUDIO PLAYER LOGIC ---
+  // --- AUDIO PLAYER & WAVEFORM LOGIC ---
   togglePlay() {
     const audio = this.audioPlayerRef?.nativeElement;
     if (!audio) return;
 
     if (audio.paused) {
-      this.isPlaying = true;
-      audio.play()?.catch(() => {
-        this.isPlaying = false;
+      this.onAudioPlay();
+      audio.play()?.catch(err => {
+        console.warn('Audio playback prevented:', err);
+        this.onAudioPause();
       });
     } else {
       audio.pause();
-      this.isPlaying = false;
+      this.onAudioPause();
+    }
+  }
+
+  onAudioPlay(): void {
+    this.isPlaying = true;
+    this.startPlayheadAnimation();
+  }
+
+  onAudioPause(): void {
+    this.isPlaying = false;
+    this.stopPlayheadAnimation();
+  }
+
+  private setDurationSeconds(dur: number): void {
+    if (this.durationSeconds() !== dur) {
+      this.durationSeconds.set(dur);
+      this.duration = formatAudioClock(dur);
     }
   }
 
   onTimeUpdate() {
     const audio = this.audioPlayerRef?.nativeElement;
-    if (!audio) return;
+    if (!audio?.duration || !Number.isFinite(audio.duration)) return;
 
-    if (audio.duration) {
-      this.progressValue = (audio.currentTime / audio.duration) * 100;
-      this.currentTime = this.formatTime(audio.currentTime);
-    }
+    this.setDurationSeconds(audio.duration);
+    this.currentTimeSeconds.set(audio.currentTime);
+    this.progressValue = (audio.currentTime / audio.duration) * 100;
+    this.currentTime = formatAudioClock(audio.currentTime);
   }
 
   seek(value: number) {
-    const audio = this.audioPlayerRef?.nativeElement;
-    if (!audio) return;
+    const clamped = Math.max(0, Math.min(100, value));
+    this.progressValue = clamped;
 
-    if (audio.duration) {
-      audio.currentTime = (value / 100) * audio.duration;
+    const audio = this.audioPlayerRef?.nativeElement;
+    if (audio?.duration && Number.isFinite(audio.duration)) {
+      const targetSec = (clamped / 100) * audio.duration;
+      audio.currentTime = targetSec;
+      this.currentTimeSeconds.set(targetSec);
+      this.currentTime = formatAudioClock(targetSec);
     }
   }
 
@@ -718,28 +864,165 @@ export class MediaLightboxComponent
     if (!audio) return;
 
     this.isPlaying = !audio.paused;
-    this.duration = this.formatTime(audio.duration);
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      this.setDurationSeconds(audio.duration);
+    }
   }
 
   onAudioEnded() {
-    this.isPlaying = false;
+    this.onAudioPause();
     this.progressValue = 0;
+    this.currentTimeSeconds.set(0);
     this.currentTime = '0:00';
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  private barMidpointPct(index: number, totalBars: number): number {
+    return ((index + 0.5) / Math.max(1, totalBars)) * 100;
+  }
+
+  isBarPlayed(index: number, totalBars: number): boolean {
+    return this.barMidpointPct(index, totalBars) <= this.progressValue;
+  }
+
+  isBarHovered(index: number, totalBars: number): boolean {
+    const hover = this.hoverProgress();
+    if (hover === null) return false;
+    const mid = this.barMidpointPct(index, totalBars);
+    return mid > this.progressValue && mid <= hover;
+  }
+
+  private updateScrubFromPointer(
+    event: PointerEvent,
+    startScrub = false,
+  ): void {
+    const target = event.currentTarget as HTMLElement | null;
+    if (!target) return;
+    if (startScrub) {
+      try {
+        target.setPointerCapture?.(event.pointerId);
+      } catch {
+        // Synthetic PointerEvents in headless tests may not have an active pointerId.
+      }
+      this.isScrubbing.set(true);
+    }
+    const pct = this.computePointerPercentage(event, target);
+    this.hoverProgress.set(pct);
+    if (this.isScrubbing()) {
+      this.seek(pct);
+    }
+  }
+
+  onWaveformPointerDown(event: PointerEvent): void {
+    this.updateScrubFromPointer(event, true);
+  }
+
+  onWaveformPointerMove(event: PointerEvent): void {
+    this.updateScrubFromPointer(event);
+  }
+
+  onWaveformPointerUp(event: PointerEvent): void {
+    const target = event.currentTarget as HTMLElement | null;
+    if (target && this.isScrubbing()) {
+      try {
+        if (target.hasPointerCapture?.(event.pointerId)) {
+          target.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore synthetic test events without active pointer capture.
+      }
+    }
+    this.isScrubbing.set(false);
+  }
+
+  onWaveformPointerLeave(): void {
+    if (!this.isScrubbing()) {
+      this.hoverProgress.set(null);
+    }
+  }
+
+  onWaveformKeyDown(event: KeyboardEvent): void {
+    const seekTargets: Record<string, number> = {
+      ArrowRight: this.progressValue + 5,
+      ArrowUp: this.progressValue + 5,
+      ArrowLeft: this.progressValue - 5,
+      ArrowDown: this.progressValue - 5,
+      Home: 0,
+      End: 100,
+    };
+    if (event.key in seekTargets) {
+      event.preventDefault();
+      this.seek(seekTargets[event.key]);
+    } else if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      this.togglePlay();
+    }
+  }
+
+  private computePointerPercentage(
+    event: MouseEvent | PointerEvent,
+    element: HTMLElement,
+  ): number {
+    const rect = element.getBoundingClientRect();
+    if (!rect.width) return 0;
+    return Math.max(
+      0,
+      Math.min(100, ((event.clientX - rect.left) / rect.width) * 100),
+    );
+  }
+
+  /**
+   * Moves the waveform playhead smoothly between `timeupdate` events.
+   *
+   * Runs outside Angular and only writes the playhead's `left` style: a
+   * zone-patched rAF loop would run app-wide change detection on every frame.
+   * `onTimeUpdate()` keeps `progressValue`, the played bars and the time label
+   * up to date inside the zone.
+   */
+  private startPlayheadAnimation(): void {
+    this.stopPlayheadAnimation();
+    if (typeof requestAnimationFrame === 'undefined') return;
+    const step = () => {
+      const audio = this.audioPlayerRef?.nativeElement;
+      if (!audio || audio.paused) {
+        this.playheadRafId = null;
+        return;
+      }
+      const playhead = this.waveformPlayheadRef?.nativeElement;
+      if (playhead && audio.duration && Number.isFinite(audio.duration)) {
+        playhead.style.left = `${(audio.currentTime / audio.duration) * 100}%`;
+      }
+      this.playheadRafId = requestAnimationFrame(step);
+    };
+    this.ngZone.runOutsideAngular(() => {
+      this.playheadRafId = requestAnimationFrame(step);
+    });
+  }
+
+  private stopPlayheadAnimation(): void {
+    if (
+      this.playheadRafId !== null &&
+      typeof cancelAnimationFrame !== 'undefined'
+    ) {
+      cancelAnimationFrame(this.playheadRafId);
+      this.playheadRafId = null;
+    }
   }
 
   private resetAudioState() {
     this.clearSelectMediaAudioTimer();
-    this.isPlaying = false;
+    this.onAudioPause();
     this.progressValue = 0;
     this.currentTime = '0:00';
     this.duration = '0:00';
-  }
-
-  private formatTime(seconds: number): string {
-    if (isNaN(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    this.durationSeconds.set(0);
+    this.currentTimeSeconds.set(0);
+    this.expandedSections.set(new Set());
+    this.hoverProgress.set(null);
+    this.isScrubbing.set(false);
   }
 
   onEditClick(): void {

@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from contextlib import contextmanager
+import io
 import json
+import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import wave
 from pydantic import ValidationError
 import pytest
 from fastapi import HTTPException
@@ -641,7 +645,11 @@ class TestBackgroundWorkers:
         assert updated_payload["status"] == JobStatusEnum.COMPLETED
         assert updated_payload["gcs_uris"] == ["gs://foo/gemini.wav"]
         assert updated_payload["generation_time"] == pytest.approx(0, abs=10.0)
-        assert "audio_analysis" not in updated_payload
+        assert len(updated_payload["audio_analysis"]["tracks"]) == 1
+        assert (
+            len(updated_payload["audio_analysis"]["tracks"][0]["waveform"])
+            == 120
+        )
         mock_client.models.generate_content.assert_called_once()
         _, call_kwargs = mock_client.models.generate_content.call_args
         called_config = call_kwargs.get("config")
@@ -2708,6 +2716,41 @@ class TestReferenceAudioIteration:
                     ),
                 },
             )
+
+    def test_process_lyria3_wav_output_extracts_waveform_and_duration(
+        self, sample_user
+    ):
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(struct.pack("<4000h", *([12000, -12000] * 2000)))
+        wav_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+        with _audio_worker_env(gcs_uris="gs://foo/lyria3_wave.wav") as env:
+            env.omni_client.interactions.create.return_value = MagicMock(
+                id="inter_wave",
+                output_audio=MagicMock(
+                    type="audio", mime_type="audio/wav", data=wav_b64
+                ),
+                steps=None,
+                outputs=None,
+                output_text="[Verse]\nElectric pulse\nBPM: 120",
+            )
+            dto = CreateAudioDto(
+                workspace_id=1,
+                prompt="Electric synth pulse",
+                model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            )
+            env.run(643, dto, sample_user)
+
+            updated = env.media_repo.update.call_args.args[1]
+            track = updated["audio_analysis"]["tracks"][0]
+            assert len(track["waveform"]) == 120
+            assert track["duration_seconds"] == pytest.approx(0.5, abs=0.05)
+            assert track["lyrics"] == "[Verse]\nElectric pulse"
+            assert track["structure"] == {"bpm": 120}
 
 
 class TestAudioServiceRevisionLineage:

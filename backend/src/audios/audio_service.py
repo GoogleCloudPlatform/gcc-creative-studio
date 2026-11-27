@@ -37,6 +37,7 @@ from google.genai import types
 from google.protobuf import json_format, struct_pb2
 
 from src.audios.audio_constants import LanguageEnum, VoiceEnum
+from src.audios.audio_waveform import extract_audio_waveform_and_duration
 from src.audios.dto.create_audio_dto import (
     CHIRP_TTS_MODELS,
     CreateAudioDto,
@@ -764,11 +765,25 @@ def _process_audio_in_background(
                             )
                             if not gcs_uri:
                                 return None
+                            mime_str = (
+                                mime_type.value
+                                if isinstance(mime_type, MimeTypeEnum)
+                                else str(mime_type)
+                            )
+                            waveform, duration_sec = await asyncio.to_thread(
+                                extract_audio_waveform_and_duration,
+                                audio_bytes,
+                                mime_str,
+                            )
                             meta: dict[str, Any] = (
                                 dict(base_meta)
                                 if isinstance(base_meta, dict)
                                 else {}
                             )
+                            if waveform:
+                                meta["waveform"] = waveform
+                            if duration_sec and duration_sec > 0:
+                                meta["duration_seconds"] = duration_sec
                             return gcs_uri, (meta or None)
 
                         async def _gather_valid_takes(
