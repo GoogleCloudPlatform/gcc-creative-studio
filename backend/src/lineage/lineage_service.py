@@ -224,12 +224,62 @@ class LineageService:
             )
         return target_asset.workspace_id, target_asset
 
+    async def _resolve_readable_ancestor_workspaces(
+        self,
+        *,
+        workspace_id: int,
+        current_user: UserModel,
+        ancestor_edges: Sequence[AncestorChainRow],
+        media_map: dict[int, MediaItem],
+        asset_map: dict[int, SourceAsset],
+    ) -> set[int]:
+        """Authorizes foreign ancestor workspaces for readable parents."""
+        readable_workspace_ids: set[int] = {workspace_id}
+        foreign_workspace_ids: set[int] = set()
+
+        for edge in ancestor_edges:
+            for node_type, node_id in (
+                (edge.parent_type, edge.parent_id),
+                (edge.child_type, edge.child_id),
+            ):
+                if node_type == LineageItemTypeEnum.MEDIA_ITEM.value:
+                    row: MediaItem | SourceAsset | None = media_map.get(node_id)
+                elif node_type == LineageItemTypeEnum.SOURCE_ASSET.value:
+                    row = asset_map.get(node_id)
+                    if (
+                        row is not None
+                        and _enum_str(row.scope) == AssetScopeEnum.SYSTEM.value
+                    ):
+                        continue
+                else:
+                    continue
+
+                if (
+                    row is not None
+                    and row.workspace_id is not None
+                    and row.workspace_id > 0
+                    and row.workspace_id != workspace_id
+                ):
+                    foreign_workspace_ids.add(row.workspace_id)
+
+        for foreign_ws_id in sorted(foreign_workspace_ids):
+            try:
+                await self.workspace_auth.authorize(
+                    workspace_id=foreign_ws_id,
+                    user=current_user,
+                )
+            except HTTPException:
+                continue
+            readable_workspace_ids.add(foreign_ws_id)
+
+        return readable_workspace_ids
+
     @staticmethod
     def _extract_node_uris_and_meta(
         *,
         row: MediaItem | SourceAsset | None,
         media_index: int,
-        workspace_id: int,
+        readable_workspace_ids: set[int],
         is_admin: bool,
         is_root: bool,
         edge_role: str | None,
@@ -249,7 +299,7 @@ class LineageService:
             )
 
         if isinstance(row, MediaItem):
-            in_workspace = row.workspace_id == workspace_id
+            in_workspace = row.workspace_id in readable_workspace_ids
             is_deleted = row.deleted_at is not None or not in_workspace
             if is_deleted and not (is_admin and in_workspace):
                 return (
@@ -314,7 +364,7 @@ class LineageService:
 
         # SourceAsset branch
         in_workspace = (
-            row.workspace_id == workspace_id
+            row.workspace_id in readable_workspace_ids
             or _enum_str(row.scope) == AssetScopeEnum.SYSTEM.value
         )
         is_deleted = row.deleted_at is not None or not in_workspace
@@ -483,6 +533,16 @@ class LineageService:
                 else asset_map.get(node_id)
             )
 
+        readable_ancestor_workspace_ids = (
+            await self._resolve_readable_ancestor_workspaces(
+                workspace_id=workspace_id,
+                current_user=current_user,
+                ancestor_edges=ancestor_edges,
+                media_map=media_map,
+                asset_map=asset_map,
+            )
+        )
+
         uris_to_sign: set[str] = set()
         pending_spine: list[tuple[dict[str, Any], str | None, str | None]] = []
 
@@ -492,7 +552,7 @@ class LineageService:
             root_meta, root_thumb, root_prev = self._extract_node_uris_and_meta(
                 row=lookup_row(root_type, first_edge.parent_id),
                 media_index=first_edge.parent_index,
-                workspace_id=workspace_id,
+                readable_workspace_ids=readable_ancestor_workspace_ids,
                 is_admin=is_admin,
                 is_root=True,
                 edge_role=None,
@@ -527,7 +587,7 @@ class LineageService:
                     self._extract_node_uris_and_meta(
                         row=lookup_row(step_type, edge.child_id),
                         media_index=step_media_index,
-                        workspace_id=workspace_id,
+                        readable_workspace_ids=readable_ancestor_workspace_ids,
                         is_admin=is_admin,
                         is_root=False,
                         edge_role=edge.role,
@@ -576,7 +636,7 @@ class LineageService:
             d_meta, d_thumb, d_prev = self._extract_node_uris_and_meta(
                 row=d_row,
                 media_index=d_idx,
-                workspace_id=workspace_id,
+                readable_workspace_ids={workspace_id},
                 is_admin=is_admin,
                 is_root=False,
                 edge_role=d_edge.role,

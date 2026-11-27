@@ -76,7 +76,10 @@ from src.source_assets.schema.source_asset_model import (
 )
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
-from src.workspaces.generation_workspace import ensure_folder_in_workspace
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    ensure_folder_in_workspace,
+)
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -295,6 +298,7 @@ class SourceAssetService:
     async def _record_crop_lineage_if_requested(
         self,
         *,
+        user: UserModel,
         child_asset_id: int | None,
         workspace_id: int,
         parent_media_item_id: int | None,
@@ -311,14 +315,20 @@ class SourceAssetService:
         explicit_primary: ExplicitPrimarySpec | None = None
         try:
             if parent_media_item_id and parent_media_item_id > 0:
-                if db is not None:
-                    parent_item = await MediaRepository(db).get_by_id(
-                        parent_media_item_id
+                if db is None:
+                    return
+                parent_item = await MediaRepository(db).get_by_id(
+                    parent_media_item_id
+                )
+                if parent_item is None:
+                    return
+                if parent_item.workspace_id != workspace_id:
+                    authorized_ws = await ensure_can_reference_inputs(
+                        db,
+                        user,
+                        media_item_ids=[parent_media_item_id],
                     )
-                    if (
-                        parent_item is None
-                        or parent_item.workspace_id != workspace_id
-                    ):
+                    if parent_item.workspace_id not in authorized_ws:
                         return
                 explicit_primary = ExplicitPrimarySpec(
                     parent_type=LineageItemTypeEnum.MEDIA_ITEM,
@@ -333,11 +343,21 @@ class SourceAssetService:
                 and parent_source_asset_id != child_asset_id
             ):
                 parent_asset = await self.repo.get_by_id(parent_source_asset_id)
-                if parent_asset is None or (
+                if parent_asset is None:
+                    return
+                if (
                     parent_asset.workspace_id != workspace_id
                     and parent_asset.scope != AssetScopeEnum.SYSTEM
                 ):
-                    return
+                    if db is None:
+                        return
+                    authorized_ws = await ensure_can_reference_inputs(
+                        db,
+                        user,
+                        source_asset_ids=[parent_source_asset_id],
+                    )
+                    if parent_asset.workspace_id not in authorized_ws:
+                        return
                 explicit_primary = ExplicitPrimarySpec(
                     parent_type=LineageItemTypeEnum.SOURCE_ASSET,
                     parent_id=parent_source_asset_id,
@@ -345,6 +365,8 @@ class SourceAssetService:
                     role=LineageRoleEnum.CROP_SOURCE.value,
                     action_summary=action_summary or "Cropped & edited image",
                 )
+        except HTTPException:
+            return
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(
                 "Could not validate crop parent for source_asset %s: %s",
@@ -423,6 +445,7 @@ class SourceAssetService:
                     )
                 existing_asset = updated_asset
             await self._record_crop_lineage_if_requested(
+                user=user,
                 child_asset_id=existing_asset.id,
                 workspace_id=workspace_id,
                 parent_media_item_id=parent_media_item_id,
@@ -699,6 +722,7 @@ class SourceAssetService:
         created_asset = await self.repo.create(new_asset)
         new_asset.id = created_asset.id
         await self._record_crop_lineage_if_requested(
+            user=user,
             child_asset_id=new_asset.id,
             workspace_id=workspace_id,
             parent_media_item_id=parent_media_item_id,

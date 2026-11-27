@@ -518,3 +518,294 @@ async def test_get_item_lineage_raises_404_for_missing_targets():
             current_user=_make_user(),
         )
     assert asset_exc.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_item_lineage_resolves_shared_ancestors_and_redacts_foreign():
+    now = datetime.datetime(2026, 5, 2, 10, 0, tzinfo=datetime.UTC)
+    lineage_repo = AsyncMock()
+    workspace_repo = AsyncMock()
+    workspace_repo.get_by_id.return_value = MagicMock(id=11)
+    workspace_auth = AsyncMock()
+
+    async def _auth_side_effect(*, workspace_id: int, **_kwargs):
+        if workspace_id in (11, 22):
+            return MagicMock(id=workspace_id)
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    workspace_auth.authorize.side_effect = _auth_side_effect
+    iam_signer = MagicMock()
+    iam_signer.generate_presigned_url.side_effect = _fake_sign_gcs_uri
+    db = AsyncMock()
+
+    # Spine in personal ws 11:
+    # SourceAsset #10 (shared ws 22) -> MediaItem #20 (shared ws 22)
+    #   -> MediaItem #30 (unauthorized ws 99)
+    #   -> SourceAsset #40 (SYSTEM asset in ws 88)
+    #   -> MediaItem #200 (target in personal ws 11)
+    lineage_repo.get_primary_ancestor_chain.return_value = [
+        AncestorChainRow(
+            id=1,
+            child_type="media_item",
+            child_id=20,
+            child_index=0,
+            parent_type="source_asset",
+            parent_id=10,
+            parent_index=0,
+            role="image_edit_source",
+            action_summary="Edit shared photo",
+            depth=4,
+        ),
+        AncestorChainRow(
+            id=2,
+            child_type="media_item",
+            child_id=30,
+            child_index=0,
+            parent_type="media_item",
+            parent_id=20,
+            parent_index=0,
+            role="image_edit_source",
+            action_summary=None,
+            depth=3,
+        ),
+        AncestorChainRow(
+            id=3,
+            child_type="source_asset",
+            child_id=40,
+            child_index=0,
+            parent_type="media_item",
+            parent_id=30,
+            parent_index=0,
+            role="crop_source",
+            action_summary="System crop",
+            depth=2,
+        ),
+        AncestorChainRow(
+            id=4,
+            child_type="media_item",
+            child_id=200,
+            child_index=0,
+            parent_type="source_asset",
+            parent_id=40,
+            parent_index=0,
+            role="start_frame",
+            action_summary="Animate in My Workspace",
+            depth=1,
+        ),
+    ]
+    # Derivative pointing to a row in ws 22 must still be filtered out
+    lineage_repo.get_direct_derivative_edges.return_value = [
+        ItemLineage(
+            id=50,
+            workspace_id=11,
+            child_type="media_item",
+            child_id=300,
+            parent_type="media_item",
+            parent_id=200,
+            parent_index=0,
+            role="omni_edit_source",
+            is_primary_parent=True,
+            action_summary="Foreign derivative",
+        ),
+    ]
+
+    a10_shared = SourceAsset(
+        id=10,
+        workspace_id=22,
+        scope=AssetScopeEnum.PRIVATE,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        original_filename="shared_photo.png",
+        gcs_uri="gs://b/shared_photo.png",
+        created_at=now,
+    )
+    m20_shared = MediaItem(
+        id=20,
+        workspace_id=22,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model="gemini-2.5-flash-image",
+        original_prompt="Shared campaign hero",
+        gcs_uris=["gs://b/shared_m20.png"],
+        status=JobStatusEnum.COMPLETED,
+        created_at=now,
+    )
+    m30_forbidden = MediaItem(
+        id=30,
+        workspace_id=99,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model="gemini-2.5-flash-image",
+        original_prompt="Top secret foreign prompt",
+        gcs_uris=["gs://b/secret_m30.png"],
+        status=JobStatusEnum.COMPLETED,
+        created_at=now,
+    )
+    a40_system = SourceAsset(
+        id=40,
+        workspace_id=88,
+        scope=AssetScopeEnum.SYSTEM,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        original_filename="system_ref.png",
+        gcs_uri="gs://b/system_ref.png",
+        created_at=now,
+    )
+    m200_target = MediaItem(
+        id=200,
+        workspace_id=11,
+        mime_type=MimeTypeEnum.VIDEO_MP4,
+        model="veo-3.1-generate-001",
+        original_prompt="Animate in My Workspace",
+        gcs_uris=["gs://b/m200.mp4"],
+        thumbnail_uris=["gs://b/m200_thumb.jpg"],
+        status=JobStatusEnum.COMPLETED,
+        created_at=now,
+    )
+    m300_foreign_deriv = MediaItem(
+        id=300,
+        workspace_id=22,
+        mime_type=MimeTypeEnum.VIDEO_MP4,
+        model="veo-3.1-generate-001",
+        original_prompt="Foreign derivative",
+        gcs_uris=["gs://b/m300.mp4"],
+        status=JobStatusEnum.COMPLETED,
+        created_at=now,
+    )
+
+    db.execute.side_effect = [
+        _scalars_result([m200_target]),
+        _scalars_result(
+            [m20_shared, m30_forbidden, m200_target, m300_foreign_deriv]
+        ),
+        _scalars_result([a10_shared, a40_system]),
+    ]
+
+    svc = LineageService(
+        lineage_repo=lineage_repo,
+        workspace_repo=workspace_repo,
+        workspace_auth=workspace_auth,
+        iam_signer_credentials=iam_signer,
+        db=db,
+    )
+    resp = await svc.get_item_lineage(
+        item_type=LineageItemTypeEnum.MEDIA_ITEM,
+        item_id=200,
+        current_user=_make_user(is_admin=False),
+    )
+
+    # Readable shared ancestors resolve cleanly with signed URLs
+    assert resp.spine[0].deleted is False
+    assert resp.spine[0].prompt == "Uploaded: shared_photo.png"
+    assert (
+        resp.spine[0].thumbnail_url
+        == "https://signed.example/b/shared_photo.png"
+    )
+    assert resp.spine[1].deleted is False
+    assert (
+        resp.spine[1].thumbnail_url == "https://signed.example/b/shared_m20.png"
+    )
+
+    # Unauthorized foreign ancestor fails closed as a redacted tombstone
+    assert resp.spine[2].deleted is True
+    assert resp.spine[2].thumbnail_url is None
+    assert resp.spine[2].preview_url is None
+    assert resp.spine[2].mime_type is None
+    assert resp.spine[2].model is None
+    assert resp.spine[2].created_at is None
+    assert resp.spine[2].prompt is None
+
+    # SYSTEM SourceAsset in ws 88 resolves without authorizing ws 88
+    assert resp.spine[3].deleted is False
+    assert (
+        resp.spine[3].thumbnail_url == "https://signed.example/b/system_ref.png"
+    )
+
+    # Target node resolves normally
+    assert resp.spine[4].id == 200
+    assert resp.spine[4].deleted is False
+
+    # Derivatives remain strictly scoped to the target workspace
+    assert resp.derivatives == []
+
+    # Distinct foreign workspaces authorized once each; ws 88 (SYSTEM) skipped
+    authorized_ws_calls = [
+        call.kwargs["workspace_id"]
+        for call in workspace_auth.authorize.await_args_list
+    ]
+    assert authorized_ws_calls == [11, 22, 99]
+
+
+@pytest.mark.anyio
+async def test_get_item_lineage_admin_cannot_see_unauthorized_personal_root():
+    lineage_repo = AsyncMock()
+    workspace_repo = AsyncMock()
+    workspace_repo.get_by_id.return_value = MagicMock(id=11)
+    workspace_auth = AsyncMock()
+
+    async def _auth_side_effect(*, workspace_id: int, **_kwargs):
+        if workspace_id == 11:
+            return MagicMock(id=11)
+        raise HTTPException(status_code=403, detail="Personal workspace denied")
+
+    workspace_auth.authorize.side_effect = _auth_side_effect
+    iam_signer = MagicMock()
+    iam_signer.generate_presigned_url.side_effect = _fake_sign_gcs_uri
+    db = AsyncMock()
+
+    lineage_repo.get_primary_ancestor_chain.return_value = [
+        AncestorChainRow(
+            id=1,
+            child_type="media_item",
+            child_id=201,
+            child_index=0,
+            parent_type="media_item",
+            parent_id=90,
+            parent_index=0,
+            role="image_edit_source",
+            action_summary="Derived edit",
+            depth=1,
+        )
+    ]
+    lineage_repo.get_direct_derivative_edges.return_value = []
+
+    other_personal_root = MediaItem(
+        id=90,
+        workspace_id=77,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model="gemini-2.5-flash-image",
+        original_prompt="Private personal prompt",
+        gcs_uris=["gs://b/private_90.png"],
+        status=JobStatusEnum.COMPLETED,
+    )
+    target = MediaItem(
+        id=201,
+        workspace_id=11,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        model="gemini-2.5-flash-image",
+        original_prompt="Derived edit",
+        gcs_uris=["gs://b/m201.png"],
+        status=JobStatusEnum.COMPLETED,
+    )
+    db.execute.side_effect = [
+        _scalars_result([target]),
+        _scalars_result([other_personal_root, target]),
+        _scalars_result([]),
+    ]
+
+    svc = LineageService(
+        lineage_repo=lineage_repo,
+        workspace_repo=workspace_repo,
+        workspace_auth=workspace_auth,
+        iam_signer_credentials=iam_signer,
+        db=db,
+    )
+    resp = await svc.get_item_lineage(
+        item_type=LineageItemTypeEnum.MEDIA_ITEM,
+        item_id=201,
+        current_user=_make_user(is_admin=True),
+    )
+
+    # Even global ADMIN gets a redacted tombstone for foreign personal roots
+    assert resp.spine[0].deleted is True
+    assert resp.spine[0].prompt == "Original source removed"
+    assert resp.spine[0].thumbnail_url is None
+    assert resp.spine[0].mime_type is None
