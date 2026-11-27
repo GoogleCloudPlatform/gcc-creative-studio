@@ -40,6 +40,7 @@ import {CreatePromptMediaDto} from '../../common/models/prompt.model';
 import {SourceMediaItemLink} from '../../common/models/search.model';
 import {AuthService} from '../../common/services/auth.service';
 import {LoadingService} from '../../common/services/loading.service';
+import {AudioStemMixerDialogResult} from '../../common/components/audio-stem-mixer-dialog/audio-stem-mixer-dialog.component';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -191,11 +192,10 @@ export class MediaDetailComponent implements OnDestroy {
     return crumb.id ?? 'ellipsis';
   }
 
-  readonly isMusicItem = computed<boolean>(() =>
-    String(this.mediaItemSignal()?.model ?? '')
-      .toLowerCase()
-      .startsWith('lyria'),
-  );
+  readonly isMusicItem = computed<boolean>(() => {
+    const model = String(this.mediaItemSignal()?.model ?? '').toLowerCase();
+    return model.startsWith('lyria') || model.startsWith('htdemucs');
+  });
 
   readonly isAudioItem = computed<boolean>(
     () =>
@@ -855,6 +855,17 @@ export class MediaDetailComponent implements OnDestroy {
       event.selectedIndex,
     );
     void this.router.navigate(['/audio'], {state: {remixState}});
+  }
+
+  handleStemmedMediaCreated(result: AudioStemMixerDialogResult): void {
+    if (!result?.mediaItem?.id) return;
+    if (result.action === 'use_as_reference') {
+      const remixState = buildAudioIterationRemixState(result.mediaItem, 0);
+      void this.router.navigate(['/audio'], {state: {remixState}});
+      return;
+    }
+    handleSuccessSnackbar(this._snackBar, 'Stem mix saved to Gallery!');
+    void this.router.navigate(['/gallery', result.mediaItem.id]);
   }
 
   sendToVto(index: number): void {

@@ -51,6 +51,87 @@ steps:
       - '${_GCP_REGION}'
       - '--quiet' # Suppress interactive prompts for CI/CD environments
 
+  # Step 4: Create or update the audio stem separation Cloud Run Job (4 vCPU / 8 GiB)
+  # reusing the backend service account and GENMEDIA_BUCKET without Terraform changes.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'DeployStemJob'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        SVC_NAME="${_SERVICE_NAME}"
+        echo "Resolving runtime service account from Cloud Run service '$$SVC_NAME'..."
+        RUN_SA=$$(gcloud run services describe "$$SVC_NAME" \
+          --region="${_GCP_REGION}" \
+          --project="$PROJECT_ID" \
+          --format="value(spec.template.spec.serviceAccountName)" || true)
+        if [ -z "$$RUN_SA" ]; then
+          RUN_SA=$$(gcloud run services describe "$$SVC_NAME" \
+            --region="${_GCP_REGION}" \
+            --project="$PROJECT_ID" \
+            --format="value(template.serviceAccount)" || true)
+        fi
+        if [ -z "$$RUN_SA" ] && [[ "$$SVC_NAME" == cs-*-backend ]]; then
+          RUN_SA="$${SVC_NAME%-backend}-run@$PROJECT_ID.iam.gserviceaccount.com"
+        fi
+        if [ -z "$$RUN_SA" ]; then
+          RUN_SA=$$(gcloud run services list \
+            --region="${_GCP_REGION}" \
+            --project="$PROJECT_ID" \
+            --filter="metadata.name~^cs-.*-backend$$" \
+            --limit=1 \
+            --format="value(spec.template.spec.serviceAccountName)" || true)
+        fi
+        if [ -z "$$RUN_SA" ]; then
+          echo "ERROR: Could not resolve runtime service account for '$$SVC_NAME'." >&2
+          exit 1
+        fi
+        echo "Using stem job runtime service account: $$RUN_SA"
+
+        GENMEDIA_BUCKET=$$(gcloud run services describe "$$SVC_NAME" \
+          --region="${_GCP_REGION}" \
+          --project="$PROJECT_ID" \
+          --format="yaml(spec.template.spec.containers[0].env)" | \
+          awk '
+            /^[[:space:]]*-[[:space:]]/ {
+              if (k == "GENMEDIA_BUCKET" && v != "") { print v; found = 1; exit }
+              k = ""; v = ""
+            }
+            /name:[[:space:]]*/ {
+              line = $$0; sub(/^.*name:[[:space:]]*/, "", line); gsub(/^["\x27]|["\x27]$$/, "", line); k = line
+            }
+            /value:[[:space:]]*/ {
+              line = $$0; sub(/^.*value:[[:space:]]*/, "", line); gsub(/^["\x27]|["\x27]$$/, "", line); v = line
+            }
+            END {
+              if (!found && k == "GENMEDIA_BUCKET" && v != "") { print v }
+            }
+          ' || true)
+        if [ -z "$$GENMEDIA_BUCKET" ] && [[ "$$SVC_NAME" == *-backend ]]; then
+          GENMEDIA_BUCKET="$PROJECT_ID-$${SVC_NAME%-backend}-bucket"
+        fi
+        echo "Using GENMEDIA_BUCKET: $${GENMEDIA_BUCKET:-<default>}"
+
+        ENV_VARS="PROJECT_ID=$PROJECT_ID,REGION=${_GCP_REGION},AUDIO_STEM_ORT_THREADS=4"
+        if [ -n "$$GENMEDIA_BUCKET" ]; then
+          ENV_VARS="$$ENV_VARS,GENMEDIA_BUCKET=$$GENMEDIA_BUCKET"
+        fi
+
+        gcloud run jobs deploy "${_STEM_JOB_NAME}" \
+          --image="${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA" \
+          --region="${_GCP_REGION}" \
+          --project="$PROJECT_ID" \
+          --service-account="$$RUN_SA" \
+          --cpu=4 \
+          --memory=8Gi \
+          --max-retries=0 \
+          --task-timeout=900s \
+          --command="python" \
+          --args="-m,src.audios.stem_job_runner" \
+          --set-env-vars="$$ENV_VARS" \
+          --quiet
+
 # BEST PRACTICE: Explicitly declare the image(s) built by this pipeline.
 # This integrates the build with Google Cloud's security features, like showing
 # vulnerability scan results in the Cloud Build UI.
@@ -61,6 +142,7 @@ images:
 # You can override these for manual runs.
 substitutions:
   _SERVICE_NAME: 'creative-studio-backend'
+  _STEM_JOB_NAME: 'creative-studio-stems-job'
   _REPO_NAME: 'cs-be-development-repo' # This matches local.artifact_repo_id
 
 options:

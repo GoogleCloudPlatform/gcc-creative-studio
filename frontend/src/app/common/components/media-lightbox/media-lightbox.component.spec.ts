@@ -598,13 +598,15 @@ describe('MediaLightboxComponent', () => {
         expect(host.querySelector('.iterate-audio-btn')).toBeNull();
       }
 
-      component.mediaItem = {
-        ...(component.mediaItem as any),
-        model: 'lyria-3-clip-preview',
-      };
-      fixture.detectChanges();
-      expect(component.canIterateAudio).toBeTrue();
-      expect(host.querySelector('.iterate-audio-btn')).not.toBeNull();
+      for (const musicModel of ['lyria-3-clip-preview', 'htdemucs-6s']) {
+        component.mediaItem = {
+          ...(component.mediaItem as any),
+          model: musicModel,
+        };
+        fixture.detectChanges();
+        expect(component.canIterateAudio).toBeTrue();
+        expect(host.querySelector('.iterate-audio-btn')).not.toBeNull();
+      }
 
       sub.unsubscribe();
     });
@@ -647,6 +649,49 @@ describe('MediaLightboxComponent', () => {
       expect(loadSpy).not.toHaveBeenCalled();
       expect(playSpy).not.toHaveBeenCalled();
     }));
+
+    it('renders Stems button for audio items, opens AudioStemMixerDialogComponent, and emits stemmedMediaCreated', () => {
+      mountAudioItem({
+        id: 55,
+        workspaceId: 11,
+        folderId: 8,
+        titles: ['Take One', 'Take Two'],
+        presignedUrls: [
+          'https://example.com/1.mp3',
+          'https://example.com/2.mp3',
+        ],
+      });
+      component.selectedIndex = 1;
+      fixture.detectChanges();
+
+      const stemmedResult = {
+        action: 'use_as_reference' as const,
+        mediaItem: {id: 777, titles: ['Take Two (Instrumental)']} as any,
+      };
+      const openSpy = spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () => of(stemmedResult),
+      } as any);
+
+      const emitted: any[] = [];
+      component.stemmedMediaCreated.subscribe(ev => emitted.push(ev));
+
+      const stemBtn = (fixture.nativeElement as HTMLElement).querySelector(
+        '.stem-audio-btn',
+      ) as HTMLElement | null;
+      expect(stemBtn).toBeTruthy();
+      stemBtn!.click();
+
+      expect(openSpy).toHaveBeenCalled();
+      const dialogConfig = openSpy.calls.mostRecent().args[1] as any;
+      expect(dialogConfig.data).toEqual({
+        workspaceId: 11,
+        source: {id: 55, type: 'media_item', index: 1},
+        sourceTitle: 'Take Two',
+        folderId: 8,
+        allowUseAsReference: true,
+      });
+      expect(emitted).toEqual([stemmedResult]);
+    });
   });
 
   describe('interactive audio waveform scrubber', () => {

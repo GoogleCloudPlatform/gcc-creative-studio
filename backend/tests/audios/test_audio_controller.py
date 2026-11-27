@@ -23,6 +23,12 @@ from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.users.user_model import UserModel
 from src.audios.audio_controller import router
 from src.audios.audio_service import AudioService
+from src.audios.audio_stem_service import AudioStemService
+from src.audios.dto.stem_audio_dto import (
+    ExtractStemsResponseDto,
+    StemNameEnum,
+    StemPreviewItemDto,
+)
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 
@@ -40,6 +46,15 @@ def fixture_mock_audio_service():
     return service
 
 
+@pytest.fixture(name="mock_audio_stem_service")
+def fixture_mock_audio_stem_service():
+    service = AsyncMock()
+    service.extract_stems = AsyncMock()
+    service.get_stem_extraction_status = AsyncMock()
+    service.save_stem_mix = AsyncMock()
+    return service
+
+
 @pytest.fixture(name="mock_workspace_auth")
 def fixture_mock_workspace_auth():
     auth = AsyncMock()
@@ -49,7 +64,12 @@ def fixture_mock_workspace_auth():
 
 
 @pytest.fixture(name="client")
-def fixture_client(mock_user, mock_audio_service, mock_workspace_auth):
+def fixture_client(
+    mock_user,
+    mock_audio_service,
+    mock_audio_stem_service,
+    mock_workspace_auth,
+):
     app = FastAPI()
     app.include_router(router)
 
@@ -57,6 +77,7 @@ def fixture_client(mock_user, mock_audio_service, mock_workspace_auth):
 
     app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[AudioService] = lambda: mock_audio_service
+    app.dependency_overrides[AudioStemService] = lambda: mock_audio_stem_service
     app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
 
     return TestClient(app)
@@ -184,3 +205,112 @@ def test_generate_audio_rejects_unauthorized_403(
     response = client.post("/api/audios/generate", json=AUDIO_PAYLOAD)
     assert response.status_code == 403
     mock_audio_service.start_audio_generation_job.assert_not_called()
+
+
+def test_extract_stems_endpoint_authorizes_and_returns_stems(
+    client, mock_audio_stem_service, mock_workspace_auth
+):
+    mock_audio_stem_service.extract_stems.return_value = (
+        ExtractStemsResponseDto(
+            cache_hit=True,
+            source_name="Track 1",
+            duration_seconds=30.0,
+            stems=[
+                StemPreviewItemDto(
+                    name=StemNameEnum.VOCALS,
+                    label="Vocals",
+                    gcs_uri="gs://bucket/vocals.mp3",
+                    presigned_url="https://signed.example/vocals.mp3",
+                    peak_level=0.8,
+                    has_energy=True,
+                )
+            ],
+        )
+    )
+
+    response = client.post(
+        "/api/audios/stems/extract",
+        json={
+            "workspaceId": 3,
+            "source": {"id": 99, "type": "media_item", "index": 0},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cacheHit"] is True
+    assert body["stems"][0]["name"] == "vocals"
+    mock_workspace_auth.authorize.assert_called_once()
+    mock_audio_stem_service.extract_stems.assert_called_once()
+
+
+def test_get_stems_status_endpoint_authorizes_and_returns_status(
+    client, mock_audio_stem_service, mock_workspace_auth
+):
+    mock_audio_stem_service.get_stem_extraction_status.return_value = (
+        ExtractStemsResponseDto(
+            status="processing",
+            cache_hit=False,
+            source_name="Track 1",
+            stems=[],
+        )
+    )
+
+    response = client.post(
+        "/api/audios/stems/status",
+        json={
+            "workspaceId": 3,
+            "source": {"id": 99, "type": "media_item", "index": 0},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "processing"
+    assert body["stems"] == []
+    mock_workspace_auth.authorize.assert_called_once()
+    mock_audio_stem_service.get_stem_extraction_status.assert_called_once()
+
+
+def test_save_stem_mix_endpoint_validates_and_saves(
+    client, mock_audio_stem_service, mock_workspace_auth
+):
+    mock_audio_stem_service.save_stem_mix.return_value = MediaItemResponse(
+        id=777,
+        workspace_id=3,
+        user_id=1,
+        user_email="test@example.com",
+        mime_type=MimeTypeEnum.AUDIO_MPEG,
+        status="completed",
+        gcs_uris=["gs://bucket/stemmed_audio/mix.mp3"],
+        presigned_urls=["https://signed.example/mix.mp3"],
+        aspect_ratio="16:9",
+        model="htdemucs-6s",
+    )
+
+    response = client.post(
+        "/api/audios/stems/save",
+        json={
+            "workspaceId": 3,
+            "source": {"id": 99, "type": "media_item", "index": 0},
+            "selectedStems": ["drums", "bass"],
+            "saveMode": "combined",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 777
+    assert response.json()["model"] == "htdemucs-6s"
+    mock_workspace_auth.authorize.assert_called_once()
+    mock_audio_stem_service.save_stem_mix.assert_called_once()
+
+    # Empty selectedStems -> 422
+    bad_response = client.post(
+        "/api/audios/stems/save",
+        json={
+            "workspaceId": 3,
+            "source": {"id": 99, "type": "media_item"},
+            "selectedStems": [],
+        },
+    )
+    assert bad_response.status_code == 422
