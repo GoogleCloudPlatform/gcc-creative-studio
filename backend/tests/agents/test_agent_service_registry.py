@@ -35,9 +35,21 @@ from src.agents.agent_dtos import SessionResponseDto
 from src.agents.agent_service import AgentService
 from src.agents.agent_session_repository import AgentSessionRepository
 from src.agents.local_adk_client import LocalAgentError
-from src.projects.dto.project_dto import ProjectResponse, StoryboardResponse
+from src.projects.dto.project_dto import (
+    ProjectResponse,
+    SceneDTO,
+    StoryboardResponse,
+)
+from src.projects.project_auth_guard import ProjectAuth
+from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.users.user_model import UserModel
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceRoleEnum,
+    WorkspaceScopeEnum,
+)
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 USER = UserModel(id=7, email="owner@example.com", name="Owner", roles=["user"])
 
@@ -105,6 +117,19 @@ def _session(user_id="7", events=None, **state):
     }
 
 
+def _viewer_auth():
+    """The real ``WorkspaceAuth``, with the caller a VIEWER of private
+    workspace 10: it may read there, but not write."""
+    repo = AsyncMock()
+    repo.get_scope.return_value = WorkspaceScopeEnum.PRIVATE
+    repo.is_member.return_value = True
+    repo.get_by_id.return_value = WorkspaceModel(
+        id=10, name="Team", owner_id=99, scope=WorkspaceScopeEnum.PRIVATE
+    )
+    repo.get_member_role.return_value = WorkspaceRoleEnum.VIEWER
+    return WorkspaceAuth(workspace_repo=repo)
+
+
 @pytest.fixture(name="registry")
 def fixture_registry():
     repo = AsyncMock(spec=AgentSessionRepository)
@@ -158,6 +183,10 @@ class TestApplySessionRegistry:
         project_service.resolve_project_for_write.assert_awaited_once_with(
             USER, 10
         )
+        # Filing writes: asked once, on the listed workspace.
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
         registry.adopt.assert_awaited_once_with(
             ["s2"], 1, USER.id, 10, last_used={}
         )
@@ -176,6 +205,8 @@ class TestApplySessionRegistry:
 
         registry.adopt.assert_not_called()
         project_service.resolve_project_for_write.assert_not_called()
+        # Nothing to write: no write check (and its queries) either.
+        service.workspace_auth.authorize_write.assert_not_called()
         assert result[0].projectId == 5
 
     @pytest.mark.anyio
@@ -276,6 +307,25 @@ class TestApplySessionRegistry:
         )
 
         assert len(result) == 4
+        registry.seed_last_used.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_viewer_gets_the_registered_chats_without_any_write(
+        self, service, registry, project_service
+    ):
+        # s1 is registered without activity (it would be seeded) and s2 is
+        # not registered here (it would be adopted): both writes are refused
+        # to a read-only member, and the listing answers with s1 as it is.
+        service.workspace_auth = _viewer_auth()
+        registry.map_for_user_workspace.return_value = {"s1": _row("s1")}
+
+        result = await service._apply_session_registry(
+            USER, 10, [_dto("s1", 1_780_100_000), _dto("s2", 1_780_200_000)]
+        )
+
+        assert [(d.id, d.projectId) for d in result] == [("s1", 5)]
+        project_service.resolve_project_for_write.assert_not_called()
+        registry.adopt.assert_not_called()
         registry.seed_last_used.assert_not_called()
 
 
@@ -499,6 +549,45 @@ class TestListAndCreateSessions:
 
         assert exc.value.status_code == 400
         service._sessions_list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_viewer_with_an_unregistered_chat_still_gets_the_listing(
+        self, service, registry
+    ):
+        # The real ProjectService and WorkspaceAuth: adopting s2 needs the
+        # default project, and its authorize_write answered the whole
+        # listing with a 403 for a VIEWER, although s1 is theirs to read.
+        viewer_auth = _viewer_auth()
+        projects = AsyncMock()
+        projects.get_by_id.return_value = _project(5, workspace_id=10)
+        projects.get_summary.return_value = _project(5, workspace_id=10)
+        service.workspace_auth = viewer_auth
+        service.project_service = ProjectService(
+            storyboard_repo=AsyncMock(),
+            media_repo=AsyncMock(),
+            iam_signer_credentials=MagicMock(),
+            project_repo=projects,
+            project_auth=ProjectAuth(
+                project_repo=projects, workspace_auth=viewer_auth
+            ),
+            workspace_auth=viewer_auth,
+            agent_session_repo=registry,
+        )
+        service._sessions_list = AsyncMock(
+            return_value=[
+                {"id": "s1", "session_state": {"workspace_id": 10}},
+                {"id": "s2", "session_state": {"workspace_id": 10}},
+            ]
+        )
+        registry.map_for_user_workspace.return_value = {"s1": _row("s1")}
+
+        result = await service.list_sessions(
+            USER, "7", _request(), workspace_id=10, project_id=5
+        )
+
+        assert [(d.id, d.projectId) for d in result] == [("s1", 5)]
+        projects.ensure_default.assert_not_called()
+        registry.adopt.assert_not_called()
 
     @pytest.mark.anyio
     async def test_create_in_a_project_without_workspace_id(
@@ -1097,6 +1186,8 @@ class TestSessionDetailRecovery:
     the backend reports missing (``_get_session_or_none``) is re-created: a
     failed read whose message merely contained "404" (a port, an id) moved
     a live chat onto a blank session and marked it restored, for good.
+    Re-creating writes, so it needs write access, like ``restore_session``:
+    a read-only member gets the detail without the session.
     """
 
     @staticmethod
@@ -1130,6 +1221,7 @@ class TestSessionDetailRecovery:
             session_id="s1",
         )
         service.project_service.list_storyboards.return_value = [storyboard]
+        service.project_service.authorize_storyboard.return_value = _project()
         service.project_service.get_storyboard.return_value = storyboard
 
     @staticmethod
@@ -1165,6 +1257,7 @@ class TestSessionDetailRecovery:
         assert res.session is None
         assert res.storyboard.session_id == "s1"
         self._assert_nothing_recreated(service, registry)
+        service.workspace_auth.authorize_write.assert_not_called()
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -1184,6 +1277,10 @@ class TestSessionDetailRecovery:
         agent, app, user, state = service._sessions_create.await_args.args
         assert (agent, app, user) == ("agent", "ads_x", "7")
         assert state["workspace_id"] == 10
+        # Like restore_session: write access to the chat's workspace first.
+        service.workspace_auth.authorize_write.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
         # Like restore_session: every storyboard of the chat follows it.
         service.storyboard_repo.reassign_session.assert_awaited_once_with(
             "s1", "s-new", USER.id
@@ -1276,6 +1373,229 @@ class TestSessionDetailRecovery:
         )
         assert service._sessions_create.await_args.args[1] == "other_app"
         assert res.session.appName == "other_app"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "query", [{"session_id": "s1"}, {"storyboard_id": 14}]
+    )
+    async def test_a_viewer_never_recreates_the_chat(
+        self, service, registry, query
+    ):
+        # Re-creating writes (a new agent session holding the caller's
+        # token, the chat's storyboards, its registry row marked restored),
+        # all behind a read check: a VIEWER could trigger it at will.
+        self._chat(service, registry)
+        service.workspace_auth = _viewer_auth()
+
+        res = await service.get_session_detail(USER, 10, _request(), **query)
+
+        # As after a failed read: the storyboard comes back on its own.
+        assert res.session is None
+        assert (res.storyboard.id, res.storyboard.session_id) == (14, "s1")
+        self._assert_nothing_recreated(service, registry)
+
+    @pytest.mark.anyio
+    async def test_a_viewer_still_reads_a_live_chat(self, service, registry):
+        # Only a re-creation needs write access: a live chat stays a read.
+        self._chat(service, registry)
+        service._sessions_get.return_value = _session()
+        service.workspace_auth = _viewer_auth()
+
+        res = await service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        assert res.session.id == "s1"
+        self._assert_nothing_recreated(service, registry)
+
+
+class TestSessionDetailStoryboardAuthorization:
+    """The session detail authorizes a storyboard before it loads it.
+
+    Loading presigns a URL per scene. The detail used to load first and
+    compare the owner afterwards, and never checked the project's own
+    workspace: a member removed from a private workspace kept reading their
+    storyboards in it by naming a workspace they could still use. These run
+    the real ``ProjectService`` and ``ProjectAuth`` over mocked repositories.
+    """
+
+    REVOKED_WORKSPACE = 20
+
+    @pytest.fixture(name="workspace_auth")
+    def fixture_workspace_auth(self):
+        """Every workspace is readable but private workspace 20."""
+
+        def authorize(workspace_id, **_):
+            if workspace_id == self.REVOKED_WORKSPACE:
+                raise HTTPException(status_code=403, detail="Not a member")
+
+        auth = AsyncMock()
+        auth.authorize.side_effect = authorize
+        return auth
+
+    @pytest.fixture(name="storyboards")
+    def fixture_storyboards(self):
+        """Storyboard 14: the caller's, in project 5, with a framed scene."""
+        repo = AsyncMock(spec=StoryboardRepository)
+        repo.get_owner_and_project.return_value = (USER.id, 5)
+        repo.get_by_id_with_details.return_value = StoryboardResponse(
+            id=14,
+            user_id=USER.id,
+            workspace_id=10,
+            project_id=5,
+            scenes=[SceneDTO(first_frame_media_item_id=409)],
+        )
+        return repo
+
+    @pytest.fixture(name="projects")
+    def fixture_projects(self):
+        """Project 5 is the caller's, in workspace 10."""
+        repo = AsyncMock()
+        repo.get_by_id.return_value = _project(workspace_id=10)
+        return repo
+
+    @pytest.fixture(name="signer")
+    def fixture_signer(self):
+        signer = MagicMock()
+        signer.generate_presigned_url.return_value = "https://signed/frame"
+        return signer
+
+    @pytest.fixture(name="detail_service")
+    def fixture_detail_service(
+        self, registry, workspace_auth, storyboards, projects, signer
+    ):
+        media = AsyncMock()
+        media.get_by_id.return_value = SimpleNamespace(gcs_uris=["gs://b/f"])
+        project_service = ProjectService(
+            storyboard_repo=storyboards,
+            media_repo=media,
+            iam_signer_credentials=signer,
+            project_repo=projects,
+            project_auth=ProjectAuth(
+                project_repo=projects, workspace_auth=workspace_auth
+            ),
+            workspace_auth=workspace_auth,
+            agent_session_repo=registry,
+        )
+        with patch("vertexai.Client"):
+            service = AgentService(
+                agent_repo=MagicMock(),
+                workspace_service=MagicMock(),
+                storyboard_repo=AsyncMock(),
+                workspace_auth=workspace_auth,
+                project_service=project_service,
+                agent_session_repo=registry,
+            )
+        service._get_validated_agent_name = MagicMock(return_value="agent")
+        return service
+
+    @pytest.mark.anyio
+    async def test_the_callers_storyboard_loads_in_its_own_workspace(
+        self, detail_service, storyboards
+    ):
+        res = await detail_service.get_session_detail(
+            USER, 10, _request(), storyboard_id=14
+        )
+
+        assert res.storyboard.id == 14
+        assert res.storyboard.scenes[0].first_frame_generated_url == (
+            "https://signed/frame"
+        )
+        storyboards.get_by_id_with_details.assert_awaited_once_with(14)
+
+    @pytest.mark.anyio
+    async def test_a_revoked_workspace_is_refused_before_anything_loads(
+        self, detail_service, storyboards, projects, signer
+    ):
+        # The caller's storyboard, in private workspace 20 they were removed
+        # from, asked for through workspace 10, which they can still use.
+        projects.get_by_id.return_value = _project(
+            workspace_id=self.REVOKED_WORKSPACE
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await detail_service.get_session_detail(
+                USER, 10, _request(), storyboard_id=14
+            )
+
+        assert exc.value.status_code == 403
+        storyboards.get_by_id_with_details.assert_not_called()
+        signer.generate_presigned_url.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_another_users_storyboard_is_refused_before_anything_loads(
+        self, detail_service, storyboards, signer
+    ):
+        # The old order loaded (and presigned) a probed id, then answered 403.
+        storyboards.get_owner_and_project.return_value = (99, 5)
+        storyboards.get_by_id_with_details.return_value = StoryboardResponse(
+            id=14,
+            user_id=99,
+            workspace_id=10,
+            project_id=5,
+            scenes=[SceneDTO(first_frame_media_item_id=409)],
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await detail_service.get_session_detail(
+                USER, 10, _request(), storyboard_id=14
+            )
+
+        assert exc.value.status_code == 403
+        storyboards.get_by_id_with_details.assert_not_called()
+        signer.generate_presigned_url.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_storyboard_of_another_workspace_is_refused(
+        self, detail_service, storyboards, projects, signer
+    ):
+        # The caller may read workspace 11 too, yet only the storyboard's own
+        # workspace may be named, as for a chat.
+        projects.get_by_id.return_value = _project(workspace_id=11)
+
+        with pytest.raises(HTTPException) as exc:
+            await detail_service.get_session_detail(
+                USER, 10, _request(), storyboard_id=14
+            )
+
+        assert (exc.value.status_code, exc.value.detail) == (
+            400,
+            module.STORYBOARD_IN_OTHER_WORKSPACE_DETAIL,
+        )
+        storyboards.get_by_id_with_details.assert_not_called()
+        signer.generate_presigned_url.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_the_chats_current_storyboard_is_authorized_too(
+        self, detail_service, storyboards, projects, signer
+    ):
+        # A chat of workspace 10 whose state names storyboard 14, in the
+        # revoked workspace: the detail keeps the chat's listed storyboard.
+        storyboards.find_by_workspace.return_value = [
+            StoryboardResponse(
+                id=12,
+                user_id=USER.id,
+                workspace_id=10,
+                project_id=5,
+                session_id="s1",
+            )
+        ]
+        projects.get_by_id.return_value = _project(
+            workspace_id=self.REVOKED_WORKSPACE
+        )
+        detail_service._sessions_get = AsyncMock(
+            return_value=_session(current_storyboard_id=14)
+        )
+        detail_service._events_list = AsyncMock(return_value=[])
+
+        res = await detail_service.get_session_detail(
+            USER, 10, _request(), session_id="s1"
+        )
+
+        assert (res.session.id, res.storyboard.id) == ("s1", 12)
+        storyboards.get_owner_and_project.assert_awaited_once_with(14)
+        storyboards.get_by_id_with_details.assert_not_called()
+        signer.generate_presigned_url.assert_not_called()
 
 
 class TestUpdateSessionMetadata:

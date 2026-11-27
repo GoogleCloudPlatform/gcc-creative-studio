@@ -101,6 +101,9 @@ BUSY_CHAT_DELETE_DETAIL = (
 )
 DELETE_CHAT_FAILED_DETAIL = "Could not delete the chat. Try again."
 CHAT_IN_OTHER_WORKSPACE_DETAIL = "The chat belongs to another workspace."
+STORYBOARD_IN_OTHER_WORKSPACE_DETAIL = (
+    "The storyboard belongs to another workspace."
+)
 _active_runs: dict[str, float] = {}
 
 
@@ -911,9 +914,11 @@ class AgentService:
 
         if storyboard_id is not None:
             try:
-                storyboard = await self.project_service.get_storyboard(
-                    storyboard_id
+                storyboard = await self._load_authorized_storyboard(
+                    current_user, storyboard_id, workspace_id
                 )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error retrieving storyboard {storyboard_id}: {e}"
@@ -925,11 +930,6 @@ class AgentService:
             if not storyboard:
                 raise HTTPException(
                     status_code=404, detail="Storyboard not found"
-                )
-            if storyboard.user_id != current_user.id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Not authorized to access this storyboard",
                 )
             if storyboard.session_id:
                 resolved_session_id = storyboard.session_id
@@ -965,6 +965,14 @@ class AgentService:
                     agent_name, chat_app, user_id, resolved_session_id
                 )
                 if session is None:
+                    if not await self._may_recreate_session(
+                        current_user, workspace_id, resolved_session_id
+                    ):
+                        # Read-only: the detail comes back without the
+                        # session, as after a failed read.
+                        return SessionDetailResponseDto(
+                            session=None, storyboard=storyboard
+                        )
                     logger.warning(
                         "Session %s not found. Re-creating dynamic session.",
                         resolved_session_id,
@@ -1044,7 +1052,7 @@ class AgentService:
 
         if storyboard_id is None and session_dto is not None:
             storyboard = await self._prefer_session_storyboard(
-                session_dto.state, storyboard, current_user
+                session_dto.state, storyboard, current_user, workspace_id
             )
 
         if storyboard is None and resolved_session_id is None:
@@ -1057,17 +1065,44 @@ class AgentService:
             session=session_dto, storyboard=storyboard
         )
 
+    async def _load_authorized_storyboard(
+        self, current_user: UserModel, storyboard_id: int, workspace_id: int
+    ) -> StoryboardResponse | None:
+        """Loads a storyboard for the session detail, authorized first.
+
+        Loading presigns a URL per scene, so nothing loads until
+        ``authorize_storyboard`` passes (owner, then ``ProjectAuth``: access
+        to the project's own workspace) and that workspace is the requested
+        one (400 ``STORYBOARD_IN_OTHER_WORKSPACE_DETAIL``), like a chat's.
+        Checking the owner after the load presigned every probed id, and
+        authorizing only the requested workspace let a member removed from
+        a private workspace keep reading their storyboards in it by naming
+        a workspace they can still use.
+        """
+        project = await self.project_service.authorize_storyboard(
+            current_user, storyboard_id
+        )
+        if project.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=STORYBOARD_IN_OTHER_WORKSPACE_DETAIL,
+            )
+        return await self.project_service.get_storyboard(storyboard_id)
+
     async def _prefer_session_storyboard(
         self,
         state: Any,
         storyboard: StoryboardResponse | None,
         current_user: UserModel,
+        workspace_id: int,
     ) -> StoryboardResponse | None:
         """Swaps in the storyboard the agent's state calls current.
 
         A session that restarted its pipeline before the create-or-reuse path
         existed owns several records; the newest row is a good guess, but
         ``current_storyboard_id`` is the one the agent renders and saves to.
+        That id comes from session state, so it goes through the same checks
+        as a ``storyboard_id`` query (``_load_authorized_storyboard``).
         Falls back to ``storyboard`` on any problem.
         """
         if not isinstance(state, dict):
@@ -1076,13 +1111,15 @@ class AgentService:
         if current_id is None or (storyboard and storyboard.id == current_id):
             return storyboard
         try:
-            candidate = await self.project_service.get_storyboard(current_id)
+            candidate = await self._load_authorized_storyboard(
+                current_user, current_id, workspace_id
+            )
         except Exception as e:
             logger.warning(
                 f"Could not load current_storyboard_id={current_id}: {e}"
             )
             return storyboard
-        if candidate is None or candidate.user_id != current_user.id:
+        if candidate is None:
             return storyboard
         return candidate
 
@@ -1291,12 +1328,26 @@ class AgentService:
         adoption skips it, and opening or running it from this workspace
         answers 400. With ``include_expired``, the kept rows of ``app_name``
         are appended as expired chats (see ``_expired_session_dtos``).
+        Adopting and seeding write, so a read-only member gets the
+        registered chats as they are, and their unregistered ones stay
+        unlisted until a listing with write access files them
+        (``_may_update_chat_registry``).
         """
         registry = await self.agent_session_repo.map_for_user_workspace(
             current_user.id, workspace_id
         )
         listed_activity = _listed_activity(sessions)
         orphans = [s.id for s in sessions if s.id not in registry]
+        unseeded = {
+            session_id: used_at
+            for session_id, used_at in listed_activity.items()
+            if session_id in registry
+            and registry[session_id].last_used_at is None
+        }
+        if (orphans or unseeded) and not await self._may_update_chat_registry(
+            current_user, workspace_id
+        ):
+            orphans, unseeded = [], {}
         if orphans:
             default_project = (
                 await self.project_service.resolve_project_for_write(
@@ -1313,12 +1364,6 @@ class AgentService:
             registry = await self.agent_session_repo.map_for_user_workspace(
                 current_user.id, workspace_id
             )
-        unseeded = {
-            session_id: used_at
-            for session_id, used_at in listed_activity.items()
-            if session_id in registry
-            and registry[session_id].last_used_at is None
-        }
         if unseeded:
             await self.agent_session_repo.seed_last_used(
                 current_user.id, unseeded
@@ -1329,6 +1374,7 @@ class AgentService:
             if row is None:
                 # Registered in another workspace (adoption skips it): this
                 # workspace refuses to open or run it, so it is never listed.
+                # Nor is a chat a read-only caller could not file.
                 continue
             if project_id is not None and row.project_id != project_id:
                 continue
@@ -1348,6 +1394,34 @@ class AgentService:
                     dto.restorable = dto.id in restorable
             result.extend(expired)
         return result
+
+    async def _may_update_chat_registry(
+        self, current_user: UserModel, workspace_id: int
+    ) -> bool:
+        """Whether a listing may file and seed the caller's chats.
+
+        Adopting unregistered chats (into the default project, which
+        ``resolve_project_for_write`` creates when missing) and seeding
+        their activity times are writes, so they need write access
+        (``authorize_write``). The adoption's own check used to refuse the
+        whole listing to a read-only member (a ``VIEWER`` of a private
+        workspace), even when their only unregistered chat was one
+        registered in another workspace, which adoption skips anyway.
+        Asked only when there is something to write.
+        """
+        try:
+            await self.workspace_auth.authorize_write(
+                workspace_id=workspace_id, user=current_user
+            )
+        except HTTPException as e:
+            logger.info(
+                "[Projects] Listing chats in workspace %s without filing or "
+                "seeding them: %s",
+                workspace_id,
+                e.detail,
+            )
+            return False
+        return True
 
     @staticmethod
     def _expired_session_dtos(
@@ -1407,6 +1481,34 @@ class AgentService:
             return
         if row is not None and row.user_id == current_user.id:
             self._apply_registry_row(dto, row)
+
+    async def _may_recreate_session(
+        self, current_user: UserModel, workspace_id: int, session_id: str
+    ) -> bool:
+        """Whether the session detail may re-create a missing chat session.
+
+        Re-creating writes: a new agent session holding the caller's token,
+        the chat's storyboards and its registry row, which it can mark
+        restored. Like ``restore_session``, it needs write access
+        (``authorize_write``) to the chat's workspace, which
+        ``_ensure_chat_workspace`` made the requested one. A read-only
+        member (a ``VIEWER`` of a private workspace) only reads: the chat
+        is left alone, and the detail comes back without its session.
+        """
+        try:
+            await self.workspace_auth.authorize_write(
+                workspace_id=workspace_id, user=current_user
+            )
+        except HTTPException as e:
+            logger.info(
+                "Session %s is missing; not re-created without write access "
+                "to workspace %s: %s",
+                session_id,
+                workspace_id,
+                e.detail,
+            )
+            return False
+        return True
 
     async def _register_recreated_session(
         self,

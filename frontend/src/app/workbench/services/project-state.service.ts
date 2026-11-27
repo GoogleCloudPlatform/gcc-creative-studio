@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import {HttpErrorResponse} from '@angular/common/http';
 import {DestroyRef, Injectable, computed, signal} from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Params, Router} from '@angular/router';
@@ -30,6 +31,7 @@ import {
   switchMap,
   take,
   tap,
+  throwError,
   timeout,
 } from 'rxjs';
 import {Project, ProjectResolveQuery} from '../../common/models/project.model';
@@ -66,6 +68,11 @@ function childQuery(params: Params): ProjectResolveQuery | null {
   }
   const timelineId = parseId(params['timelineId']);
   return timelineId !== null ? {timeline_id: timelineId} : null;
+}
+
+/** The backend refused the caller (403), e.g. a write by a workspace VIEWER. */
+function isForbidden(error: unknown): boolean {
+  return error instanceof HttpErrorResponse && error.status === 403;
 }
 
 /** Same order as `GET /api/projects`: the default project, then by name. */
@@ -121,6 +128,9 @@ function rememberLastProject(workspaceId: number, projectId: number): void {
  *    flushing the project it leaves.
  * 4. Anything else (fresh visit, workspace switch, stale or foreign id):
  *    enter the workspace's last project, else its default one.
+ * 5. The workspace has no project of the caller's, and the backend refuses
+ *    to create the default one (a private workspace's VIEWER): the
+ *    Workbench is view-only (`viewOnly`), with no active project.
  */
 @Injectable()
 export class ProjectStateService {
@@ -138,6 +148,27 @@ export class ProjectStateService {
    * workspace switcher while a switch flushes the project being left.
    */
   readonly activeProjectWorkspaceId = this.activeWorkspaceId.asReadonly();
+  /** Workspace settled as view-only (rule 5), if any. */
+  private readonly viewOnlyWorkspaceId = signal<number | null>(null);
+  /**
+   * True while the active workspace is view-only for the caller: they have
+   * no project in it and may not create one, so the Workbench shows a
+   * view-only empty state instead of a project.
+   */
+  readonly viewOnly = computed(
+    () =>
+      this.viewOnlyWorkspaceId() !== null &&
+      this.viewOnlyWorkspaceId() ===
+        this.workspaceStateService.activeWorkspaceId(),
+  );
+  /** The caller's personal workspace exists and is not the active one. */
+  readonly canOpenPersonalWorkspace = computed(() => {
+    const personalId = this.workspaceStateService.personalWorkspaceId();
+    return (
+      personalId !== null &&
+      personalId !== this.workspaceStateService.activeWorkspaceId()
+    );
+  });
   /** Workspace whose projects `projects` holds. */
   private listedWorkspaceId: number | null = null;
   private settledOnce = false;
@@ -176,6 +207,14 @@ export class ProjectStateService {
       this.activeWorkspaceId() === workspaceId &&
       this.activeProjectId() === urlProjectId
     );
+  }
+
+  /** Switches to the caller's personal workspace: the way out of rule 5. */
+  openPersonalWorkspace(): void {
+    const personalId = this.workspaceStateService.personalWorkspaceId();
+    if (personalId !== null) {
+      this.workspaceStateService.setActiveWorkspaceId(personalId);
+    }
   }
 
   init(): void {
@@ -263,6 +302,14 @@ export class ProjectStateService {
       return EMPTY;
     }
     const child = childQuery(params);
+    if (
+      this.viewOnlyWorkspaceId() === workspaceId &&
+      urlProjectId === null &&
+      child === null
+    ) {
+      // Rule 5 already holds: this is the echo of its own navigation.
+      return EMPTY;
+    }
     const childWins =
       child !== null && (!this.settledOnce || urlProjectId === null);
 
@@ -303,7 +350,11 @@ export class ProjectStateService {
     );
   }
 
-  /** Rules 3 and 4: adopt the URL's project if it is listed, else enter one. */
+  /**
+   * Rules 3 to 5: adopt the URL's project if it is listed, else enter one.
+   * Without any (`listProjects` found none and could not create one), the
+   * workspace is view-only.
+   */
   private settle(
     workspaceId: number,
     urlProjectId: number | null,
@@ -317,7 +368,7 @@ export class ProjectStateService {
       projects.find(p => p.id === lastId) ??
       projects.find(p => p.is_default) ??
       projects[0];
-    return target ? this.enter(target) : EMPTY;
+    return target ? this.enter(target) : this.settleViewOnly(workspaceId);
   }
 
   /**
@@ -400,6 +451,44 @@ export class ProjectStateService {
     );
   }
 
+  /**
+   * Rule 5: the caller has no project in the workspace and may not create
+   * one (`POST /api/projects/default` answers a private workspace's VIEWER
+   * 403). Like an entry, it finishes `beforeLeave` and resets the shared
+   * chat and timeline state. Then no project is active, and ONE merge
+   * navigation clears the child params: they name another workspace's chat,
+   * storyboard or timeline.
+   */
+  private settleViewOnly(workspaceId: number): Observable<unknown> {
+    return defer(() => {
+      const seq = ++this.entrySeq;
+      return this.leave$().pipe(
+        tap(() => {
+          if (seq !== this.entrySeq) {
+            return;
+          }
+          this.agentChatService.resetConversation();
+          this.timelineStateService.resetForProjectSwitch();
+          this.activeWorkspaceId.set(null);
+          this.activeProjectId.set(null);
+          this.settledOnce = true;
+          this.pendingAdoption = null;
+          this.viewOnlyWorkspaceId.set(workspaceId);
+          void this.router.navigate([], {
+            relativeTo: this.route,
+            queryParamsHandling: 'merge',
+            queryParams: {
+              projectId: null,
+              sessionId: null,
+              storyboardId: null,
+              timelineId: null,
+            },
+          });
+        }),
+      );
+    });
+  }
+
   /** `beforeLeave`, settled by its first value, completion, error or timeout. */
   private leave$(): Observable<unknown> {
     return defer(() => this.beforeLeave()).pipe(
@@ -417,10 +506,17 @@ export class ProjectStateService {
     // Whatever becomes active supersedes a cross-workspace adoption still
     // waiting for its workspace's projects.
     this.pendingAdoption = null;
+    // A project of the caller's: not view-only (rule 5) any more.
+    this.viewOnlyWorkspaceId.set(null);
     rememberLastProject(workspaceId, projectId);
   }
 
-  /** The workspace's projects, never empty: the default one is ensured. */
+  /**
+   * The workspace's projects. When it has none, the default one is ensured;
+   * a caller the backend refuses it to (403: a private workspace's VIEWER)
+   * gets none, and the workspace is view-only (rule 5). Any other failure
+   * still errors.
+   */
   private listProjects(workspaceId: number): Observable<Project[]> {
     if (this.listedWorkspaceId === workspaceId && this.projects().length > 0) {
       return of(this.projects());
@@ -429,9 +525,14 @@ export class ProjectStateService {
       switchMap(projects =>
         projects.length > 0
           ? of(projects)
-          : this.projectService
-              .ensureDefault(workspaceId)
-              .pipe(map(project => [project])),
+          : this.projectService.ensureDefault(workspaceId).pipe(
+              map(project => [project]),
+              catchError(error =>
+                isForbidden(error)
+                  ? of<Project[]>([])
+                  : throwError(() => error),
+              ),
+            ),
       ),
       tap(projects => {
         this.projects.set(projects);

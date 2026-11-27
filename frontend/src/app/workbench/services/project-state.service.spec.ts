@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import {HttpErrorResponse} from '@angular/common/http';
 import {TestBed, fakeAsync, tick} from '@angular/core/testing';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Params, Router} from '@angular/router';
@@ -27,6 +28,7 @@ import {
   throwError,
 } from 'rxjs';
 import {Project} from '../../common/models/project.model';
+import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {AgentChatService} from './agent-chat.service';
 import {ProjectService} from './project/project.service';
@@ -574,6 +576,228 @@ describe('ProjectStateService', () => {
       expect(service.projects().length).toBe(3);
       expect(service.activeProjectId()).toBe(1);
       expect(service.loading()).toBeFalse();
+    });
+  });
+
+  // `POST /api/projects/default` needs write access: a private workspace's
+  // VIEWER without a project of their own is answered 403.
+  describe('a workspace the caller may only view (rule 5)', () => {
+    const VIEW_ONLY = 40;
+
+    /** The ONE navigation that settles a workspace as view-only. */
+    const viewOnlyEntry = () => ({
+      relativeTo: route,
+      queryParamsHandling: 'merge',
+      queryParams: {
+        projectId: null,
+        sessionId: null,
+        storyboardId: null,
+        timelineId: null,
+      },
+    });
+
+    const workspace = (id: number, scope: WorkspaceScope): Workspace => ({
+      id,
+      name: `Workspace ${id}`,
+      ownerId: '1',
+      scope,
+      members: [],
+      memberIds: [],
+    });
+
+    beforeEach(() => {
+      projectService.list.and.callFake(workspaceId =>
+        of(
+          workspaceId === VIEW_ONLY
+            ? []
+            : workspaceId === 20
+              ? [FAR_DEFAULT]
+              : [DEFAULT, LAUNCH, MANUAL],
+        ),
+      );
+      projectService.ensureDefault.and.returnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              status: 403,
+              error: {detail: 'Insufficient workspace permissions.'},
+            }),
+        ),
+      );
+    });
+
+    it('settles with no project, in ONE navigation and without an error', () => {
+      spyOn(console, 'error');
+
+      start({}, VIEW_ONLY);
+
+      expect(projectService.ensureDefault).toHaveBeenCalledOnceWith(VIEW_ONLY);
+      expect(service.viewOnly()).toBeTrue();
+      expect(service.projects()).toEqual([]);
+      expect(service.activeProjectId()).toBeNull();
+      expect(service.activeProjectWorkspaceId()).toBeNull();
+      expect(service.loading()).toBeFalse();
+      expect(navigate).toHaveBeenCalledOnceWith([], viewOnlyEntry());
+      expect(agentChat.resetConversation).toHaveBeenCalledTimes(1);
+      expect(timelineState.resetForProjectSwitch).toHaveBeenCalledTimes(1);
+      // No "Load projects" error toast (it logs before it shows).
+      expect(console.error).not.toHaveBeenCalled();
+    });
+
+    it('ignores the echo of its own navigation', () => {
+      start({}, VIEW_ONLY);
+      navigate.calls.reset();
+
+      queryParams$.next({});
+
+      expect(navigate).not.toHaveBeenCalled();
+      expect(projectService.list).toHaveBeenCalledTimes(1);
+      expect(service.viewOnly()).toBeTrue();
+    });
+
+    it('flushes the project it leaves and clears its chat from the URL', () => {
+      projectService.resolve.and.returnValue(of(LAUNCH));
+      start({projectId: '2', sessionId: 'sess-2'});
+      const leaving: Array<number | null> = [];
+      service.registerBeforeLeave(() => {
+        leaving.push(service.activeProjectId());
+        return of(null);
+      });
+      navigate.calls.reset();
+
+      workspaceState.setActiveWorkspaceId(VIEW_ONLY);
+
+      expect(leaving).toEqual([2]);
+      expect(navigate).toHaveBeenCalledOnceWith([], viewOnlyEntry());
+      expect(service.activeProjectId()).toBeNull();
+      expect(service.viewOnly()).toBeTrue();
+    });
+
+    it('wins over an entry still flushing the project it leaves', () => {
+      start();
+      queryParams$.next({projectId: '1'});
+      const flush = new Subject<null>();
+      service.registerBeforeLeave(() => flush);
+      service.selectProject(2).subscribe(); // Waits for the flush...
+      navigate.calls.reset();
+
+      workspaceState.setActiveWorkspaceId(VIEW_ONLY); // ...and so does this.
+      flush.next(null);
+
+      expect(navigate).toHaveBeenCalledOnceWith([], viewOnlyEntry());
+      expect(service.activeProjectId()).toBeNull();
+      expect(service.viewOnly()).toBeTrue();
+    });
+
+    it('holds for that workspace only', () => {
+      const pending = new Subject<Project[]>();
+      projectService.list.and.callFake(workspaceId =>
+        workspaceId === VIEW_ONLY ? of([]) : pending,
+      );
+      start({}, VIEW_ONLY);
+
+      workspaceState.setActiveWorkspaceId(10);
+
+      // Not while workspace 10's projects load, before any is entered.
+      expect(service.viewOnly()).toBeFalse();
+    });
+
+    it('enters a project again on a switch to a workspace with projects', () => {
+      start({}, VIEW_ONLY);
+      queryParams$.next({}); // The echo.
+      navigate.calls.reset();
+
+      workspaceState.setActiveWorkspaceId(10);
+
+      expect(navigate).toHaveBeenCalledOnceWith([], entry(1));
+      expect(service.isReadyFor(10, 1)).toBeTrue();
+      expect(service.viewOnly()).toBeFalse();
+    });
+
+    it('still follows a deep link to another workspace', () => {
+      start({}, VIEW_ONLY);
+      queryParams$.next({}); // The echo.
+      navigate.calls.reset();
+      projectService.resolve.and.returnValue(of(FAR_DEFAULT));
+
+      queryParams$.next({sessionId: 'far-chat'});
+
+      expect(workspaceState.getActiveWorkspaceId()).toBe(20);
+      expect(service.isReadyFor(20, 30)).toBeTrue();
+      expect(navigate).toHaveBeenCalledOnceWith([], adoption(30));
+      expect(service.viewOnly()).toBeFalse();
+    });
+
+    it('clears a deep link to a chat the caller cannot open', () => {
+      start({}, VIEW_ONLY);
+      queryParams$.next({}); // The echo.
+      navigate.calls.reset();
+      projectService.resolve.and.returnValue(
+        throwError(() => new HttpErrorResponse({status: 404})),
+      );
+
+      queryParams$.next({sessionId: 'someone-elses-chat'});
+
+      expect(navigate).toHaveBeenCalledOnceWith([], viewOnlyEntry());
+      expect(service.viewOnly()).toBeTrue();
+    });
+
+    it('does not keep the empty list: a caller now allowed gets in', () => {
+      const own = project(41, {workspace_id: VIEW_ONLY, is_default: true});
+      start({}, VIEW_ONLY);
+      queryParams$.next({}); // The echo.
+      workspaceState.setActiveWorkspaceId(10);
+      // E.g. promoted to editor meanwhile.
+      projectService.ensureDefault.and.returnValue(of(own));
+      projectService.get.and.returnValue(of(own));
+      navigate.calls.reset();
+
+      workspaceState.setActiveWorkspaceId(VIEW_ONLY);
+
+      expect(navigate).toHaveBeenCalledOnceWith([], entry(41));
+      expect(service.isReadyFor(VIEW_ONLY, 41)).toBeTrue();
+      expect(service.viewOnly()).toBeFalse();
+    });
+
+    it('still reports any other failure to create the default project', () => {
+      spyOn(console, 'error');
+      projectService.ensureDefault.and.returnValue(
+        throwError(() => new HttpErrorResponse({status: 500})),
+      );
+
+      start({}, VIEW_ONLY);
+
+      expect(service.viewOnly()).toBeFalse();
+      expect(navigate).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        'Load projects error:',
+        jasmine.any(HttpErrorResponse),
+      );
+    });
+
+    it('opens the personal workspace as the way out', () => {
+      workspaceState.setWorkspaces([
+        workspace(10, WorkspaceScope.PERSONAL),
+        workspace(VIEW_ONLY, WorkspaceScope.PRIVATE),
+      ]);
+      start({}, VIEW_ONLY);
+      expect(service.canOpenPersonalWorkspace()).toBeTrue();
+      navigate.calls.reset();
+
+      service.openPersonalWorkspace();
+
+      expect(workspaceState.getActiveWorkspaceId()).toBe(10);
+      expect(navigate).toHaveBeenCalledOnceWith([], entry(1));
+      expect(service.viewOnly()).toBeFalse();
+      expect(service.canOpenPersonalWorkspace()).toBeFalse();
+    });
+
+    it('offers no way out without a personal workspace', () => {
+      start({}, VIEW_ONLY);
+
+      expect(service.canOpenPersonalWorkspace()).toBeFalse();
+      service.openPersonalWorkspace();
+      expect(workspaceState.getActiveWorkspaceId()).toBe(VIEW_ONLY);
     });
   });
 });

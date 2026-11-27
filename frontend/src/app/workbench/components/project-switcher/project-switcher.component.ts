@@ -76,14 +76,21 @@ export class ProjectSwitcherComponent {
   readonly deleting = signal(false);
   /** A rename, create or delete is in flight: no other one may start. */
   readonly busy = computed(() => this.saving() || this.deleting());
-  readonly triggerName = computed(
-    () => this.projectState.activeProject()?.name ?? 'Projects',
+  readonly triggerName = computed(() =>
+    this.projectState.viewOnly()
+      ? 'No projects'
+      : (this.projectState.activeProject()?.name ?? 'Projects'),
   );
   /** Starts with the visible name (WCAG 2.5.3, Label in Name). */
-  readonly triggerLabel = computed(
-    () => `${this.triggerName()}, switch project`,
+  readonly triggerLabel = computed(() =>
+    this.projectState.viewOnly()
+      ? `${this.triggerName()}, view-only access`
+      : `${this.triggerName()}, switch project`,
   );
   readonly triggerTooltip = computed(() => {
+    if (this.projectState.viewOnly()) {
+      return 'View-only access: you have no projects in this workspace';
+    }
     const active = this.projectState.activeProject();
     return active ? `Project: ${active.name}` : 'Projects';
   });
@@ -272,6 +279,17 @@ export class ProjectSwitcherComponent {
             },
           });
       });
+  }
+
+  /**
+   * A view-only menu (`ProjectStateService.viewOnly`) has no item, so
+   * Material leaves the focus on the trigger: the note would never be read,
+   * and Escape could not close the menu. The note takes the focus instead.
+   */
+  onMenuOpened(): void {
+    if (this.projectState.viewOnly()) {
+      this.focusAfterRender('project-view-only-note');
+    }
   }
 
   /** Clicks inside the inline editors must not close the menu. */

@@ -40,6 +40,7 @@ import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {ProjectStateService} from '../../services/project-state.service';
 import {NotificationService} from '../../../common/services/notification.service';
+import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
 import {useTestBedAppInjector} from '../../../testing/app-injector.testing';
 import {
   ChatSession,
@@ -50,6 +51,9 @@ import {
 interface ProjectStateStub {
   activeProjectId: WritableSignal<number | null>;
   isReadyFor: jasmine.Spy;
+  viewOnly: WritableSignal<boolean>;
+  canOpenPersonalWorkspace: WritableSignal<boolean>;
+  openPersonalWorkspace: jasmine.Spy;
 }
 
 describe('ChatInterfaceComponent', () => {
@@ -202,6 +206,9 @@ describe('ChatInterfaceComponent', () => {
     const projectStateStub: ProjectStateStub = {
       activeProjectId: signal<number | null>(1),
       isReadyFor: jasmine.createSpy('isReadyFor').and.returnValue(true),
+      viewOnly: signal(false),
+      canOpenPersonalWorkspace: signal(false),
+      openPersonalWorkspace: jasmine.createSpy('openPersonalWorkspace'),
     };
 
     await TestBed.configureTestingModule({
@@ -4400,6 +4407,83 @@ describe('ChatInterfaceComponent', () => {
       component.resetConversationState();
 
       expect(component.isRestoredChat()).toBeFalse();
+    });
+  });
+
+  // A private workspace's viewer without a project of their own:
+  // `ProjectStateService` settles it with no active project (rule 5).
+  describe('in a view-only workspace', () => {
+    let projectState: ProjectStateStub;
+
+    beforeEach(() => {
+      projectState = TestBed.inject(
+        ProjectStateService,
+      ) as unknown as ProjectStateStub;
+      // No project is active: the loader's gate stays closed for good.
+      projectState.isReadyFor.and.returnValue(false);
+      projectState.viewOnly.set(true);
+      component.isLoadingHistory.set(true);
+    });
+
+    it('swaps the chat for a banner, with no composer and no New Chat', () => {
+      component.isTyping.set(true);
+      component.selectedImages.set([
+        {id: 1, presignedUrl: 'http://selected.png'} as SourceAssetResponseDto,
+      ]);
+
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+
+      expect(
+        el.querySelector('[data-testid="view-only-banner"]'),
+      ).not.toBeNull();
+      expect(el.querySelector('textarea[data-chat-input]')).toBeNull();
+      expect(el.querySelector('button[title="New Chat"]')).toBeNull();
+      // Leftovers of the chat left behind, which nothing here can clear.
+      expect(el.textContent).not.toContain('Loading history...');
+      expect(el.querySelector('.typing-indicator')).toBeNull();
+      expect(el.querySelector('img[src="http://selected.png"]')).toBeNull();
+    });
+
+    it('hides a gate left by the chat of the workspace it left', () => {
+      component.activeApprovalGate.set({
+        callId: 'call_left',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+      });
+
+      expect(component.visibleApprovalGate()).toBeNull();
+
+      projectState.viewOnly.set(false);
+      expect(component.visibleApprovalGate()?.callId).toBe('call_left');
+    });
+
+    it('offers My Workspace only when there is one to open', () => {
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      const openButton = () =>
+        el.querySelector(
+          '[data-testid="view-only-open-personal"]',
+        ) as HTMLElement | null;
+      expect(openButton()).toBeNull();
+
+      projectState.canOpenPersonalWorkspace.set(true);
+      fixture.detectChanges();
+      openButton()!.click();
+
+      expect(projectState.openPersonalWorkspace).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores the chat once the workspace is no longer view-only', () => {
+      projectState.viewOnly.set(false);
+      component.isLoadingHistory.set(false);
+
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+
+      expect(el.querySelector('[data-testid="view-only-banner"]')).toBeNull();
+      expect(el.querySelector('textarea[data-chat-input]')).not.toBeNull();
+      expect(el.querySelector('button[title="New Chat"]')).not.toBeNull();
     });
   });
 

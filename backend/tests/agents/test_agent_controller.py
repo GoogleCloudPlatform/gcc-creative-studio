@@ -14,9 +14,9 @@
 
 import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from src.database import get_db
 from src.agents.agent_controller import router
 from src.users.user_model import UserModel
 from src.agents.agent_chat_event_model import AgentChatEvent
+from src.projects.dto.project_dto import ProjectResponse
 from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.agents.agent_session_repository import AgentSessionRepository
@@ -552,9 +553,16 @@ async def test_get_session_detail_by_session_id(
     assert res_data["storyboard"]["id"] == 123
 
 
+def _project(workspace_id=1):
+    """What ``authorize_storyboard`` returns for the caller's storyboard."""
+    return ProjectResponse(
+        id=7, workspace_id=workspace_id, owner_id=1, name="Launch"
+    )
+
+
 @pytest.mark.anyio
 async def test_get_session_detail_by_storyboard_id(
-    mock_remote_agent, mock_project_service, client
+    mock_remote_agent, mock_project_service, mock_user, client
 ):
     mock_storyboard = MagicMock()
     mock_storyboard.id = 123
@@ -566,6 +574,7 @@ async def test_get_session_detail_by_storyboard_id(
     mock_storyboard.bg_music_asset_id = None
     mock_storyboard.scenes = []
     mock_storyboard.timeline = None
+    mock_project_service.authorize_storyboard.return_value = _project()
     mock_project_service.get_storyboard.return_value = mock_storyboard
 
     mock_remote_agent.vclient.agent_engines.sessions.get.return_value = {
@@ -583,12 +592,36 @@ async def test_get_session_detail_by_storyboard_id(
     res_data = response.json()
     assert res_data["session"]["id"] == "s1"
     assert res_data["storyboard"]["id"] == 123
+    # Authorized first: loading the storyboard presigns its scene URLs.
+    assert mock_project_service.method_calls == [
+        call.authorize_storyboard(mock_user, 123),
+        call.get_storyboard(123),
+    ]
 
 
 @pytest.mark.anyio
 async def test_get_session_detail_storyboard_not_found(
     mock_project_service, client
 ):
+    # An unknown id is refused by the authorization, before any load.
+    mock_project_service.authorize_storyboard.side_effect = HTTPException(
+        status_code=404, detail="Storyboard not found"
+    )
+
+    response = client.get(
+        "/api/agent/sessions/detail?workspace_id=1&storyboard_id=999"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Storyboard not found"
+    mock_project_service.get_storyboard.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_session_detail_storyboard_deleted_after_authorization(
+    mock_project_service, client
+):
+    mock_project_service.authorize_storyboard.return_value = _project()
     mock_project_service.get_storyboard.return_value = None
 
     response = client.get(
@@ -601,19 +634,41 @@ async def test_get_session_detail_storyboard_not_found(
 
 @pytest.mark.anyio
 async def test_get_session_detail_unauthorized(mock_project_service, client):
-    mock_storyboard = MagicMock()
-    mock_storyboard.id = 123
-    mock_storyboard.user_id = 999
-    mock_project_service.get_storyboard.return_value = mock_storyboard
+    # Another user's storyboard, or one in a private workspace the caller
+    # was removed from (``ProjectAuth``): refused before it is loaded, so a
+    # probed id never gets its scene URLs presigned.
+    mock_project_service.authorize_storyboard.side_effect = HTTPException(
+        status_code=403, detail="Not authorized to use this storyboard"
+    )
 
     response = client.get(
         "/api/agent/sessions/detail?workspace_id=1&storyboard_id=123"
     )
 
     assert response.status_code == 403
-    assert (
-        response.json()["detail"] == "Not authorized to access this storyboard"
+    assert response.json()["detail"] == "Not authorized to use this storyboard"
+    mock_project_service.get_storyboard.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_session_detail_storyboard_of_another_workspace(
+    mock_project_service, client
+):
+    # The caller's own storyboard, in a workspace they may use, yet not the
+    # one the request names: refused like a chat of another workspace.
+    mock_project_service.authorize_storyboard.return_value = _project(
+        workspace_id=2
     )
+
+    response = client.get(
+        "/api/agent/sessions/detail?workspace_id=1&storyboard_id=123"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "The storyboard belongs to another workspace."
+    )
+    mock_project_service.get_storyboard.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -631,7 +686,8 @@ async def test_get_session_detail_missing_params(client):
 async def test_get_session_detail_storyboard_id_out_of_range(
     mock_project_service, client
 ):
-    mock_project_service.get_storyboard.side_effect = Exception(
+    # The authorization is the first query that sees the id.
+    mock_project_service.authorize_storyboard.side_effect = Exception(
         "value out of int32 range"
     )
 
@@ -645,6 +701,7 @@ async def test_get_session_detail_storyboard_id_out_of_range(
         "out of range for the database integer type"
         in response.json()["detail"]
     )
+    mock_project_service.get_storyboard.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -731,7 +788,6 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
 async def test_agent_service_exceptions(mock_remote_agent):
     from src.agents.agent_service import AgentService
     import pytest
-    from fastapi import HTTPException
 
     service = AgentService(
         agent_repo=MagicMock(),

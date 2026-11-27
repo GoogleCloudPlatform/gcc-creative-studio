@@ -19,7 +19,7 @@ the only transport whose session/event shapes we have verified end to end.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException, Request
@@ -29,7 +29,11 @@ from src.agents.agent_service import AGENT_BUSY_DETAIL, AgentService
 from src.agents.agent_session_repository import AgentSessionRepository
 from src.agents.local_adk_client import LocalRemoteAgent
 from src.config.config_service import config_service
-from src.projects.dto.project_dto import SceneDTO, StoryboardResponse
+from src.projects.dto.project_dto import (
+    ProjectResponse,
+    SceneDTO,
+    StoryboardResponse,
+)
 from src.users.user_model import UserModel
 
 
@@ -74,6 +78,13 @@ def _user(user_id=999):
     user = MagicMock(spec=UserModel)
     user.id = user_id
     return user
+
+
+def _project(workspace_id=10):
+    """What ``authorize_storyboard`` returns for the caller's storyboard."""
+    return ProjectResponse(
+        id=5, workspace_id=workspace_id, owner_id=999, name="Launch"
+    )
 
 
 def _agent_state(storyboard_id="14", scenes=None):
@@ -505,16 +516,22 @@ async def test_chat_leaves_text_alone_without_pending_gate(local_mode):
 @pytest.mark.anyio
 async def test_prefer_session_storyboard_swaps_to_current_id(local_mode):
     project_service = AsyncMock()
+    project_service.authorize_storyboard.return_value = _project()
     live = _storyboard(storyboard_id=14)
     project_service.get_storyboard.return_value = live
     service = _service(AsyncMock(), project_service=project_service)
     stale = _storyboard(storyboard_id=12)
+    user = _user()
 
     res = await service._prefer_session_storyboard(
-        {"current_storyboard_id": "14"}, stale, _user()
+        {"current_storyboard_id": "14"}, stale, user, 10
     )
     assert res is live
-    project_service.get_storyboard.assert_awaited_once_with(14)
+    # Authorized first: loading the storyboard presigns its scene URLs.
+    assert project_service.method_calls == [
+        call.authorize_storyboard(user, 14),
+        call.get_storyboard(14),
+    ]
 
 
 @pytest.mark.anyio
@@ -522,40 +539,39 @@ async def test_prefer_session_storyboard_keeps_input_when_not_applicable(
     local_mode,
 ):
     project_service = AsyncMock()
+    project_service.authorize_storyboard.return_value = _project()
     service = _service(AsyncMock(), project_service=project_service)
     stale = _storyboard(storyboard_id=12)
 
     # No usable state / id, or already the current one.
     assert (
-        await service._prefer_session_storyboard("x", stale, _user()) is stale
+        await service._prefer_session_storyboard("x", stale, _user(), 10)
+        is stale
     )
-    assert await service._prefer_session_storyboard({}, stale, _user()) is stale
+    assert (
+        await service._prefer_session_storyboard({}, stale, _user(), 10)
+        is stale
+    )
     assert (
         await service._prefer_session_storyboard(
-            {"current_storyboard_id": "garbage"}, stale, _user()
+            {"current_storyboard_id": "garbage"}, stale, _user(), 10
         )
         is stale
     )
     assert (
         await service._prefer_session_storyboard(
-            {"current_storyboard_id": 12}, stale, _user()
+            {"current_storyboard_id": 12}, stale, _user(), 10
         )
         is stale
     )
+    project_service.authorize_storyboard.assert_not_called()
     project_service.get_storyboard.assert_not_called()
 
-    # Record missing or owned by someone else.
+    # Record missing (deleted after it was authorized).
     project_service.get_storyboard.return_value = None
     assert (
         await service._prefer_session_storyboard(
-            {"current_storyboard_id": "14"}, stale, _user()
-        )
-        is stale
-    )
-    project_service.get_storyboard.return_value = _storyboard(14, user_id=1)
-    assert (
-        await service._prefer_session_storyboard(
-            {"current_storyboard_id": "14"}, stale, _user()
+            {"current_storyboard_id": "14"}, stale, _user(), 10
         )
         is stale
     )
@@ -564,10 +580,42 @@ async def test_prefer_session_storyboard_keeps_input_when_not_applicable(
     project_service.get_storyboard.side_effect = RuntimeError("db")
     assert (
         await service._prefer_session_storyboard(
-            {"current_storyboard_id": "14"}, stale, _user()
+            {"current_storyboard_id": "14"}, stale, _user(), 10
         )
         is stale
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        # Another user's storyboard, or one in a private workspace the caller
+        # was removed from (``ProjectAuth``).
+        {"side_effect": HTTPException(status_code=403, detail="refused")},
+        # Unknown id.
+        {"side_effect": HTTPException(status_code=404, detail="not found")},
+        # Authorization lookup failure.
+        {"side_effect": RuntimeError("db")},
+        # The caller's own, in another workspace than the detail's.
+        {"return_value": _project(workspace_id=11)},
+    ],
+)
+@pytest.mark.usefixtures("local_mode")
+async def test_prefer_session_storyboard_never_loads_a_refused_id(refusal):
+    # The id comes from session state: refused like a storyboard_id query,
+    # before the load presigns a URL per scene.
+    project_service = AsyncMock()
+    project_service.authorize_storyboard.configure_mock(**refusal)
+    service = _service(AsyncMock(), project_service=project_service)
+    stale = _storyboard(storyboard_id=12)
+
+    res = await service._prefer_session_storyboard(
+        {"current_storyboard_id": "14"}, stale, _user(), 10
+    )
+
+    assert res is stale
+    project_service.get_storyboard.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -580,13 +628,16 @@ async def test_get_session_detail_follows_current_storyboard_id(local_mode):
     project_service = AsyncMock()
     newest, live = _storyboard(storyboard_id=14), _storyboard(storyboard_id=13)
     project_service.list_storyboards.return_value = [newest, live]
+    project_service.authorize_storyboard.return_value = _project()
     project_service.get_storyboard.return_value = live
     service = _service(local_client, project_service=project_service)
     request = MagicMock(spec=Request)
     request.headers = {"Authorization": "Bearer t"}
+    user = _user()
 
     res = await service.get_session_detail(
-        current_user=_user(), workspace_id=10, request=request, session_id="s1"
+        current_user=user, workspace_id=10, request=request, session_id="s1"
     )
     assert res.storyboard.id == 13
+    project_service.authorize_storyboard.assert_awaited_once_with(user, 13)
     project_service.get_storyboard.assert_awaited_once_with(13)
