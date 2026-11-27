@@ -1228,3 +1228,216 @@ async def test_finalize_direct_upload_persists_validated_folder_id(
     created_asset = mock_dependencies["repo"].create.call_args.args[0]
     assert created_asset.folder_id == 14
     assert res.folder_id == 14
+
+
+@pytest.mark.anyio
+@patch("src.source_assets.source_asset_service.record_lineage_safely")
+@patch("src.source_assets.source_asset_service.MediaRepository")
+async def test_upload_asset_records_crop_lineage_for_same_workspace_parent(
+    mock_media_repo_cls,
+    mock_record_lineage,
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    mock_dependencies["repo"].db = AsyncMock()
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/cropped.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url/cropped.png"
+    )
+    mock_dependencies["repo"].create.return_value = SourceAssetModel(
+        id=77,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://bucket/cropped.png",
+        original_filename="cropped.png",
+        file_hash="hash77",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+
+    parent_media = MagicMock(id=44, workspace_id=1)
+    mock_media_repo_inst = AsyncMock()
+    mock_media_repo_inst.get_by_id.return_value = parent_media
+    mock_media_repo_cls.return_value = mock_media_repo_inst
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_media_item_id=44,
+        parent_media_index=2,
+        action_summary="Cropped & annotated",
+    )
+
+    mock_record_lineage.assert_awaited_once()
+    kwargs = mock_record_lineage.await_args.kwargs
+    assert kwargs["child_id"] == 77
+    assert kwargs["explicit_primary"].parent_id == 44
+    assert kwargs["explicit_primary"].parent_index == 2
+    assert kwargs["explicit_primary"].action_summary == "Cropped & annotated"
+
+
+@pytest.mark.anyio
+@patch("src.source_assets.source_asset_service.ensure_can_reference_inputs")
+@patch("src.source_assets.source_asset_service.record_lineage_safely")
+@patch("src.source_assets.source_asset_service.MediaRepository")
+async def test_upload_asset_skips_crop_lineage_for_foreign_workspace_parent(
+    mock_media_repo_cls,
+    mock_record_lineage,
+    mock_ensure_inputs,
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    mock_dependencies["repo"].db = AsyncMock()
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/cropped.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url/cropped.png"
+    )
+    mock_dependencies["repo"].create.return_value = SourceAssetModel(
+        id=78,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://bucket/cropped.png",
+        original_filename="cropped.png",
+        file_hash="hash78",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+
+    foreign_parent = MagicMock(id=44, workspace_id=999)
+    mock_media_repo_inst = AsyncMock()
+    mock_media_repo_inst.get_by_id.return_value = foreign_parent
+    mock_media_repo_cls.return_value = mock_media_repo_inst
+    mock_ensure_inputs.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_media_item_id=44,
+    )
+
+    mock_ensure_inputs.assert_awaited_once_with(
+        mock_dependencies["repo"].db, sample_user, media_item_ids=[44]
+    )
+    mock_record_lineage.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch("src.source_assets.source_asset_service.ensure_can_reference_inputs")
+@patch("src.source_assets.source_asset_service.record_lineage_safely")
+@patch("src.source_assets.source_asset_service.MediaRepository")
+async def test_upload_asset_records_crop_lineage_for_authorized_shared_parent(
+    mock_media_repo_cls,
+    mock_record_lineage,
+    mock_ensure_inputs,
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    mock_dependencies["repo"].db = AsyncMock()
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/cropped_shared.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url/cropped_shared.png"
+    )
+    mock_dependencies["repo"].create.return_value = SourceAssetModel(
+        id=79,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://bucket/cropped_shared.png",
+        original_filename="cropped_shared.png",
+        file_hash="hash79",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+
+    # 1. Shared-workspace MediaItem parent (ws 22) -> saved to personal ws 1
+    shared_parent = MagicMock(id=45, workspace_id=22)
+    mock_media_repo_inst = AsyncMock()
+    mock_media_repo_inst.get_by_id.return_value = shared_parent
+    mock_media_repo_cls.return_value = mock_media_repo_inst
+    mock_ensure_inputs.return_value = {22}
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped_shared.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_media_item_id=45,
+        parent_media_index=1,
+        action_summary="Cropped shared hero",
+    )
+
+    mock_ensure_inputs.assert_awaited_once_with(
+        mock_dependencies["repo"].db, sample_user, media_item_ids=[45]
+    )
+    mock_record_lineage.assert_awaited_once()
+    media_kwargs = mock_record_lineage.await_args.kwargs
+    assert media_kwargs["workspace_id"] == 1
+    assert media_kwargs["child_id"] == 79
+    assert media_kwargs["explicit_primary"].parent_id == 45
+    assert media_kwargs["explicit_primary"].parent_index == 1
+
+    # 2. Shared-workspace SourceAsset parent (ws 22) -> saved to personal ws 1
+    mock_ensure_inputs.reset_mock()
+    mock_record_lineage.reset_mock()
+    mock_dependencies["repo"].get_by_id.return_value = MagicMock(
+        id=55, workspace_id=22, scope=AssetScopeEnum.PRIVATE
+    )
+    mock_ensure_inputs.return_value = {22}
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped_shared_asset.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_source_asset_id=55,
+    )
+
+    mock_ensure_inputs.assert_awaited_once_with(
+        mock_dependencies["repo"].db, sample_user, source_asset_ids=[55]
+    )
+    mock_record_lineage.assert_awaited_once()
+    asset_kwargs = mock_record_lineage.await_args.kwargs
+    assert asset_kwargs["explicit_primary"].parent_id == 55
+    assert asset_kwargs["explicit_primary"].parent_index == 0
+
+    # 3. Unauthorized foreign SourceAsset parent (ws 999) -> fail closed
+    mock_ensure_inputs.reset_mock()
+    mock_record_lineage.reset_mock()
+    mock_dependencies["repo"].get_by_id.return_value = MagicMock(
+        id=56, workspace_id=999, scope=AssetScopeEnum.PRIVATE
+    )
+    mock_ensure_inputs.side_effect = HTTPException(
+        status_code=403, detail="Forbidden"
+    )
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped_forbidden_asset.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_source_asset_id=56,
+    )
+
+    mock_ensure_inputs.assert_awaited_once_with(
+        mock_dependencies["repo"].db, sample_user, source_asset_ids=[56]
+    )
+    mock_record_lineage.assert_not_called()

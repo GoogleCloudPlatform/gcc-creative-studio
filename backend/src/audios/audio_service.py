@@ -76,6 +76,12 @@ from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
     BrandGuidelineRepository,
 )
+from src.lineage.lineage_builder import ExplicitPrimarySpec
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import (
+    LineageItemTypeEnum,
+    LineageRoleEnum,
+)
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
@@ -669,6 +675,8 @@ def _process_audio_in_background(
                         track_analyses: list[dict[str, Any] | None] = []
                         persisted_seed: int | None = None
                         reference_audio_context: dict[str, Any] | None = None
+                        ref_audio_asset_link: SourceAssetLink | None = None
+                        ref_audio_media_link: SourceMediaItemLink | None = None
                         is_music_model = (
                             request_dto.model in AudioService.MUSIC_MODELS
                         )
@@ -1260,6 +1268,36 @@ def _process_audio_in_background(
 
                         await media_repo.update(media_item_id, update_data)
                         job_marked_terminal = True
+                        audio_explicit_primary: ExplicitPrimarySpec | None = (
+                            None
+                        )
+                        if ref_audio_media_link is not None:
+                            audio_explicit_primary = ExplicitPrimarySpec(
+                                parent_type=LineageItemTypeEnum.MEDIA_ITEM,
+                                parent_id=ref_audio_media_link.media_item_id,
+                                parent_index=ref_audio_media_link.media_index,
+                                role=LineageRoleEnum.AUDIO_ITERATION_SOURCE.value,
+                                action_summary=request_dto.prompt,
+                            )
+                        elif ref_audio_asset_link is not None:
+                            audio_explicit_primary = ExplicitPrimarySpec(
+                                parent_type=LineageItemTypeEnum.SOURCE_ASSET,
+                                parent_id=ref_audio_asset_link.asset_id,
+                                parent_index=0,
+                                role=LineageRoleEnum.AUDIO_ITERATION_SOURCE.value,
+                                action_summary=request_dto.prompt,
+                            )
+                        await record_lineage_safely(
+                            getattr(media_repo, "db", None),
+                            workspace_id=request_dto.workspace_id,
+                            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+                            child_id=media_item_id,
+                            child_mime_type=output_mime_type,
+                            user_prompt=request_dto.prompt,
+                            source_assets=source_assets or None,
+                            source_media_items=source_media_items or None,
+                            explicit_primary=audio_explicit_primary,
+                        )
                         worker_logger.info(
                             f"Audio job {media_item_id} completed successfully."
                         )

@@ -260,4 +260,57 @@ describe('GalleryService', () => {
     });
     expect(promotedCount).toBe(1);
   });
+
+  it('fetches item lineage for media_item and source_asset', () => {
+    service = TestBed.inject(GalleryService);
+    let responseData: any;
+    service.getItemLineage('media_item', 42).subscribe(res => {
+      responseData = res;
+    });
+
+    const req = httpMock.expectOne(
+      `${environment.backendURL}/gallery/lineage/media_item/42`,
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush({
+      spine: [
+        {
+          itemType: 'source_asset',
+          id: 10,
+          mediaIndex: 0,
+          prompt: 'Uploaded: hero.png',
+          deleted: false,
+        },
+        {
+          itemType: 'media_item',
+          id: 42,
+          mediaIndex: 0,
+          role: 'image_edit_source',
+          prompt: 'Add sunset glow',
+          deleted: false,
+        },
+      ],
+      derivatives: [],
+    });
+
+    expect(responseData.spine.length).toBe(2);
+    expect(responseData.spine[1].role).toBe('image_edit_source');
+  });
+
+  it('returns empty lineage spine and derivatives on HTTP error', () => {
+    service = TestBed.inject(GalleryService);
+    spyOn(console, 'warn');
+    let responseData: any;
+    service.getItemLineage('source_asset', 99).subscribe(res => {
+      responseData = res;
+    });
+
+    const req = httpMock.expectOne(
+      `${environment.backendURL}/gallery/lineage/source_asset/99`,
+    );
+    req.flush('Not found', {status: 404, statusText: 'Not Found'});
+
+    expect(responseData).toEqual({spine: [], derivatives: []});
+    expect(console.warn).toHaveBeenCalled();
+  });
 });

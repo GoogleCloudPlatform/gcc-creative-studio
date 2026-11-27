@@ -59,6 +59,12 @@ from src.galleries.revision_lineage import (
     resolve_revision_lineage,
 )
 from src.images.repository.media_item_repository import MediaRepository
+from src.lineage.lineage_builder import ExplicitPrimarySpec
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import (
+    LineageItemTypeEnum,
+    LineageRoleEnum,
+)
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
@@ -746,6 +752,17 @@ def _process_video_in_background(
                                     raise ValueError(
                                         f"Parent media_item {request_dto.parent_media_item_id} does not belong to workspace {request_dto.workspace_id}."
                                     )
+                                parent_idx = max(
+                                    0,
+                                    int(
+                                        getattr(
+                                            request_dto,
+                                            "parent_media_index",
+                                            0,
+                                        )
+                                        or 0
+                                    ),
+                                )
                                 if has_extra_references:
                                     worker_logger.info(
                                         "Extra reference media attached alongside parent MediaItem %s; "
@@ -770,17 +787,26 @@ def _process_video_in_background(
                                         and len(ref_videos_for_api)
                                         < request_dto.generation_model.max_reference_videos
                                     ):
+                                        safe_fallback_idx = (
+                                            parent_idx
+                                            if 0
+                                            <= parent_idx
+                                            < len(parent_media_item.gcs_uris)
+                                            else 0
+                                        )
                                         seen_ref_video_keys.add(
                                             (
                                                 "media_item",
                                                 request_dto.parent_media_item_id,
-                                                0,
+                                                safe_fallback_idx,
                                             )
                                         )
                                         ref_videos_for_api.insert(
                                             0,
                                             (
-                                                parent_media_item.gcs_uris[0],
+                                                parent_media_item.gcs_uris[
+                                                    safe_fallback_idx
+                                                ],
                                                 parent_media_item.mime_type
                                                 or "video/mp4",
                                             ),
@@ -804,21 +830,29 @@ def _process_video_in_background(
                                             )
                                             or []
                                         )
-                                        if interactions_list and isinstance(
-                                            interactions_list[-1], dict
+                                        if (
+                                            isinstance(interactions_list, list)
+                                            and interactions_list
                                         ):
-                                            interaction1_id = (
-                                                interaction1_id
-                                                or interactions_list[-1].get(
-                                                    "interaction_id"
+                                            entry = interactions_list[
+                                                (
+                                                    parent_idx
+                                                    if parent_idx
+                                                    < len(interactions_list)
+                                                    else 0
                                                 )
-                                            )
-                                            signature1 = (
-                                                signature1
-                                                or interactions_list[-1].get(
-                                                    "signature"
+                                            ]
+                                            if isinstance(entry, dict):
+                                                interaction1_id = (
+                                                    interaction1_id
+                                                    or entry.get(
+                                                        "interaction_id"
+                                                    )
                                                 )
-                                            )
+                                                signature1 = (
+                                                    signature1
+                                                    or entry.get("signature")
+                                                )
                                     if interaction1_id and signature1:
                                         is_turn_2 = True
                                     else:
@@ -850,8 +884,15 @@ def _process_video_in_background(
                                 )
 
                                 # Download parent video to read bytes
+                                safe_parent_idx = (
+                                    parent_idx
+                                    if 0
+                                    <= parent_idx
+                                    < len(parent_media_item.gcs_uris)
+                                    else 0
+                                )
                                 parent_blob_name = parent_media_item.gcs_uris[
-                                    0
+                                    safe_parent_idx
                                 ].replace(f"gs://{cfg.GENMEDIA_BUCKET}/", "")
                                 local_parent_path = (
                                     f"thumbnails/{parent_blob_name}"
@@ -1920,6 +1961,40 @@ class VeoService:
             }
         )
 
+        omni_explicit_primary: ExplicitPrimarySpec | None = None
+        matching_parent_ref = next(
+            (
+                ref
+                for ref in raw_video_refs
+                if ref.type == "media_item"
+                and ref.id == request_dto.parent_media_item_id
+            ),
+            None,
+        )
+        if request_dto.parent_media_item_id and matching_parent_ref is not None:
+            omni_explicit_primary = ExplicitPrimarySpec(
+                parent_type=LineageItemTypeEnum.MEDIA_ITEM,
+                parent_id=request_dto.parent_media_item_id,
+                parent_index=(
+                    matching_parent_ref.index
+                    if matching_parent_ref.index is not None
+                    else request_dto.parent_media_index
+                ),
+                role=LineageRoleEnum.OMNI_EDIT_SOURCE.value,
+                action_summary=request_dto.prompt,
+            )
+        await record_lineage_safely(
+            getattr(self.media_repo, "db", None),
+            workspace_id=ctx.output_workspace_id,
+            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+            child_id=placeholder_item.id,
+            child_mime_type=MimeTypeEnum.VIDEO_MP4,
+            user_prompt=request_dto.prompt,
+            source_assets=source_assets,
+            source_media_items=combined_source_media_items,
+            explicit_primary=omni_explicit_primary,
+        )
+
         # 3. Submit background task
         executor.submit(
             _process_video_in_background,
@@ -2056,6 +2131,15 @@ class VeoService:
         placeholder_item = await self.media_repo.create(placeholder_item)
         worker_dto = request_dto.model_copy(
             update={"workspace_id": ctx.output_workspace_id}
+        )
+        await record_lineage_safely(
+            getattr(self.media_repo, "db", None),
+            workspace_id=ctx.output_workspace_id,
+            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+            child_id=placeholder_item.id,
+            child_mime_type=MimeTypeEnum.VIDEO_MP4,
+            source_assets=source_assets,
+            source_media_items=source_media_items,
         )
 
         # 3. Submit background task
