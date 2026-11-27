@@ -552,6 +552,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.onExecutionSelected(selectedRunId);
           }
         } else {
+          this.exitReadOnlyMode();
           this.initialExecutionId = null;
           this.currentExecutionId = null;
           this.currentExecutionWorkspaceId = null;
@@ -1473,6 +1474,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.readonly.set(true);
     }
     this.workflowForm?.disable({emitEvent: false});
+  }
+
+  private exitReadOnlyMode(): void {
+    this.readonly.set(false);
+    this.workflowForm?.enable({emitEvent: false});
+    this.snapshotMismatch.set(false);
   }
 
   dismissSnapshotMismatchBanner(): void {

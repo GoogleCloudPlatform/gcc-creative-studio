@@ -2587,6 +2587,30 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.workflowForm.pristine).toBeTrue();
     });
 
+    it('exits read-only mode when the runId query param is removed', () => {
+      const route = TestBed.inject(ActivatedRoute) as unknown as {
+        queryParamMap: Observable<{get: (key: string) => string | null}>;
+      };
+      const queryParams$ = new Subject<{
+        get: (key: string) => string | null;
+      }>();
+      route.queryParamMap = queryParams$;
+
+      component.ngOnInit();
+      queryParams$.next({
+        get: (key: string) => (key === 'runId' ? 'run-99' : null),
+      });
+      expect(component.readonly()).toBeTrue();
+      expect(component.workflowForm.disabled).toBeTrue();
+
+      component.snapshotMismatch.set(true);
+      queryParams$.next({get: () => null});
+
+      expect(component.readonly()).toBeFalse();
+      expect(component.workflowForm.enabled).toBeTrue();
+      expect(component.snapshotMismatch()).toBeFalse();
+    });
+
     it('never enters read-only mode in Create mode', () => {
       expect(component.mode).toBe(EditorMode.Create);
       expect(component.isReadOnly).toBeFalse();
