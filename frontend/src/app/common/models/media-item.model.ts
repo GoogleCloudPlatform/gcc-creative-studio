@@ -176,6 +176,40 @@ export interface SongStructureEntry {
   value: string;
 }
 
+export interface SongStructureSection {
+  id?: string;
+  letter?: string;
+  index?: number;
+  role: string;
+  name: string;
+  startSeconds: number | null;
+  endSeconds: number | null;
+  startTimeLabel: string | null;
+  timeLabel: string | null;
+  lyrics: string | null;
+  caption: string | null;
+}
+
+const HIDDEN_STRUCTURE_KEYS = new Set([
+  'lyrics',
+  'sections',
+  'caption',
+  'duration_secs',
+  'good_crop',
+]);
+
+function isCollapsibleStructureSection(
+  sec: unknown,
+): sec is Record<string, unknown> {
+  if (!sec || typeof sec !== 'object' || Array.isArray(sec)) return false;
+  const record = sec as Record<string, unknown>;
+  return Boolean(
+    (typeof record['caption'] === 'string' && record['caption'].trim()) ||
+      (typeof record['lyrics'] === 'string' && record['lyrics'].trim()) ||
+      (typeof record['role'] === 'string' && record['role'].trim()),
+  );
+}
+
 function humanizeStructureKey(key: string): string {
   return key.trim().toLowerCase() === 'bpm'
     ? 'BPM'
@@ -334,6 +368,128 @@ export function getAudioTrackCaption(
   return typeof caption === 'string' && caption.trim() ? caption.trim() : null;
 }
 
+export function getAudioTrackSections(
+  track: AudioTrackAnalysis | null | undefined,
+  fallbackDurationSeconds?: number | null,
+): SongStructureSection[] {
+  const rawSections = getStructureRecord(track)?.['sections'];
+  if (
+    !Array.isArray(rawSections) ||
+    !rawSections.some(isCollapsibleStructureSection)
+  ) {
+    return [];
+  }
+  const trackDuration = getAudioTrackDurationSeconds(
+    track,
+    fallbackDurationSeconds,
+  );
+  const parsed = rawSections.flatMap((raw, pos) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const sec = raw as Record<string, unknown>;
+    const rawIdx = sec['index'];
+    const index =
+      typeof rawIdx === 'number' && Number.isFinite(rawIdx)
+        ? rawIdx
+        : undefined;
+    const letter =
+      typeof sec['letter'] === 'string' && sec['letter'].trim()
+        ? sec['letter'].trim()
+        : undefined;
+    const role = String(
+      sec['role'] ||
+        sec['name'] ||
+        sec['section'] ||
+        sec['type'] ||
+        `Section ${pos + 1}`,
+    ).trim();
+    const name = String(
+      sec['name'] || (index !== undefined ? `${role} ${index}` : role),
+    ).trim();
+    const rawStart = sec['start_seconds'] ?? sec['startSeconds'];
+    const startSeconds =
+      typeof rawStart === 'number' && Number.isFinite(rawStart) && rawStart >= 0
+        ? rawStart
+        : null;
+    const rawEnd = sec['end_seconds'] ?? sec['endSeconds'];
+    const explicitEndSeconds =
+      typeof rawEnd === 'number' &&
+      Number.isFinite(rawEnd) &&
+      rawEnd > (startSeconds ?? 0)
+        ? rawEnd
+        : null;
+    const timeStr =
+      typeof sec['time'] === 'string' && sec['time'].trim()
+        ? sec['time'].trim()
+        : typeof sec['duration'] === 'string' && sec['duration'].trim()
+          ? sec['duration'].trim()
+          : null;
+    const lyrics =
+      typeof sec['lyrics'] === 'string' && sec['lyrics'].trim()
+        ? sec['lyrics'].trim()
+        : null;
+    const rawCaption = sec['caption'] ?? sec['description'];
+    const caption =
+      typeof rawCaption === 'string' && rawCaption.trim()
+        ? rawCaption.trim()
+        : null;
+    const id =
+      typeof sec['id'] === 'string' && sec['id'].trim()
+        ? sec['id'].trim()
+        : undefined;
+    return [
+      {
+        id,
+        letter,
+        index,
+        role,
+        name,
+        startSeconds,
+        explicitEndSeconds,
+        timeStr,
+        lyrics,
+        caption,
+      },
+    ];
+  });
+
+  return parsed.map((sec, idx) => {
+    let endSeconds = sec.explicitEndSeconds;
+    if (endSeconds === null && sec.startSeconds !== null) {
+      const nextStart =
+        parsed.slice(idx + 1).find(s => s.startSeconds !== null)
+          ?.startSeconds ?? null;
+      if (nextStart !== null && nextStart > sec.startSeconds) {
+        endSeconds = nextStart;
+      } else if (
+        idx === parsed.length - 1 &&
+        trackDuration !== null &&
+        trackDuration > sec.startSeconds
+      ) {
+        endSeconds = trackDuration;
+      }
+    }
+    const startTimeLabel =
+      sec.startSeconds !== null ? formatAudioClock(sec.startSeconds) : null;
+    const timeLabel =
+      startTimeLabel !== null && endSeconds !== null
+        ? `${startTimeLabel} – ${formatAudioClock(endSeconds)}`
+        : (startTimeLabel ?? sec.timeStr);
+    return {
+      id: sec.id,
+      letter: sec.letter,
+      index: sec.index,
+      role: sec.role,
+      name: sec.name,
+      startSeconds: sec.startSeconds,
+      endSeconds,
+      startTimeLabel,
+      timeLabel,
+      lyrics: sec.lyrics,
+      caption: sec.caption,
+    };
+  });
+}
+
 export function formatSongStructureEntries(
   track: AudioTrackAnalysis | null | undefined,
 ): SongStructureEntry[] {
@@ -366,9 +522,7 @@ export function formatSongStructureEntries(
   const entries: SongStructureEntry[] = [];
   for (const [key, val] of Object.entries(structure)) {
     if (
-      key === 'lyrics' ||
-      key === 'sections' ||
-      key === 'caption' ||
+      HIDDEN_STRUCTURE_KEYS.has(key.toLowerCase()) ||
       val === undefined ||
       val === null ||
       val === ''
@@ -390,7 +544,10 @@ export function formatSongStructureEntries(
       });
     }
   }
-  if (Array.isArray(structure['sections'])) {
+  if (
+    Array.isArray(structure['sections']) &&
+    !structure['sections'].some(isCollapsibleStructureSection)
+  ) {
     entries.push(...mapStructureSections(structure['sections']));
   }
   return entries;
@@ -398,6 +555,7 @@ export function formatSongStructureEntries(
 
 export function formatTrackAnalysisForCopy(
   track: AudioTrackAnalysis | null | undefined,
+  fallbackDurationSeconds?: number | null,
 ): string {
   const parts: string[] = [];
   const entries = formatSongStructureEntries(track);
@@ -406,8 +564,21 @@ export function formatTrackAnalysisForCopy(
   }
   const caption = getAudioTrackCaption(track);
   if (caption) parts.push(`Caption: ${caption}`);
-  const lyrics = getAudioTrackLyrics(track);
-  if (lyrics) parts.push(lyrics);
+  const sections = getAudioTrackSections(track, fallbackDurationSeconds);
+  if (sections.length > 0) {
+    for (const sec of sections) {
+      const header = sec.timeLabel
+        ? `[${sec.name}] (${sec.timeLabel})`
+        : `[${sec.name}]`;
+      const lines = [header];
+      if (sec.lyrics) lines.push(`Vocals:\n${sec.lyrics}`);
+      if (sec.caption) lines.push(`Caption: ${sec.caption}`);
+      parts.push(lines.join('\n'));
+    }
+  } else {
+    const lyrics = getAudioTrackLyrics(track);
+    if (lyrics) parts.push(lyrics);
+  }
   return parts.join('\n\n');
 }
 

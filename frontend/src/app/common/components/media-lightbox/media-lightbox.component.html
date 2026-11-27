@@ -46,32 +46,106 @@
             <span class="audio-lyrics-title">
               <mat-icon class="lyrics-icon">lyrics</mat-icon>
               {{
-                currentTrackLyrics() && (currentTrackStructureEntries().length || currentTrackCaption())
+                currentTrackLyrics() &&
+                (currentTrackStructureEntries().length ||
+                  currentTrackCaption() ||
+                  currentTrackSections().length)
                   ? 'Lyrics & Structure'
                   : currentTrackLyrics()
                     ? 'Lyrics'
                     : 'Song Structure'
               }}
             </span>
-            <button
-              mat-icon-button
-              type="button"
-              class="copy-lyrics-btn"
-              matTooltip="Copy lyrics / structure"
-              (click)="copyCurrentTrackText(); $event.stopPropagation()"
-              aria-label="Copy lyrics"
-            >
-              <mat-icon>content_copy</mat-icon>
-            </button>
+            <div class="audio-lyrics-actions">
+              <button
+                *ngIf="currentTrackSections().length > 1"
+                mat-icon-button
+                type="button"
+                class="toggle-all-sections-btn"
+                [matTooltip]="areAllSectionsExpanded() ? 'Collapse all sections' : 'Expand all sections'"
+                (click)="toggleAllSections(); $event.stopPropagation()"
+                [attr.aria-label]="areAllSectionsExpanded() ? 'Collapse all sections' : 'Expand all sections'"
+              >
+                <mat-icon>{{ areAllSectionsExpanded() ? 'unfold_less' : 'unfold_more' }}</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                type="button"
+                class="copy-lyrics-btn"
+                matTooltip="Copy lyrics / structure"
+                (click)="copyCurrentTrackText(); $event.stopPropagation()"
+                aria-label="Copy lyrics"
+              >
+                <mat-icon>content_copy</mat-icon>
+              </button>
+            </div>
           </div>
-          <div class="audio-lyrics-body">
+          <div
+            class="audio-lyrics-body"
+            [class.has-sections]="currentTrackSections().length > 0"
+          >
             <div *ngIf="currentTrackStructureEntries().length" class="structure-grid">
               <div *ngFor="let entry of currentTrackStructureEntries(); trackBy: trackByIndex" class="structure-chip">
                 <span class="structure-label">{{ entry.label }}</span>
                 <span class="structure-value">{{ entry.value }}</span>
               </div>
             </div>
-            <pre *ngIf="currentTrackLyrics()" class="lyrics-text">{{ currentTrackLyrics() }}</pre>
+            <ng-container *ngIf="currentTrackSections() as sections">
+              <div *ngIf="sections.length" class="structure-sections-list">
+                <div
+                  *ngFor="let sec of sections; let i = index; trackBy: trackByIndex"
+                  class="section-block"
+                  [class.is-expanded]="isSectionExpanded(i)"
+                  [class.is-playing]="isSectionPlaying(i, sections)"
+                >
+                  <div class="section-block-header">
+                    <button
+                      type="button"
+                      class="section-toggle-btn"
+                      [attr.aria-expanded]="isSectionExpanded(i)"
+                      (click)="toggleSection(i); $event.stopPropagation()"
+                    >
+                      <mat-icon class="section-chevron">chevron_right</mat-icon>
+                      <span *ngIf="sec.index !== undefined" class="section-index-badge">{{ sec.index }}</span>
+                      <span class="section-role-title">{{ sec.role }}</span>
+                      <span
+                        *ngIf="sec.letter"
+                        class="section-motif-badge"
+                        [matTooltip]="'Musical motif ' + sec.letter"
+                      >{{ sec.letter }}</span>
+                      <span class="section-vocal-tag" [class.is-instrumental]="!sec.lyrics">
+                        {{ sec.lyrics ? 'Vocals' : 'Instrumental' }}
+                      </span>
+                    </button>
+                    <button
+                      *ngIf="sec.timeLabel && sec.startSeconds !== null"
+                      type="button"
+                      class="section-time-pill"
+                      [matTooltip]="'Jump to ' + (sec.startTimeLabel || sec.timeLabel)"
+                      (click)="seekToSeconds(sec.startSeconds, $event)"
+                    >{{ sec.timeLabel }}</button>
+                    <span
+                      *ngIf="sec.timeLabel && sec.startSeconds === null"
+                      class="section-time-pill is-static"
+                    >{{ sec.timeLabel }}</span>
+                  </div>
+                  <div *ngIf="isSectionExpanded(i)" class="section-block-body">
+                    <div class="section-detail-group">
+                      <span class="section-detail-label">Vocals</span>
+                      <pre *ngIf="sec.lyrics; else sectionInstrumental" class="section-vocals-text">{{ sec.lyrics }}</pre>
+                      <ng-template #sectionInstrumental>
+                        <p class="section-instrumental-text">Instrumental — no vocals in this section</p>
+                      </ng-template>
+                    </div>
+                    <div *ngIf="sec.caption" class="section-detail-group">
+                      <span class="section-detail-label">Caption</span>
+                      <p class="section-caption-text">{{ sec.caption }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </ng-container>
+            <pre *ngIf="currentTrackLyrics() && !currentTrackSections().length" class="lyrics-text">{{ currentTrackLyrics() }}</pre>
             <p *ngIf="currentTrackCaption()" class="structure-caption">
               <span class="structure-caption-label">Caption:</span>
               {{ currentTrackCaption() }}

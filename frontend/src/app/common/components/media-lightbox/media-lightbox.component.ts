@@ -32,12 +32,14 @@ import {
   AudioTrackAnalysis,
   MediaItem,
   SongStructureEntry,
+  SongStructureSection,
   formatAudioClock,
   formatSongStructureEntries,
   formatTrackAnalysisForCopy,
   getAudioTrackAnalysis,
   getAudioTrackCaption,
   getAudioTrackLyrics,
+  getAudioTrackSections,
   getAudioTrackWaveform,
 } from '../../models/media-item.model';
 import {GalleryItem} from '../../models/gallery-item.model';
@@ -180,6 +182,8 @@ export class MediaLightboxComponent
   readonly hoverProgress = signal<number | null>(null);
   readonly isScrubbing = signal<boolean>(false);
   readonly durationSeconds = signal<number>(0);
+  readonly currentTimeSeconds = signal<number>(0);
+  readonly expandedSections = signal<ReadonlySet<number>>(new Set());
   readonly hoverTimeLabel = computed<string | null>(() => {
     const pct = this.hoverProgress();
     const dur = this.durationSeconds();
@@ -210,9 +214,23 @@ export class MediaLightboxComponent
     formatSongStructureEntries(this.currentTrackAnalysis()),
   );
 
+  readonly currentTrackSections = computed<SongStructureSection[]>(() =>
+    getAudioTrackSections(
+      this.currentTrackAnalysis(),
+      this.durationSeconds() || this.mediaItemSignal()?.duration,
+    ),
+  );
+
+  readonly areAllSectionsExpanded = computed<boolean>(() => {
+    const sections = this.currentTrackSections();
+    const expanded = this.expandedSections();
+    return sections.length > 0 && sections.every((_, idx) => expanded.has(idx));
+  });
+
   readonly hasCurrentTrackText = computed<boolean>(() =>
     Boolean(
-      this.currentTrackLyrics() ||
+      this.currentTrackSections().length > 0 ||
+        this.currentTrackLyrics() ||
         this.currentTrackStructureEntries().length > 0 ||
         this.currentTrackCaption(),
     ),
@@ -715,8 +733,70 @@ export class MediaLightboxComponent
     return '';
   }
 
+  isSectionExpanded(index: number): boolean {
+    return this.expandedSections().has(index);
+  }
+
+  toggleSection(index: number): void {
+    const next = new Set(this.expandedSections());
+    if (next.has(index)) {
+      next.delete(index);
+    } else {
+      next.add(index);
+    }
+    this.expandedSections.set(next);
+  }
+
+  toggleAllSections(): void {
+    const sections = this.currentTrackSections();
+    if (!sections.length) return;
+    this.expandedSections.set(
+      this.areAllSectionsExpanded()
+        ? new Set()
+        : new Set(sections.map((_, idx) => idx)),
+    );
+  }
+
+  isSectionPlaying(index: number, sections: SongStructureSection[]): boolean {
+    const now = this.currentTimeSeconds();
+    if (!this.isPlaying && now <= 0) return false;
+    const sec = sections[index];
+    if (sec?.startSeconds === null || sec?.startSeconds === undefined) {
+      return false;
+    }
+    const end =
+      sec.endSeconds ??
+      sections.slice(index + 1).find(s => s.startSeconds !== null)
+        ?.startSeconds ??
+      Infinity;
+    return now >= sec.startSeconds && now < end;
+  }
+
+  seekToSeconds(seconds: number | null, event?: Event): void {
+    event?.stopPropagation();
+    if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return;
+    const audio = this.audioPlayerRef?.nativeElement;
+    if (!audio) return;
+    audio.currentTime = seconds;
+    this.currentTimeSeconds.set(seconds);
+    this.currentTime = formatAudioClock(seconds);
+    if (
+      audio.duration &&
+      Number.isFinite(audio.duration) &&
+      audio.duration > 0
+    ) {
+      this.progressValue = Math.max(
+        0,
+        Math.min(100, (seconds / audio.duration) * 100),
+      );
+    }
+  }
+
   copyCurrentTrackText(): void {
-    const text = formatTrackAnalysisForCopy(this.currentTrackAnalysis());
+    const text = formatTrackAnalysisForCopy(
+      this.currentTrackAnalysis(),
+      this.durationSeconds() || this.mediaItemSignal()?.duration,
+    );
     if (!text) return;
     this.clipboard.copy(text);
     handleSuccessSnackbar(this.snackBar, 'Copied to clipboard!');
@@ -761,6 +841,7 @@ export class MediaLightboxComponent
     if (!audio?.duration || !Number.isFinite(audio.duration)) return;
 
     this.setDurationSeconds(audio.duration);
+    this.currentTimeSeconds.set(audio.currentTime);
     this.progressValue = (audio.currentTime / audio.duration) * 100;
     this.currentTime = formatAudioClock(audio.currentTime);
   }
@@ -771,8 +852,10 @@ export class MediaLightboxComponent
 
     const audio = this.audioPlayerRef?.nativeElement;
     if (audio?.duration && Number.isFinite(audio.duration)) {
-      audio.currentTime = (clamped / 100) * audio.duration;
-      this.currentTime = formatAudioClock(audio.currentTime);
+      const targetSec = (clamped / 100) * audio.duration;
+      audio.currentTime = targetSec;
+      this.currentTimeSeconds.set(targetSec);
+      this.currentTime = formatAudioClock(targetSec);
     }
   }
 
@@ -789,6 +872,7 @@ export class MediaLightboxComponent
   onAudioEnded() {
     this.onAudioPause();
     this.progressValue = 0;
+    this.currentTimeSeconds.set(0);
     this.currentTime = '0:00';
   }
 
@@ -935,6 +1019,8 @@ export class MediaLightboxComponent
     this.currentTime = '0:00';
     this.duration = '0:00';
     this.durationSeconds.set(0);
+    this.currentTimeSeconds.set(0);
+    this.expandedSections.set(new Set());
     this.hoverProgress.set(null);
     this.isScrubbing.set(false);
   }

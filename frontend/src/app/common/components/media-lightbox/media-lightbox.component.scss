@@ -563,7 +563,14 @@
                 }
             }
 
-            .copy-lyrics-btn {
+            .audio-lyrics-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.15rem;
+            }
+
+            .copy-lyrics-btn,
+            .toggle-all-sections-btn {
                 color: rgba(255, 255, 255, 0.75);
                 width: 32px;
                 height: 32px;
@@ -589,6 +596,10 @@
             flex-direction: column;
             gap: 0.75rem;
 
+            &.has-sections {
+                max-height: 300px;
+            }
+
             .structure-grid {
                 display: flex;
                 flex-wrap: wrap;
@@ -613,6 +624,203 @@
                 .structure-value {
                     color: rgba(255, 255, 255, 0.88);
                 }
+            }
+
+            .structure-sections-list {
+                display: flex;
+                flex-direction: column;
+                gap: 0.45rem;
+            }
+
+            .section-block {
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.09);
+                overflow: hidden;
+                transition:
+                    border-color 160ms ease,
+                    background-color 160ms ease;
+
+                &:hover {
+                    border-color: rgba(160, 196, 255, 0.28);
+                }
+
+                &.is-expanded {
+                    background: rgba(255, 255, 255, 0.06);
+                    border-color: rgba(160, 196, 255, 0.32);
+
+                    .section-chevron {
+                        transform: rotate(90deg);
+                        color: #a0c4ff;
+                    }
+                }
+
+                &.is-playing {
+                    border-color: rgba(138, 180, 248, 0.65);
+                    box-shadow: inset 2px 0 0 #8ab4f8;
+                }
+            }
+
+            .section-block-header {
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                padding-right: 0.55rem;
+            }
+
+            .section-toggle-btn {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                align-items: center;
+                gap: 0.45rem;
+                padding: 0.5rem 0.4rem 0.5rem 0.55rem;
+                background: transparent;
+                border: none;
+                color: #fff;
+                cursor: pointer;
+                text-align: left;
+                font: inherit;
+
+                &:focus-visible {
+                    outline: 2px solid rgba(160, 196, 255, 0.7);
+                    outline-offset: -2px;
+                    border-radius: 8px;
+                }
+            }
+
+            .section-chevron {
+                font-size: 18px;
+                width: 18px;
+                height: 18px;
+                color: rgba(255, 255, 255, 0.55);
+                flex-shrink: 0;
+                transition:
+                    transform 160ms ease,
+                    color 160ms ease;
+            }
+
+            .section-index-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 20px;
+                height: 20px;
+                padding: 0 5px;
+                border-radius: 6px;
+                background: rgba(160, 196, 255, 0.16);
+                color: #a0c4ff;
+                font-family: 'Roboto Mono', monospace;
+                font-size: 0.72rem;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            .section-role-title {
+                font-size: 0.88rem;
+                font-weight: 600;
+                color: rgba(255, 255, 255, 0.94);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .section-motif-badge {
+                display: inline-flex;
+                align-items: center;
+                padding: 1px 6px;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.07);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                font-family: 'Roboto Mono', monospace;
+                font-size: 0.68rem;
+                color: rgba(255, 255, 255, 0.6);
+                flex-shrink: 0;
+            }
+
+            .section-vocal-tag {
+                margin-left: auto;
+                font-size: 0.7rem;
+                font-weight: 500;
+                color: rgba(160, 196, 255, 0.85);
+                flex-shrink: 0;
+
+                &.is-instrumental {
+                    color: rgba(255, 255, 255, 0.42);
+                }
+            }
+
+            .section-time-pill {
+                padding: 2px 8px;
+                border-radius: 999px;
+                background: rgba(15, 23, 42, 0.65);
+                border: 1px solid rgba(160, 196, 255, 0.25);
+                color: rgba(255, 255, 255, 0.86);
+                font-family: 'Roboto Mono', monospace;
+                font-size: 0.72rem;
+                font-variant-numeric: tabular-nums;
+                cursor: pointer;
+                flex-shrink: 0;
+                transition:
+                    background-color 140ms ease,
+                    border-color 140ms ease;
+
+                &:hover:not(.is-static) {
+                    background: rgba(160, 196, 255, 0.22);
+                    border-color: rgba(160, 196, 255, 0.55);
+                    color: #fff;
+                }
+
+                &.is-static {
+                    cursor: default;
+                }
+            }
+
+            .section-block-body {
+                padding: 0.65rem 0.85rem 0.75rem;
+                border-top: 1px solid rgba(255, 255, 255, 0.07);
+                background: rgba(10, 14, 22, 0.35);
+                display: flex;
+                flex-direction: column;
+                gap: 0.65rem;
+            }
+
+            .section-detail-group {
+                display: flex;
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .section-detail-label {
+                font-size: 0.68rem;
+                font-weight: 600;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: #a0c4ff;
+            }
+
+            .section-vocals-text {
+                margin: 0;
+                font-family: inherit;
+                font-size: 0.86rem;
+                line-height: 1.5;
+                color: rgba(255, 255, 255, 0.92);
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+
+            .section-instrumental-text {
+                margin: 0;
+                font-size: 0.8rem;
+                font-style: italic;
+                color: rgba(255, 255, 255, 0.48);
+            }
+
+            .section-caption-text {
+                margin: 0;
+                font-size: 0.8rem;
+                line-height: 1.5;
+                color: rgba(255, 255, 255, 0.76);
             }
 
             .lyrics-text {

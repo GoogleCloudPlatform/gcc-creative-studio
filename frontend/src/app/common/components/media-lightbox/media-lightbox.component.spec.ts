@@ -457,6 +457,129 @@ describe('MediaLightboxComponent', () => {
       expect(component.currentTrackCaption()).toBeNull();
     });
 
+    it('renders collapsible song-structure blocks with vocals, captions, timestamp seeking, and formatted copy', () => {
+      const host = mountAudioItem({
+        id: 215,
+        prompt: 'Slide Drift',
+        presignedUrls: ['https://example.com/slide-drift.mp3'],
+        audioAnalysis: {
+          tracks: [
+            {
+              lyrics: '[Intro 0]\n(yeah, slide, drift)',
+              duration_seconds: 168.9,
+              structure: {
+                bpm: 125,
+                mosic: 4.5,
+                duration_secs: 184,
+                good_crop: 1,
+                sections: [
+                  {
+                    id: 'A0',
+                    letter: 'A',
+                    index: 0,
+                    role: 'Intro',
+                    name: 'Intro 0',
+                    start_seconds: 0,
+                    lyrics: '(yeah, slide, drift)',
+                    caption: 'A dark Drift Phonk intro.',
+                  },
+                  {
+                    id: 'B1',
+                    letter: 'B',
+                    index: 1,
+                    role: 'Chorus',
+                    name: 'Chorus 1',
+                    start_seconds: 15.4,
+                    caption: 'An explosive Drift Phonk chorus.',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      // Internal flags (duration_secs, good_crop) and collapsible sections stay out of top chips
+      expect(component.currentTrackStructureEntries()).toEqual([
+        {label: 'BPM', value: '125'},
+        {label: 'Mosic', value: '4.5'},
+      ]);
+      expect(host.querySelector('.lyrics-text')).toBeNull();
+
+      const blocks = host.querySelectorAll('.section-block');
+      expect(blocks.length).toBe(2);
+      expect(
+        blocks[0].querySelector('.section-index-badge')?.textContent?.trim(),
+      ).toBe('0');
+      expect(
+        blocks[0].querySelector('.section-role-title')?.textContent?.trim(),
+      ).toBe('Intro');
+      expect(
+        blocks[0].querySelector('.section-motif-badge')?.textContent?.trim(),
+      ).toBe('A');
+      expect(
+        blocks[0].querySelector('.section-time-pill')?.textContent?.trim(),
+      ).toBe('0:00 – 0:15');
+      expect(blocks[0].querySelector('.section-block-body')).toBeNull();
+
+      // Expand first block: shows vocals + caption
+      (
+        blocks[0].querySelector('.section-toggle-btn') as HTMLButtonElement
+      ).click();
+      fixture.detectChanges();
+      expect(blocks[0].querySelector('.section-vocals-text')?.textContent).toBe(
+        '(yeah, slide, drift)',
+      );
+      expect(
+        blocks[0].querySelector('.section-caption-text')?.textContent,
+      ).toBe('A dark Drift Phonk intro.');
+
+      // Expand all button opens remaining instrumental section, then collapses all
+      const toggleAllBtn = host.querySelector(
+        '.toggle-all-sections-btn',
+      ) as HTMLButtonElement;
+      expect(toggleAllBtn).toBeTruthy();
+      toggleAllBtn.click();
+      fixture.detectChanges();
+      expect(component.areAllSectionsExpanded()).toBeTrue();
+      expect(
+        blocks[1].querySelector('.section-instrumental-text')?.textContent,
+      ).toContain('Instrumental');
+
+      toggleAllBtn.click();
+      fixture.detectChanges();
+      expect(component.expandedSections().size).toBe(0);
+
+      // Clicking timestamp pill seeks audio without expanding section
+      const fakeAudio = {
+        duration: 168.9,
+        currentTime: 0,
+        paused: false,
+      } as unknown as HTMLAudioElement;
+      component.audioPlayerRef = {
+        nativeElement: fakeAudio,
+      } as typeof component.audioPlayerRef;
+      component.isPlaying = true;
+
+      const chorusTimeBtn = blocks[1].querySelector(
+        '.section-time-pill',
+      ) as HTMLButtonElement;
+      expect(chorusTimeBtn.textContent?.trim()).toBe('0:15 – 2:48');
+      chorusTimeBtn.click();
+      fixture.detectChanges();
+      expect(fakeAudio.currentTime).toBe(15.4);
+      expect(component.isSectionExpanded(1)).toBeFalse();
+      expect(blocks[1].classList.contains('is-playing')).toBeTrue();
+
+      const copySpy = spyOn(TestBed.inject(Clipboard), 'copy');
+      component.copyCurrentTrackText();
+      expect(copySpy).toHaveBeenCalledWith(
+        'BPM: 125\nMosic: 4.5\n\n' +
+          '[Intro 0] (0:00 – 0:15)\nVocals:\n(yeah, slide, drift)\nCaption: A dark Drift Phonk intro.\n\n' +
+          '[Chorus 1] (0:15 – 2:48)\nCaption: An explosive Drift Phonk chorus.',
+      );
+    });
+
     it('should hide Iterate button for Chirp and Gemini TTS audio items', () => {
       const sub = component.iterateAudioClicked.subscribe();
       const host = fixture.nativeElement as HTMLElement;
