@@ -613,7 +613,7 @@
   }
 }
 
-.step-card:has(.port-disabled) .step-header {
+.step-header:not(.step-header-draggable) {
   cursor: default;
 
   &:active {
