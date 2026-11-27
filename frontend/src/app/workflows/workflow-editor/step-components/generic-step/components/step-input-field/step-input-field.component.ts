@@ -29,6 +29,7 @@ export class StepInputFieldComponent {
   @Input() control!: FormControl;
   @Input() config!: StepInput;
   @Input() mode: 'fixed' | 'linked' | 'mixed' = 'fixed';
+  @Input() readonly = false;
   @Input() compatibleOutputs: any[] = [];
   @Input() showValidationErrors = false;
   @Input() maxMediaItems = 1;
@@ -48,6 +49,7 @@ export class StepInputFieldComponent {
   }
 
   toggleInputMode(newMode: 'fixed' | 'linked' | 'mixed') {
+    if (this.readonly) return;
     this.modeChange.emit(newMode);
   }
 

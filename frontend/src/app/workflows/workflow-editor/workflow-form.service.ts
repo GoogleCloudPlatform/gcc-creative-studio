@@ -809,20 +809,24 @@ export class WorkflowFormService {
         const newInputs = {...stepData.inputs};
         let changed = false;
 
-        const transformRef = (item: NodePort) => {
-          if (this.isUserInput(item) && item.output) {
-            const definitionId = outputIdMap.get(item.output);
-            const newName = outputNameMap.get(item.output);
-            if (definitionId) item._definitionId = definitionId;
-            item.output = newName ? newName : nameToLabel(item.output);
-            changed = true;
-          }
+        // Returns a transformed copy so the caller's workflow data is never mutated.
+        const transformRef = (item: NodePort): NodePort => {
+          if (!this.isUserInput(item) || !item.output) return item;
+          const definitionId = outputIdMap.get(item.output);
+          const newName = outputNameMap.get(item.output);
+          changed = true;
+          return {
+            ...item,
+            ...(definitionId ? {_definitionId: definitionId} : {}),
+            output: newName ? newName : nameToLabel(item.output),
+          };
         };
 
         Object.keys(newInputs).forEach(key => {
           const val = newInputs[key];
-          const values = Array.isArray(val) ? val : [val];
-          values.forEach(item => transformRef(item));
+          newInputs[key] = Array.isArray(val)
+            ? val.map(item => transformRef(item))
+            : transformRef(val);
         });
         if (changed) {
           stepData.inputs = newInputs;

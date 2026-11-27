@@ -75,7 +75,7 @@
 
       <!-- Delete Button -->
       <button
-        *ngIf="!control.disabled"
+        *ngIf="!isInteractionDisabled"
         (click)="clearReferenceImage(i)"
         class="absolute top-0 right-0 p-0.5 bg-black/50 text-white hover:bg-red-500 rounded-bl-lg opacity-0 group-hover:opacity-100 transition-opacity"
       >
@@ -85,7 +85,10 @@
   </div>
 
   <!-- Add Buttons (Always on new row) -->
-  <div class="flex gap-2" *ngIf="items.length < maxItems && !control.disabled">
+  <div
+    class="flex gap-2"
+    *ngIf="!isInteractionDisabled && items.length < maxItems"
+  >
     <!-- Add Fixed -->
     <div
       *ngIf="!linkedOnly"

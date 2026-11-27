@@ -58,6 +58,11 @@ export class StepMediaInputComponent implements OnInit {
   @Input() disabledMessage = '';
   /** When true, only output references can be added (no gallery picks or uploads). */
   @Input() linkedOnly = false;
+  @Input() readonly = false;
+
+  get isInteractionDisabled(): boolean {
+    return this.readonly || !!this.control?.disabled;
+  }
 
   /** Message shown when the input has no items and is invalid. */
   get emptyErrorMessage(): string {
@@ -129,7 +134,7 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   openImageSelectorForReference(): void {
-    if (this.control?.disabled || this.linkedOnly) return;
+    if (this.isInteractionDisabled || this.linkedOnly) return;
     const remainingSlots = this.maxItems - this.items.length;
     if (remainingSlots <= 0) return;
 
@@ -205,7 +210,7 @@ export class StepMediaInputComponent implements OnInit {
 
   onReferenceImageDrop(event: DragEvent) {
     event.preventDefault();
-    if (this.control?.disabled || this.linkedOnly) return;
+    if (this.isInteractionDisabled || this.linkedOnly) return;
     if (this.items.length >= this.maxItems) return;
 
     if (this.type !== 'image' && this.type !== 'video') return;
@@ -244,7 +249,7 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   addLinkedOutput(outputValue: any) {
-    if (this.control?.disabled) return;
+    if (this.isInteractionDisabled) return;
     if (this.items.length >= this.maxItems) return;
     const ref: StepOutputReference = outputValue?.value ?? outputValue;
     if (
@@ -258,7 +263,7 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   clearReferenceImage(index: number) {
-    if (this.control?.disabled) return;
+    if (this.isInteractionDisabled) return;
     const currentItems = [...this.items];
     currentItems.splice(index, 1);
     this.updateValue(currentItems);

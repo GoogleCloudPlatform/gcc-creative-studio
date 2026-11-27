@@ -141,7 +141,7 @@
     box-shadow 0.2s ease,
     opacity 0.2s ease;
 
-  &:hover {
+  &:hover:not(.port-disabled) {
     background-color: #bee3f8;
     transform: translate(-50%, -50%) scale(1.2);
   }
@@ -174,8 +174,8 @@
   }
 
   &.port-disabled {
-    opacity: 0.25;
-    cursor: not-allowed;
+    opacity: 0.35;
+    cursor: default;
     pointer-events: none;
   }
 }
@@ -225,7 +225,11 @@
   border-bottom: 1px solid var(--border-color);
   border-top-left-radius: 0.5rem;
   border-top-right-radius: 0.5rem;
-  cursor: move;
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
 
   .step-title {
     display: flex;
@@ -609,6 +613,14 @@
   }
 }
 
+.step-header:not(.step-header-draggable) {
+  cursor: default;
+
+  &:active {
+    cursor: default;
+  }
+}
+
 .step-actions {
   display: flex;
 }
@@ -631,5 +643,14 @@
     box-shadow:
       0 0 32px 8px rgba(56, 189, 248, 0.85),
       0 10px 35px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* Editable steps are dragged by their header. */
+.step-header.step-header-draggable {
+  cursor: move;
+
+  &:active {
+    cursor: grabbing;
   }
 }

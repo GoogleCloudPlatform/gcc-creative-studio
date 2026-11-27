@@ -644,4 +644,47 @@ describe('StepMediaInputComponent', () => {
       );
     });
   });
+
+  describe('readonly mode', () => {
+    beforeEach(() => {
+      component.readonly = true;
+      component.control.setValue([
+        {previewUrl: 'https://example.com/1.png', sourceAssetId: 10},
+      ]);
+      fixture.detectChanges();
+    });
+
+    it('hides clear, gallery, and linked-output controls', () => {
+      const hostEl = fixture.nativeElement as HTMLElement;
+      const closeIcons = Array.from(hostEl.querySelectorAll('mat-icon')).filter(
+        el => el.textContent?.trim() === 'close',
+      );
+      const galleryBtn = hostEl.querySelector(
+        '[data-testid="step-media-add-gallery"]',
+      );
+      const linkButtons = Array.from(
+        hostEl.querySelectorAll('button, div[mat-menu-trigger-for]'),
+      ).filter(el => el.textContent?.includes('Link'));
+
+      expect(closeIcons.length).toBe(0);
+      expect(galleryBtn).toBeNull();
+      expect(linkButtons.length).toBe(0);
+    });
+
+    it('does not open MatDialog when openImageSelectorForReference is called', () => {
+      component.openImageSelectorForReference();
+      expect(mockDialog.open).not.toHaveBeenCalled();
+    });
+
+    it('treats clearReferenceImage and addLinkedOutput as no-ops', () => {
+      const initialValue = [
+        {previewUrl: 'https://example.com/1.png', sourceAssetId: 10},
+      ];
+      component.clearReferenceImage(0);
+      expect(component.control.value).toEqual(initialValue);
+
+      component.addLinkedOutput(mockCompatibleOutputs[0]);
+      expect(component.control.value).toEqual(initialValue);
+    });
+  });
 });

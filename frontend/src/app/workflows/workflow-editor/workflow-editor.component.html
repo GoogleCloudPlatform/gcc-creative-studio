@@ -30,9 +30,19 @@
     <div class="in-line-wrapper">
       <!-- Breadcrumbs/Title Area -->
       <div class="title-group flex-grow">
-        <div *ngIf="isReadOnly; else editableHeader">
-          <h1 class="page-title">{{ displayedWorkflow?.name }}</h1>
-          <p class="text-sm text-neutral-400 mt-1">
+        <div *ngIf="isReadOnly; else editableHeader" class="readonly-header">
+          <h1
+            id="workflow-readonly-title"
+            class="page-title truncate-line"
+            [matTooltip]="displayedWorkflow?.name ?? ''"
+          >
+            {{ displayedWorkflow?.name }}
+          </h1>
+          <p
+            id="workflow-readonly-description"
+            class="text-sm text-neutral-400 mt-1 truncate-line"
+            [matTooltip]="displayedWorkflow?.description ?? ''"
+          >
             {{ displayedWorkflow?.description }}
           </p>
         </div>
@@ -54,24 +64,35 @@
 
       <!-- Status Badge -->
       <div class="mx-6">
-        <ng-container [ngSwitch]="mode">
-          <mat-chip
-            *ngSwitchCase="EditorMode.Run"
-            [ngClass]="currentExecutionState | workflowStatus: 'class'"
+        <mat-chip
+          *ngIf="isReadOnly"
+          id="workflow-run-status-chip"
+          [ngClass]="currentExecutionState | workflowStatus: 'class'"
+        >
+          <mat-icon
+            *ngIf="currentExecutionState"
+            class="!text-sm !w-4 !h-4 mr-1"
           >
-            <mat-icon
-              *ngIf="currentExecutionState"
-              class="!text-sm !w-4 !h-4 mr-1"
-            >
-              {{ currentExecutionState | workflowStatus: 'icon' }}
-            </mat-icon>
-            {{ currentExecutionState || 'IDLE' }}
-          </mat-chip>
-        </ng-container>
+            {{ currentExecutionState | workflowStatus: 'icon' }}
+          </mat-icon>
+          {{ currentExecutionState || 'IDLE' }}
+        </mat-chip>
       </div>
 
       <!-- Primary Actions -->
       <div class="flex items-center gap-2">
+        <studio-button
+          variant="primary"
+          size="medium"
+          *ngIf="isReadOnly"
+          mat-raised-button
+          id="workflow-edit-btn"
+          class="workflow-edit-btn"
+          (click)="onEditWorkflow()"
+        >
+          <mat-icon class="mr-1">edit</mat-icon>
+          Edit workflow
+        </studio-button>
         <studio-button
           variant="primary"
           size="medium"
@@ -155,11 +176,13 @@
     </div>
   </header>
 
+  <!-- Floating banners, laid out beside the absolute header -->
+  <div class="editor-banners" *ngIf="conflictBannerMessage() || snapshotMismatch()">
   <!-- HTTP 409 Runs-in-Flight Conflict Banner -->
   <div
     *ngIf="conflictBannerMessage() as conflictMsg"
     id="runs-in-flight-conflict-banner"
-    class="mx-6 mt-2 px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
+    class="snapshot-mismatch-banner px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
   >
     <div class="flex items-center gap-2 text-sm">
       <mat-icon class="text-amber-400">warning_amber</mat-icon>
@@ -184,6 +207,31 @@
         <mat-icon>close</mat-icon>
       </button>
     </div>
+  </div>
+
+  <!-- Snapshot Version Mismatch Banner -->
+  <div
+    *ngIf="snapshotMismatch()"
+    id="workflow-snapshot-mismatch-banner"
+    class="snapshot-mismatch-banner px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
+  >
+    <div class="flex items-center gap-2 text-sm">
+      <mat-icon class="text-amber-400">warning_amber</mat-icon>
+      <span>
+        This run used an earlier version of this workflow. You're viewing the
+        latest version, so some steps may not match the run results.
+      </span>
+    </div>
+    <button
+      id="dismiss-snapshot-mismatch-banner-btn"
+      type="button"
+      mat-icon-button
+      (click)="dismissSnapshotMismatchBanner()"
+      aria-label="Dismiss version mismatch warning"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
   </div>
 
   <!-- Main Content Area (Canvas) -->
@@ -240,11 +288,11 @@
           <div
             class="user-input-node absolute z-10"
             [class.selected-node]="selectedNodeId === 'user_input'"
+            [class.readonly-node]="isReadOnly"
             [style.left.px]="getNodePosition('user_input').x"
             [style.top.px]="getNodePosition('user_input').y"
             (mousedown)="onNodeMouseDown($event, 'user_input')"
             [formGroup]="workflowForm"
-            *ngIf="!isReadOnly"
           >
             <div class="step-header">
               <div class="step-title">
@@ -313,6 +361,7 @@
                       <button
                         mat-icon-button
                         color="warn"
+                        [disabled]="isReadOnly"
                         (click)="removeOutput(i)"
                       >
                         <mat-icon>delete</mat-icon>
@@ -323,6 +372,7 @@
                 <button
                   mat-stroked-button
                   color="primary"
+                  [disabled]="isReadOnly"
                   (click)="addOutput()"
                   class="mt-4 w-full"
                 >
@@ -345,11 +395,12 @@
                 <div class="port-label">{{ def.get('name')?.value }}</div>
                 <div
                   class="port output-port"
+                  [class.port-disabled]="isReadOnly"
                   [style.background-color]="
                     getTypeColor(def.get('type')?.value)
                   "
                   [style.border-color]="getTypeColor(def.get('type')?.value)"
-                  matTooltip="Drag to connect"
+                  [matTooltip]="isReadOnly ? '' : 'Drag to connect'"
                   [attr.data-node-id]="'user_input'"
                   [attr.data-port-name]="def.get('name')?.value"
                   [attr.data-port-type]="'output'"
@@ -388,6 +439,7 @@
                   [stepForm]="asFormGroup(step)"
                   [stepIndex]="i"
                   [mode]="mode"
+                  [readonly]="isReadOnly"
                   [config]="getStepConfig(step.value.type)"
                   [availableOutputs]="availableOutputsPerStep[i]"
                   [showValidationErrors]="submitted"
@@ -419,7 +471,7 @@
       </div>
     </div>
     <!-- Floating Add Node Button -->
-    <div class="add-btn-wrapper" *ngIf="!isReadOnly && !showWelcomeView">
+    <div class="add-btn-wrapper" *ngIf="!showWelcomeView">
       <div class="history-btns">
         <button
           mat-mini-fab
@@ -436,7 +488,9 @@
           mat-mini-fab
           color="primary"
           class="mini-history-btn"
+          id="workflow-undo-btn"
           *ngIf="historyIndex > 0"
+          [disabled]="isReadOnly"
           (click)="undo()"
           matTooltip="Undo (Ctrl+Z)"
         >
@@ -446,7 +500,9 @@
           mat-mini-fab
           color="primary"
           class="mini-history-btn"
+          id="workflow-redo-btn"
           *ngIf="historyIndex < historyStack.length - 1"
+          [disabled]="isReadOnly"
           (click)="redo()"
           matTooltip="Redo (Ctrl+Y)"
         >
@@ -457,6 +513,8 @@
         <studio-button
           variant="primary"
           size="large"
+          id="workflow-add-node-btn"
+          [disabled]="isReadOnly"
           (click)="openAddStepModal()"
         >
           <mat-icon>add</mat-icon>
