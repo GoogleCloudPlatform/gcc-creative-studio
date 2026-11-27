@@ -974,6 +974,10 @@ describe('AudioComponent', () => {
   });
 
   it('should open AudioStemMixerDialogComponent for attached referenceAudio and attach stemmed result when use_as_reference is chosen', () => {
+    workspaceStateServiceSpy.getActiveWorkspaceId.and.returnValue(22);
+    workspaceStateServiceSpy.getTargetWorkspaceParam.and.returnValue({
+      workspaceId: 11,
+    });
     component.referenceAudio = {
       id: 321,
       type: 'media_item',
@@ -1004,7 +1008,7 @@ describe('AudioComponent', () => {
       AudioStemMixerDialogComponent,
       jasmine.objectContaining({
         data: {
-          workspaceId: 1,
+          workspaceId: 11,
           source: {id: 321, type: 'media_item', index: 1},
           sourceTitle: 'Sunset Groove (Track 2)',
           allowUseAsReference: true,

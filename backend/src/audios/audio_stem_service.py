@@ -68,7 +68,6 @@ from src.common.schema.media_item_model import (
     SourceMediaItemLink,
 )
 from src.common.storage_service import GcsService
-from src.folders.output_folder import resolve_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
@@ -76,6 +75,10 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.source_assets.schema.source_asset_model import AssetScopeEnum
 from src.users.user_model import UserModel
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,18 +259,30 @@ class AudioStemService:
         self,
         source: AssetReferenceDto,
         workspace_id: int,
+        user: UserModel,
     ) -> _ResolvedAudioSource:
         """Resolves and authorizes workspace access to a source_asset or media_item."""
         if source.type == "source_asset":
             asset = await self.source_asset_repo.get_by_id(source.id)
-            if not asset or (
-                asset.workspace_id != workspace_id
-                and asset.scope != AssetScopeEnum.SYSTEM
-            ):
+            if not asset:
                 raise HTTPException(
                     status_code=404,
                     detail="Source audio asset was not found in this workspace.",
                 )
+            if (
+                asset.workspace_id != workspace_id
+                and asset.scope != AssetScopeEnum.SYSTEM
+            ):
+                authorized = await ensure_can_reference_inputs(
+                    self.media_repo.db,
+                    user,
+                    source_asset_ids=[source.id],
+                )
+                if asset.workspace_id not in authorized:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Source audio asset was not found in this workspace.",
+                    )
             mime_val = _mime_str(asset.mime_type)
             if not asset.gcs_uri or not mime_val.startswith("audio/"):
                 raise HTTPException(
@@ -302,11 +317,22 @@ class AudioStemService:
         if source.type == "media_item":
             media_index = source.index if source.index is not None else 0
             item = await self.media_repo.get_by_id(source.id)
-            if not item or item.workspace_id != workspace_id:
+            if not item:
                 raise HTTPException(
                     status_code=404,
                     detail="Audio media item was not found in this workspace.",
                 )
+            if item.workspace_id != workspace_id:
+                authorized = await ensure_can_reference_inputs(
+                    self.media_repo.db,
+                    user,
+                    media_item_ids=[source.id],
+                )
+                if item.workspace_id not in authorized:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Audio media item was not found in this workspace.",
+                    )
             mime_val = _mime_str(item.mime_type)
             if not mime_val.startswith("audio/"):
                 raise HTTPException(
@@ -548,10 +574,10 @@ class AudioStemService:
         user: UserModel,
     ) -> ExtractStemsResponseDto:
         """Returns cached stems immediately or dispatches isolated stem separation."""
-        del user  # Workspace authorization is enforced by controller + source check
         resolved = await self._resolve_audio_source(
             request_dto.source,
             request_dto.workspace_id,
+            user,
         )
         cache_key = compute_stem_cache_key(resolved.gcs_uri)
         cached = await asyncio.to_thread(
@@ -587,10 +613,10 @@ class AudioStemService:
         user: UserModel,
     ) -> ExtractStemsResponseDto:
         """Polls the status of a stem separation job or returns ready stems."""
-        del user
         resolved = await self._resolve_audio_source(
             request_dto.source,
             request_dto.workspace_id,
+            user,
         )
         cache_key = compute_stem_cache_key(resolved.gcs_uri)
         cached = await asyncio.to_thread(
@@ -871,16 +897,19 @@ class AudioStemService:
     ) -> MediaItemResponse:
         """Persists selected stems as a completed gallery ``MediaItem``."""
         start_time = time.monotonic()
-        folder_id = await resolve_output_folder_id(
-            self.media_repo.db,
-            request_dto.workspace_id,
-            user,
-            request_dto.folder_id,
-        )
         resolved = await self._resolve_audio_source(
             request_dto.source,
             request_dto.workspace_id,
+            user,
         )
+        ctx = await resolve_generation_context(
+            self.media_repo.db,
+            request_dto.workspace_id,
+            user,
+            requested_folder_id=request_dto.folder_id,
+        )
+        output_workspace_id = ctx.output_workspace_id
+        folder_id = ctx.resolved_folder_id
         manifest = await self._ensure_stem_manifest(
             resolved.gcs_uri,
             request_dto.source,
@@ -916,7 +945,7 @@ class AudioStemService:
         if request_dto.save_mode == StemSaveModeEnum.COMBINED:
             uploaded_uri, waveform, duration_sec = await asyncio.to_thread(
                 self._build_combined_mix_sync,
-                request_dto.workspace_id,
+                output_workspace_id,
                 selected_names,
                 stems_map,
             )
@@ -937,7 +966,7 @@ class AudioStemService:
         else:
             persisted_tracks = await asyncio.to_thread(
                 self._copy_separate_stems_sync,
-                request_dto.workspace_id,
+                output_workspace_id,
                 selected_names,
                 stems_map,
             )
@@ -979,7 +1008,7 @@ class AudioStemService:
 
         elapsed = round(max(0.01, time.monotonic() - start_time), 2)
         media_to_create = MediaItemModel(
-            workspace_id=request_dto.workspace_id,
+            workspace_id=output_workspace_id,
             folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,

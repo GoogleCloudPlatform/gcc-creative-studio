@@ -935,7 +935,7 @@ export class AudioComponent implements OnInit {
   openStemMixerForReference(event?: Event): void {
     event?.stopPropagation();
     if (!this.referenceAudio?.id) return;
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const {workspaceId} = this.workspaceStateService.getTargetWorkspaceParam();
     if (!workspaceId) return;
 
     const dialogRef = this.dialog.open<

@@ -286,7 +286,7 @@ async def test_extract_stems_enforces_workspace_and_mime_guards(
 ):
     service, media_repo, source_asset_repo, _, _ = stem_service_bundle
 
-    # Foreign private source_asset -> 404
+    # Foreign private source_asset -> 404 when unreturned/deleted, 403 when forbidden
     source_asset_repo.get_by_id.return_value = SourceAssetModel(
         id=11,
         workspace_id=99,
@@ -295,15 +295,35 @@ async def test_extract_stems_enforces_workspace_and_mime_guards(
         mime_type=MimeTypeEnum.AUDIO_MPEG,
         scope=AssetScopeEnum.PRIVATE,
     )
-    with pytest.raises(HTTPException) as exc_foreign:
-        await service.extract_stems(
-            ExtractStemsDto(
-                workspace_id=5,
-                source=AssetReferenceDto(id=11, type="source_asset"),
-            ),
-            test_user,
-        )
-    assert exc_foreign.value.status_code == 404
+    with patch(
+        "src.audios.audio_stem_service.ensure_can_reference_inputs",
+        new=AsyncMock(return_value=set()),
+    ):
+        with pytest.raises(HTTPException) as exc_foreign:
+            await service.extract_stems(
+                ExtractStemsDto(
+                    workspace_id=5,
+                    source=AssetReferenceDto(id=11, type="source_asset"),
+                ),
+                test_user,
+            )
+        assert exc_foreign.value.status_code == 404
+
+    with patch(
+        "src.audios.audio_stem_service.ensure_can_reference_inputs",
+        new=AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Forbidden")
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_forbidden:
+            await service.extract_stems(
+                ExtractStemsDto(
+                    workspace_id=5,
+                    source=AssetReferenceDto(id=11, type="source_asset"),
+                ),
+                test_user,
+            )
+        assert exc_forbidden.value.status_code == 403
 
     # Image source_asset -> 422
     source_asset_repo.get_by_id.return_value = SourceAssetModel(
@@ -420,9 +440,17 @@ async def test_save_stem_mix_combined_and_separate_preserve_or_strip_lyrics(
         },
     )
 
+    from src.workspaces.generation_workspace import GenerationContext
+
     with patch(
-        "src.audios.audio_stem_service.resolve_output_folder_id",
-        new=AsyncMock(return_value=19),
+        "src.audios.audio_stem_service.resolve_generation_context",
+        new=AsyncMock(
+            return_value=GenerationContext(
+                output_workspace_id=5,
+                brand_workspace_id=5,
+                resolved_folder_id=19,
+            )
+        ),
     ):
         # 1. Combined non-vocal mix -> strips lyrics & vocalProfile, keeps structure & BPM
         combined_res = await service.save_stem_mix(
@@ -437,6 +465,7 @@ async def test_save_stem_mix_combined_and_separate_preserve_or_strip_lyrics(
         )
 
         assert combined_res.id == 901
+        assert combined_res.workspace_id == 5
         assert combined_res.folder_id == 19
         assert combined_res.model == GenerationModelEnum.HTDEMUCS_6S
         assert combined_res.num_media == 1
@@ -474,3 +503,121 @@ async def test_save_stem_mix_combined_and_separate_preserve_or_strip_lyrics(
         )
         assert "lyrics" not in drum_track
         assert "vocalProfile" not in drum_track["musical_profile"]
+
+
+@pytest.mark.asyncio
+async def test_stems_cross_workspace_input_auth_and_private_first_save_routing(
+    stem_service_bundle,
+    test_user: UserModel,
+):
+    from src.audios.audio_stems import compute_stem_cache_key
+    from src.workspaces.generation_workspace import GenerationContext
+
+    service, media_repo, _, gcs, _ = stem_service_bundle
+    shared_uri = "gs://test-bucket/shared/groove.mp3"
+    cache_key = compute_stem_cache_key(shared_uri)
+
+    stems_manifest = {}
+    for stem_name in UI_STEM_ORDER:
+        uri = gcs.upload_bytes_to_gcs(
+            b"cached-mp3-bytes",
+            f"audio_stems_cache/{cache_key}/{stem_name}.mp3",
+            "audio/mpeg",
+        )
+        stems_manifest[stem_name] = {
+            "gcs_uri": uri,
+            "waveform": [0.2, 0.7],
+            "duration_seconds": 3.0,
+            "peak_level": 0.6,
+            "has_energy": True,
+        }
+    gcs.upload_bytes_to_gcs(
+        json.dumps(
+            {
+                "schema_version": STEM_CACHE_SCHEMA_VERSION,
+                "source_gcs_uri": shared_uri,
+                "duration_seconds": 3.0,
+                "stems": stems_manifest,
+            }
+        ).encode("utf-8"),
+        f"audio_stems_cache/{cache_key}/manifest.json",
+        "application/json",
+    )
+
+    media_repo.get_by_id.return_value = MediaItemModel(
+        id=77,
+        workspace_id=22,
+        user_email="colleague@example.com",
+        mime_type=MimeTypeEnum.AUDIO_MPEG,
+        model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+        status=JobStatusEnum.COMPLETED,
+        titles=["Shared Groove"],
+        gcs_uris=[shared_uri],
+    )
+
+    # 1. Unauthorized cross-workspace media_item fails closed with 403
+    with patch(
+        "src.audios.audio_stem_service.ensure_can_reference_inputs",
+        new=AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Forbidden")
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_forbidden:
+            await service.extract_stems(
+                ExtractStemsDto(
+                    workspace_id=11,
+                    source=AssetReferenceDto(id=77, type="media_item", index=0),
+                ),
+                test_user,
+            )
+        assert exc_forbidden.value.status_code == 403
+
+    # 2. Authorized cross-workspace media_item (shared ws=22 referenced from personal ws=11) succeeds
+    with patch(
+        "src.audios.audio_stem_service.ensure_can_reference_inputs",
+        new=AsyncMock(return_value={22}),
+    ) as auth_inputs_mock:
+        extracted = await service.extract_stems(
+            ExtractStemsDto(
+                workspace_id=11,
+                source=AssetReferenceDto(id=77, type="media_item", index=0),
+            ),
+            test_user,
+        )
+        assert extracted.cache_hit is True
+        assert extracted.source_name == "Shared Groove"
+        auth_inputs_mock.assert_awaited_once()
+
+    # 3. Saving stems from shared workspace (ws=22, e.g. as VIEWER) routes privately into personal ws=11
+    with patch(
+        "src.audios.audio_stem_service.resolve_generation_context",
+        new=AsyncMock(
+            return_value=GenerationContext(
+                output_workspace_id=11,
+                brand_workspace_id=22,
+                resolved_folder_id=None,
+            )
+        ),
+    ) as gen_ctx_mock:
+        saved = await service.save_stem_mix(
+            SaveStemMixDto(
+                workspace_id=22,
+                source=AssetReferenceDto(id=77, type="media_item", index=0),
+                selected_stems=[StemNameEnum.VOCALS],
+                save_mode=StemSaveModeEnum.COMBINED,
+                folder_id=50,
+            ),
+            test_user,
+        )
+        gen_ctx_mock.assert_awaited_once_with(
+            media_repo.db,
+            22,
+            test_user,
+            requested_folder_id=50,
+        )
+        assert saved.workspace_id == 11
+        assert saved.folder_id is None
+        assert saved.gcs_uris[0].startswith(
+            "gs://test-bucket/stemmed_audio/ws_11/"
+        )

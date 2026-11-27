@@ -486,9 +486,17 @@ async def test_launch_error_stale_timeout_and_single_stem_fast_copy():
         "application/json",
     )
 
+    from src.workspaces.generation_workspace import GenerationContext
+
     with patch(
-        "src.audios.audio_stem_service.resolve_output_folder_id",
-        new=AsyncMock(return_value=None),
+        "src.audios.audio_stem_service.resolve_generation_context",
+        new=AsyncMock(
+            return_value=GenerationContext(
+                output_workspace_id=3,
+                brand_workspace_id=3,
+                resolved_folder_id=None,
+            )
+        ),
     ):
         saved = await service.save_stem_mix(
             SaveStemMixDto(

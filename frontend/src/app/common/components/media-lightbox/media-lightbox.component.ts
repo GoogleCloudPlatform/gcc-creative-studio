@@ -1067,7 +1067,9 @@ export class MediaLightboxComponent
 
   onStemAudioClick(): void {
     if (!this.mediaItem?.id) return;
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId =
+      this.mediaItem.workspaceId ||
+      this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) return;
 
     const audio = this.audioPlayerRef?.nativeElement;

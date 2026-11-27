@@ -653,6 +653,7 @@ describe('MediaLightboxComponent', () => {
     it('renders Stems button for audio items, opens AudioStemMixerDialogComponent, and emits stemmedMediaCreated', () => {
       mountAudioItem({
         id: 55,
+        workspaceId: 11,
         folderId: 8,
         titles: ['Take One', 'Take Two'],
         presignedUrls: [
@@ -683,7 +684,7 @@ describe('MediaLightboxComponent', () => {
       expect(openSpy).toHaveBeenCalled();
       const dialogConfig = openSpy.calls.mostRecent().args[1] as any;
       expect(dialogConfig.data).toEqual({
-        workspaceId: 1,
+        workspaceId: 11,
         source: {id: 55, type: 'media_item', index: 1},
         sourceTitle: 'Take Two',
         folderId: 8,
