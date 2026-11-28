@@ -112,6 +112,541 @@
       class="control-options inline-flex justify-center items-start grid grid-cols-2 md:grid-cols-3 lg:flex gap-4 mt-8 place-items-center"
     >
       @if (selectedModel === 'lyria') {
+        <ng-template
+          #chipSectionHeader
+          let-title="title"
+          let-refText="refText"
+          let-showReset="showReset"
+          let-showClear="showClear"
+          let-chip="chip"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-baseline gap-1.5 min-w-0">
+              <span
+                class="text-xs font-semibold uppercase tracking-wide text-neutral-300 shrink-0"
+              >
+                {{ title }}
+              </span>
+              @if (refText) {
+                <span
+                  class="text-[11px] text-neutral-400 truncate"
+                  [title]="refText"
+                >
+                  (Ref: {{ refText }})
+                </span>
+              }
+            </div>
+            @if (showReset) {
+              <button
+                type="button"
+                [attr.data-testid]="chip + '-reset-btn'"
+                (click)="resetChip(chip)"
+                class="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 cursor-pointer shrink-0"
+              >
+                <mat-icon class="!h-3.5 !w-3.5 !text-sm">restart_alt</mat-icon>
+                <span>Reset</span>
+              </button>
+            } @else if (showClear) {
+              <button
+                type="button"
+                [attr.data-testid]="chip + '-clear-btn'"
+                (click)="clearChip(chip)"
+                class="text-xs text-neutral-400 hover:text-white cursor-pointer shrink-0"
+              >
+                Clear
+              </button>
+            }
+          </div>
+        </ng-template>
+
+        <div
+          [matTooltip]="tempoChipTooltip()"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            type="button"
+            data-testid="tempo-chip-trigger"
+            aria-label="Configure Tempo"
+            [matMenuTriggerFor]="tempoMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>speed</mat-icon>
+          </button>
+          <div
+            data-testid="tempo-chip-label"
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            {{ tempoChipLabel() }}
+          </div>
+          <mat-menu #tempoMenu="matMenu" class="audio-chip-menu">
+            <div
+              class="p-3 w-72 text-neutral-200 space-y-3"
+              (click)="$event.stopPropagation()"
+              (keydown)="$event.key !== 'Escape' && $event.stopPropagation()"
+            >
+              <ng-container
+                *ngTemplateOutlet="
+                  chipSectionHeader;
+                  context: {
+                    title: 'Tempo',
+                    refText:
+                      baselineBpm() !== null ? baselineBpm() + ' BPM' : null,
+                    showReset:
+                      !!referenceAudio && tempoChipState() === 'edited',
+                    showClear: !referenceAudio && bpm() !== null,
+                    chip: 'tempo',
+                  }
+                "
+              ></ng-container>
+
+              <div class="flex items-center gap-3">
+                <input
+                  type="range"
+                  aria-label="Tempo BPM slider"
+                  data-testid="tempo-bpm-slider"
+                  [min]="MIN_LYRIA_BPM"
+                  [max]="MAX_LYRIA_BPM"
+                  step="1"
+                  [ngModel]="tempoSliderValue()"
+                  (ngModelChange)="setBpm($event)"
+                  class="flex-1 accent-violet-500 cursor-pointer"
+                />
+                <div
+                  class="flex items-center rounded-lg bg-neutral-800 border border-neutral-700 px-2.5 py-1.5 w-24"
+                >
+                  <input
+                    type="number"
+                    aria-label="Tempo BPM"
+                    data-testid="tempo-bpm-input"
+                    [min]="MIN_LYRIA_BPM"
+                    [max]="MAX_LYRIA_BPM"
+                    step="1"
+                    [ngModel]="bpmDraft()"
+                    (ngModelChange)="onBpmDraftInput($event)"
+                    (blur)="commitBpmDraft()"
+                    [placeholder]="
+                      referenceAudio
+                        ? baselineBpm() !== null
+                          ? '' + baselineBpm()
+                          : 'Match'
+                        : 'Auto'
+                    "
+                    class="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span class="text-[11px] text-neutral-400 ml-1">BPM</span>
+                </div>
+              </div>
+
+              <div class="flex flex-wrap gap-1.5">
+                @for (preset of bpmPresets; track preset.bpm) {
+                  <button
+                    type="button"
+                    [attr.data-testid]="'tempo-preset-' + preset.bpm"
+                    (click)="setBpm(preset.bpm)"
+                    class="px-2.5 py-1 rounded-full text-xs border transition-colors cursor-pointer"
+                    [ngClass]="
+                      bpm() === preset.bpm
+                        ? 'menu-item-selected border-transparent text-white font-medium'
+                        : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                    "
+                  >
+                    {{ preset.bpm }} · {{ preset.label }}
+                  </button>
+                }
+              </div>
+            </div>
+          </mat-menu>
+        </div>
+
+        <div
+          [matTooltip]="keyMeterChipTooltip()"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            type="button"
+            data-testid="key-meter-chip-trigger"
+            aria-label="Configure Key and Time Signature"
+            [matMenuTriggerFor]="keyMeterMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>piano</mat-icon>
+          </button>
+          <div
+            data-testid="key-meter-chip-label"
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            {{ keyMeterChipLabel() }}
+          </div>
+          <mat-menu #keyMeterMenu="matMenu" class="audio-chip-menu">
+            <div
+              class="p-3 w-72 text-neutral-200 space-y-4"
+              (click)="$event.stopPropagation()"
+              (keydown)="$event.key !== 'Escape' && $event.stopPropagation()"
+            >
+              <div class="space-y-2">
+                <ng-container
+                  *ngTemplateOutlet="
+                    chipSectionHeader;
+                    context: {
+                      title: 'Key',
+                      refText: baselineKey(),
+                      showReset:
+                        !!referenceAudio && keyChipState() === 'edited',
+                      showClear: !referenceAudio && keySignature() !== null,
+                      chip: 'key',
+                    }
+                  "
+                ></ng-container>
+
+                @if (customModalKey(); as modalKey) {
+                  <div class="flex items-center gap-1.5">
+                    <span
+                      data-testid="custom-modal-key-pill"
+                      class="px-2.5 py-1 rounded-full text-xs menu-item-selected text-white font-medium"
+                    >
+                      {{ modalKey }}
+                    </span>
+                  </div>
+                }
+
+                <div class="grid grid-cols-6 gap-1.5">
+                  @for (root of keyRoots; track root) {
+                    <button
+                      type="button"
+                      [attr.data-testid]="'key-root-' + root"
+                      (click)="selectKeyRoot(root)"
+                      class="py-1.5 rounded-md text-xs border transition-colors cursor-pointer text-center"
+                      [ngClass]="
+                        parsedKey()?.gridRoot === root
+                          ? 'menu-item-selected border-transparent text-white font-medium'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                      "
+                    >
+                      {{ root }}
+                    </button>
+                  }
+                </div>
+
+                <div class="grid grid-cols-2 gap-1.5 pt-0.5">
+                  @for (mode of keyModes; track mode) {
+                    <button
+                      type="button"
+                      [attr.data-testid]="'key-mode-' + mode"
+                      (click)="selectKeyMode(mode)"
+                      class="py-1 rounded-full text-xs border transition-colors cursor-pointer text-center"
+                      [ngClass]="
+                        (parsedKey()?.mode ?? preferredKeyMode()) === mode
+                          ? parsedKey() !== null
+                            ? 'menu-item-selected border-transparent text-white font-medium'
+                            : 'bg-neutral-700 border-neutral-500 text-white'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500'
+                      "
+                    >
+                      {{ mode }}
+                    </button>
+                  }
+                </div>
+              </div>
+
+              <div class="border-t border-white/10 pt-3 space-y-2">
+                <ng-container
+                  *ngTemplateOutlet="
+                    chipSectionHeader;
+                    context: {
+                      title: 'Meter',
+                      refText: baselineTimeSignature(),
+                      showReset:
+                        !!referenceAudio && meterChipState() === 'edited',
+                      showClear: !referenceAudio && timeSignature() !== null,
+                      chip: 'meter',
+                    }
+                  "
+                ></ng-container>
+
+                <div class="flex flex-wrap gap-1.5">
+                  @if (extraTimeSignature(); as extraMeter) {
+                    <button
+                      type="button"
+                      [attr.data-testid]="'meter-option-' + extraMeter"
+                      (click)="selectTimeSignature(extraMeter)"
+                      class="px-2.5 py-1 rounded-full text-xs border border-transparent menu-item-selected text-white font-medium cursor-pointer"
+                    >
+                      {{ extraMeter }}
+                    </button>
+                  }
+                  @for (meter of timeSignatures; track meter) {
+                    <button
+                      type="button"
+                      [attr.data-testid]="'meter-option-' + meter"
+                      (click)="selectTimeSignature(meter)"
+                      class="px-2.5 py-1 rounded-full text-xs border transition-colors cursor-pointer"
+                      [ngClass]="
+                        timeSignature() === meter
+                          ? 'menu-item-selected border-transparent text-white font-medium'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                      "
+                    >
+                      {{ meter }}
+                    </button>
+                  }
+                </div>
+              </div>
+            </div>
+          </mat-menu>
+        </div>
+
+        <div
+          [matTooltip]="vocalChipTooltip()"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            type="button"
+            data-testid="vocals-chip-trigger"
+            aria-label="Configure Vocals"
+            [matMenuTriggerFor]="vocalsMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>mic</mat-icon>
+          </button>
+          <div
+            data-testid="vocals-chip-label"
+            class="text-center justify-center text-neutral-200 text-base mt-2 truncate max-w-[9rem]"
+          >
+            {{ vocalChipLabel() }}
+          </div>
+          <mat-menu #vocalsMenu="matMenu" class="audio-chip-menu">
+            <div
+              class="p-3 w-72 text-neutral-200 space-y-3"
+              (click)="$event.stopPropagation()"
+              (keydown)="$event.key !== 'Escape' && $event.stopPropagation()"
+            >
+              <ng-container
+                *ngTemplateOutlet="
+                  chipSectionHeader;
+                  context: {
+                    title: 'Vocals',
+                    refText: baselineVocalSummary(),
+                    showReset:
+                      lyriaSupportsVocals() &&
+                      !!referenceAudio &&
+                      vocalChipState() === 'edited',
+                    showClear:
+                      lyriaSupportsVocals() &&
+                      !referenceAudio &&
+                      vocalMode() !== null,
+                    chip: 'vocals',
+                  }
+                "
+              ></ng-container>
+
+              <div class="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  data-testid="vocal-mode-instrumental"
+                  [disabled]="!lyriaSupportsVocals()"
+                  (click)="selectVocalMode('instrumental')"
+                  class="py-1.5 rounded-full text-xs border transition-colors text-center"
+                  [ngClass]="
+                    !lyriaSupportsVocals()
+                      ? 'menu-item-selected border-transparent text-white font-medium cursor-default'
+                      : vocalMode() === 'instrumental'
+                        ? 'menu-item-selected border-transparent text-white font-medium cursor-pointer'
+                        : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500 cursor-pointer'
+                  "
+                >
+                  Instrumental
+                </button>
+                <button
+                  type="button"
+                  data-testid="vocal-mode-vocals"
+                  [disabled]="!lyriaSupportsVocals()"
+                  (click)="selectVocalMode('vocals')"
+                  class="py-1.5 rounded-full text-xs border transition-colors text-center"
+                  [ngClass]="
+                    !lyriaSupportsVocals()
+                      ? 'bg-neutral-900 border-neutral-800 text-neutral-600 cursor-not-allowed'
+                      : vocalMode() === 'vocals'
+                        ? 'menu-item-selected border-transparent text-white font-medium cursor-pointer'
+                        : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500 cursor-pointer'
+                  "
+                >
+                  Vocals
+                </button>
+              </div>
+
+              @if (!lyriaSupportsVocals()) {
+                <p
+                  data-testid="vocals-lyria2-hint"
+                  class="text-[11px] text-neutral-400 leading-relaxed"
+                >
+                  Lyria 2 generates instrumental tracks only. Switch to Lyria 3
+                  for sung vocals.
+                </p>
+              } @else if (vocalMode() === 'vocals') {
+                <div class="border-t border-white/10 pt-3 space-y-2.5">
+                  <div class="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      data-testid="vocal-preset-auto"
+                      (click)="selectVocalPreset(null)"
+                      class="px-2.5 py-1 rounded-full text-xs border transition-colors cursor-pointer"
+                      [ngClass]="
+                        vocalStyle() === null
+                          ? 'menu-item-selected border-transparent text-white font-medium'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                      "
+                    >
+                      Auto
+                    </button>
+                    @for (preset of vocalPresets; track preset) {
+                      <button
+                        type="button"
+                        [attr.data-testid]="'vocal-preset-' + preset"
+                        (click)="selectVocalPreset(preset)"
+                        class="px-2.5 py-1 rounded-full text-xs border transition-colors cursor-pointer"
+                        [ngClass]="
+                          vocalStyle() === preset
+                            ? 'menu-item-selected border-transparent text-white font-medium'
+                            : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                        "
+                      >
+                        {{ preset }}
+                      </button>
+                    }
+                  </div>
+
+                  <div
+                    class="flex items-center rounded-lg bg-neutral-800 border border-neutral-700 px-2.5 py-1.5"
+                  >
+                    <input
+                      type="text"
+                      aria-label="Custom vocal style"
+                      data-testid="vocal-custom-style-input"
+                      [ngModel]="vocalStyleDraft()"
+                      (ngModelChange)="onCustomVocalStyleInput($event)"
+                      (blur)="commitVocalStyleDraft()"
+                      placeholder="Custom style (e.g. soulful rasp, Spanish)..."
+                      class="w-full bg-transparent text-xs text-white placeholder:text-neutral-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              }
+            </div>
+          </mat-menu>
+        </div>
+
+        <div
+          [matTooltip]="lyricsChipTooltip()"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            type="button"
+            data-testid="lyrics-chip-trigger"
+            aria-label="Configure Lyrics"
+            [matMenuTriggerFor]="lyricsMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>lyrics</mat-icon>
+          </button>
+          <div
+            data-testid="lyrics-chip-label"
+            class="text-center justify-center text-neutral-200 text-base mt-2 truncate max-w-[9rem]"
+          >
+            {{ lyricsChipLabel() }}
+          </div>
+          <mat-menu #lyricsMenu="matMenu" class="audio-chip-menu">
+            <div
+              class="p-3 w-80 sm:w-96 text-neutral-200 space-y-3"
+              (click)="$event.stopPropagation()"
+              (keydown)="$event.key !== 'Escape' && $event.stopPropagation()"
+            >
+              <ng-container
+                *ngTemplateOutlet="
+                  chipSectionHeader;
+                  context: {
+                    title: 'Lyrics',
+                    refText: baselineLyricsSummary(),
+                    showReset:
+                      lyriaSupportsVocals() &&
+                      !!referenceAudio &&
+                      lyricsChipState() === 'edited',
+                    showClear:
+                      lyriaSupportsVocals() &&
+                      !referenceAudio &&
+                      lyrics() !== null,
+                    chip: 'lyrics',
+                  }
+                "
+              ></ng-container>
+
+              @if (!lyriaSupportsVocals()) {
+                <p
+                  data-testid="lyrics-lyria2-hint"
+                  class="text-[11px] text-neutral-400 leading-relaxed"
+                >
+                  Lyria 2 generates instrumental tracks only. Switch to Lyria 3
+                  for sung lyrics.
+                </p>
+              } @else {
+                @if (vocalMode() === 'instrumental') {
+                  <p
+                    data-testid="lyrics-instrumental-hint"
+                    class="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-md px-2.5 py-1.5 leading-relaxed"
+                  >
+                    Instrumental is selected — entering lyrics will switch
+                    Vocals on.
+                  </p>
+                }
+
+                <div class="flex flex-wrap gap-1.5">
+                  @for (tag of lyricsSectionTags; track tag) {
+                    <button
+                      type="button"
+                      [attr.data-testid]="'lyrics-tag-' + tag"
+                      (click)="insertLyricsSectionTag(tag)"
+                      class="px-2 py-0.5 rounded-full text-[11px] bg-neutral-800 border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-white transition-colors cursor-pointer"
+                    >
+                      + {{ tag }}
+                    </button>
+                  }
+                </div>
+
+                <textarea
+                  rows="6"
+                  aria-label="Custom song lyrics"
+                  data-testid="lyrics-textarea"
+                  [attr.maxlength]="MAX_LYRIA_LYRICS_LENGTH"
+                  [ngModel]="lyricsDraft()"
+                  (ngModelChange)="onLyricsInput($event)"
+                  (blur)="commitLyricsDraft()"
+                  placeholder="[Verse 1]&#10;Write your lyrics here...&#10;&#10;[Chorus]&#10;..."
+                  class="w-full rounded-lg bg-neutral-800 border border-neutral-700 focus:border-violet-500 focus:outline-none p-2.5 text-xs leading-relaxed text-white placeholder:text-neutral-500 resize-y font-mono"
+                ></textarea>
+
+                <div
+                  class="flex items-center justify-between text-[11px] text-neutral-400"
+                >
+                  <span>
+                    @if (lyricsLineCount() > 0) {
+                      {{ lyricsLineCount() }}
+                      {{ lyricsLineCount() === 1 ? 'line' : 'lines' }}
+                    } @else {
+                      Optional — leave blank for auto lyrics
+                    }
+                  </span>
+                  <span>
+                    {{ lyricsDraft().length }} / {{ MAX_LYRIA_LYRICS_LENGTH }}
+                  </span>
+                </div>
+              }
+            </div>
+          </mat-menu>
+        </div>
+
         <div
           matTooltip="Select Negative Phrases"
           class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
@@ -287,7 +822,9 @@
           [placeholder]="
             selectedModel === 'lyria'
               ? referenceAudio
-                ? 'Describe how to evolve or build on this audio...'
+                ? hasEditedIterationChips()
+                  ? 'Optional: describe additional changes, or click Generate...'
+                  : 'Describe how to evolve or build on this audio...'
                 : 'Describe the music...'
               : 'Enter text to speak...'
           "

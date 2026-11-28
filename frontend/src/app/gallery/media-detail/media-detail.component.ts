@@ -52,6 +52,7 @@ import {FolderService} from '../../common/services/folder.service';
 import {FolderBreadcrumb} from '../../common/models/folder.model';
 import {MODEL_CONFIGS} from '../../common/config/model-config';
 import {DEFAULT_OMNI_MODEL} from '../../services/video-state.service';
+import {extractTrackChipBaselines} from '../../audio/audio-chips.util';
 
 /**
  * One segment of the location trail shown above the media details.
@@ -850,10 +851,18 @@ export class MediaDetailComponent implements OnDestroy {
   }): void {
     const targetItem = event.mediaItem ?? this.mediaItem;
     if (!targetItem) return;
-    const remixState = buildAudioIterationRemixState(
+    const baseState = buildAudioIterationRemixState(
       targetItem,
       event.selectedIndex,
     );
+    const baselines =
+      'itemType' in targetItem && targetItem.itemType === 'source_asset'
+        ? null
+        : extractTrackChipBaselines(targetItem, event.selectedIndex);
+    const hasBaselines =
+      baselines !== null &&
+      Object.values(baselines).some(value => value !== null);
+    const remixState = hasBaselines ? {...baseState, baselines} : baseState;
     void this.router.navigate(['/audio'], {state: {remixState}});
   }
 

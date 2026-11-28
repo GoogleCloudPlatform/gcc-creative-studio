@@ -528,6 +528,40 @@ describe('MediaDetailComponent', () => {
           },
         },
       });
+
+      mockRouter.navigate.calls.reset();
+      (component.mediaItem as any).audioAnalysis = {
+        tracks: [
+          {structure: {bpm: 95}},
+          {
+            lyrics: '[Verse 1]\nCity lights on wet asphalt',
+            musical_profile: {
+              bpm: 118.4,
+              key_signature: 'a minor',
+              time_signature: '6/8',
+              vocal_profile: 'Warm Female Alto',
+            },
+          },
+        ],
+      };
+      component.handleIterateAudio({
+        mediaItem: component.mediaItem as any,
+        selectedIndex: 1,
+      });
+      expect(mockRouter.navigate).toHaveBeenCalledWith(['/audio'], {
+        state: {
+          remixState: jasmine.objectContaining({
+            baselines: {
+              bpm: 118,
+              keySignature: 'A Minor',
+              timeSignature: '6/8',
+              vocalMode: 'vocals',
+              vocalStyle: 'Warm Female Alto',
+              lyrics: '[Verse 1]\nCity lights on wet asphalt',
+            },
+          }),
+        },
+      });
     });
 
     it('renders per-take musical profile and updates when currentImageIndex changes', () => {

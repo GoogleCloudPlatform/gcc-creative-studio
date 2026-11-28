@@ -71,12 +71,45 @@ import {
 } from '../common/services/source-asset.service';
 import {Observable, finalize, first} from 'rxjs';
 import {
+  DEFAULT_SLIDER_BPM,
+  EMPTY_LYRIA_CHIP_VALUES,
+  KeyScaleMode,
+  LYRIA_BPM_PRESETS,
+  LYRIA_KEY_MODES,
+  LYRIA_KEY_ROOTS,
+  LYRIA_LYRICS_SECTION_TAGS,
+  LYRIA_TIME_SIGNATURES,
+  LYRIA_VOCAL_PRESETS,
+  LyriaChipValues,
+  LyriaVocalMode,
+  MAX_LYRIA_BPM,
+  MAX_LYRIA_LYRICS_LENGTH,
+  MAX_LYRIA_PROMPT_LENGTH,
+  MIN_LYRIA_BPM,
+  areEquivalentKeySignatures,
+  buildLyriaChipsPromptPayload,
+  countLyricsLines,
+  extractTrackChipBaselines,
+  normalizeBpm,
+  normalizeKeySignature,
+  normalizeLyriaChipValues,
+  normalizeLyrics,
+  normalizeTimeSignature,
+  normalizeVocalStyle,
+  parseStandardKeySignature,
+  resolveKeyChipState,
+  resolveLyricsChipState,
+  resolveScalarChipState,
+  resolveVocalChipState,
+} from './audio-chips.util';
+import {
   handleErrorSnackbar,
   handleInfoSnackbar,
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
 
 type UiModelType = 'lyria' | 'chirp' | 'gemini-tts';
+type LyriaChipId = 'tempo' | 'key' | 'meter' | 'vocals' | 'lyrics';
 export type AudioReferenceSelection = ReferenceAudio;
 
 const LYRIA_MODEL_HINTS: Record<string, string> = {
@@ -169,8 +202,256 @@ export class AudioComponent implements OnInit {
   sampleCount = 1;
   enhancePrompt = false;
   referenceImages: ReferenceImage[] = [];
-  referenceAudio: AudioReferenceSelection | null = null;
+  private referenceAudioSignal = signal<AudioReferenceSelection | null>(null);
+  get referenceAudio(): AudioReferenceSelection | null {
+    return this.referenceAudioSignal();
+  }
+  set referenceAudio(val: AudioReferenceSelection | null) {
+    this.referenceAudioSignal.set(val);
+  }
   parentMediaItemId: number | null = null;
+
+  readonly MIN_LYRIA_BPM = MIN_LYRIA_BPM;
+  readonly MAX_LYRIA_BPM = MAX_LYRIA_BPM;
+  readonly MAX_LYRIA_LYRICS_LENGTH = MAX_LYRIA_LYRICS_LENGTH;
+  readonly bpmPresets = LYRIA_BPM_PRESETS;
+  readonly keyRoots = LYRIA_KEY_ROOTS;
+  readonly keyModes = LYRIA_KEY_MODES;
+  readonly timeSignatures = LYRIA_TIME_SIGNATURES;
+  readonly vocalPresets = LYRIA_VOCAL_PRESETS;
+  readonly lyricsSectionTags = LYRIA_LYRICS_SECTION_TAGS;
+
+  readonly bpm = signal<number | null>(null);
+  readonly baselineBpm = signal<number | null>(null);
+  readonly bpmDraft = signal<string>('');
+
+  readonly keySignature = signal<string | null>(null);
+  readonly baselineKey = signal<string | null>(null);
+  readonly preferredKeyMode = signal<KeyScaleMode>('Major');
+
+  readonly timeSignature = signal<string | null>(null);
+  readonly baselineTimeSignature = signal<string | null>(null);
+
+  readonly vocalMode = signal<LyriaVocalMode | null>(null);
+  readonly vocalStyle = signal<string | null>(null);
+  readonly vocalStyleDraft = signal<string>('');
+  readonly baselineVocalMode = signal<LyriaVocalMode | null>(null);
+  readonly baselineVocalStyle = signal<string | null>(null);
+
+  readonly lyrics = signal<string | null>(null);
+  readonly lyricsDraft = signal<string>('');
+  readonly baselineLyrics = signal<string | null>(null);
+
+  readonly lyriaSupportsVocals = computed(
+    () => this.lyriaModelSignal() !== GenerationModelEnum.LYRIA_002,
+  );
+
+  readonly lyriaSupportsLyrics = computed(
+    () => this.lyriaSupportsVocals() && this.vocalMode() !== 'instrumental',
+  );
+
+  readonly tempoChipState = computed(() =>
+    resolveScalarChipState({
+      value: this.bpm(),
+      baseline: this.baselineBpm(),
+      hasReferenceAudio: Boolean(this.referenceAudioSignal()),
+    }),
+  );
+
+  readonly tempoChipLabel = computed(() => {
+    const val = this.bpm();
+    if (val !== null) return `${val} BPM`;
+    return this.tempoChipState() === 'match_ref' ? 'Tempo: Match' : 'Tempo';
+  });
+
+  readonly tempoChipTooltip = computed(() => {
+    const state = this.tempoChipState();
+    const base = this.baselineBpm();
+    if (state === 'inherited') {
+      return 'Inherited from reference track (click to adjust)';
+    }
+    if (state === 'match_ref') {
+      return 'Matching reference audio tempo (click to override)';
+    }
+    if (state === 'edited') {
+      return base !== null ? `Edited from ${base} BPM` : 'Custom Tempo (BPM)';
+    }
+    return 'Set Tempo (BPM)';
+  });
+
+  readonly tempoSliderValue = computed(
+    () => this.bpm() ?? this.baselineBpm() ?? DEFAULT_SLIDER_BPM,
+  );
+
+  readonly parsedKey = computed(() =>
+    parseStandardKeySignature(this.keySignature()),
+  );
+
+  readonly customModalKey = computed(() => {
+    const key = this.keySignature();
+    return key && !this.parsedKey() ? key : null;
+  });
+
+  readonly extraTimeSignature = computed(() => {
+    const meter = this.timeSignature();
+    return meter && !this.timeSignatures.includes(meter) ? meter : null;
+  });
+
+  readonly keyChipState = computed(() =>
+    resolveKeyChipState({
+      keySignature: this.keySignature(),
+      baselineKey: this.baselineKey(),
+      hasReferenceAudio: Boolean(this.referenceAudioSignal()),
+    }),
+  );
+
+  readonly meterChipState = computed(() =>
+    resolveScalarChipState({
+      value: this.timeSignature(),
+      baseline: this.baselineTimeSignature(),
+      hasReferenceAudio: Boolean(this.referenceAudioSignal()),
+    }),
+  );
+
+  readonly isKeyMeterEdited = computed(
+    () =>
+      this.keyChipState() === 'edited' || this.meterChipState() === 'edited',
+  );
+
+  readonly keyMeterChipLabel = computed(() => {
+    const k = this.keySignature();
+    const m = this.timeSignature();
+    if (k && m) return `${k} · ${m}`;
+    if (k) return k;
+    if (m) return `${m} Meter`;
+    return this.referenceAudioSignal() ? 'Key & Meter: Match' : 'Key & Meter';
+  });
+
+  readonly keyMeterChipTooltip = computed(() => {
+    if (this.isKeyMeterEdited()) {
+      return 'Custom Key & Meter';
+    }
+    if (this.referenceAudioSignal()) {
+      return this.baselineKey() !== null ||
+        this.baselineTimeSignature() !== null
+        ? 'Inherited from reference track (click to adjust)'
+        : 'Matching reference audio key & meter (click to override)';
+    }
+    return 'Set Key & Time Signature';
+  });
+
+  readonly vocalChipState = computed(() => {
+    if (!this.lyriaSupportsVocals()) {
+      return 'unset';
+    }
+    return resolveVocalChipState({
+      vocalMode: this.vocalMode(),
+      vocalStyle: this.vocalStyle(),
+      baselineVocalMode: this.baselineVocalMode(),
+      baselineVocalStyle: this.baselineVocalStyle(),
+      hasReferenceAudio: Boolean(this.referenceAudioSignal()),
+    });
+  });
+
+  readonly vocalChipLabel = computed(() => {
+    if (!this.lyriaSupportsVocals() || this.vocalMode() === 'instrumental') {
+      return 'Instrumental';
+    }
+    if (this.vocalMode() === 'vocals') {
+      return this.vocalStyle() || 'Vocals: Auto';
+    }
+    return this.referenceAudioSignal() ? 'Vocals: Match' : 'Vocals';
+  });
+
+  readonly vocalChipTooltip = computed(() => {
+    if (!this.lyriaSupportsVocals()) {
+      return 'Lyria 2 is instrumental-only (switch to Lyria 3 for vocals)';
+    }
+    const state = this.vocalChipState();
+    if (state === 'inherited') {
+      return 'Inherited from reference track (click to adjust)';
+    }
+    if (state === 'match_ref') {
+      return 'Matching reference audio vocals (click to override)';
+    }
+    if (state === 'edited') {
+      const style = this.vocalMode() === 'vocals' ? this.vocalStyle() : null;
+      return style ? `Lead vocals: ${style}` : 'Custom Vocals setting';
+    }
+    return 'Set Vocals or Instrumental';
+  });
+
+  readonly baselineVocalSummary = computed(() => {
+    const mode = this.baselineVocalMode();
+    if (mode === 'instrumental') return 'Instrumental';
+    if (mode === 'vocals') return this.baselineVocalStyle() || 'Vocals';
+    return null;
+  });
+
+  readonly lyricsChipState = computed(() => {
+    if (!this.lyriaSupportsVocals()) {
+      return 'unset';
+    }
+    return resolveLyricsChipState({
+      lyrics: this.lyrics(),
+      baselineLyrics: this.baselineLyrics(),
+      vocalMode: this.vocalMode(),
+      hasReferenceAudio: Boolean(this.referenceAudioSignal()),
+    });
+  });
+
+  readonly lyricsLineCount = computed(() => countLyricsLines(this.lyrics()));
+
+  readonly baselineLyricsLineCount = computed(() =>
+    countLyricsLines(this.baselineLyrics()),
+  );
+
+  readonly baselineLyricsSummary = computed(() => {
+    const lines = this.baselineLyricsLineCount();
+    return lines > 0 ? `${lines} ${lines === 1 ? 'line' : 'lines'}` : null;
+  });
+
+  readonly lyricsChipLabel = computed(() => {
+    if (!this.lyriaSupportsLyrics()) {
+      return 'Lyrics: Off';
+    }
+    const lines = this.lyricsLineCount();
+    if (lines > 0) {
+      return `Lyrics (${lines} ${lines === 1 ? 'line' : 'lines'})`;
+    }
+    return this.referenceAudioSignal() ? 'Lyrics: Match' : 'Lyrics';
+  });
+
+  readonly lyricsChipTooltip = computed(() => {
+    if (!this.lyriaSupportsVocals()) {
+      return 'Lyria 2 is instrumental-only (switch to Lyria 3 for lyrics)';
+    }
+    if (this.vocalMode() === 'instrumental') {
+      return 'Paused while Instrumental is selected (click to edit lyrics and switch Vocals on)';
+    }
+    const state = this.lyricsChipState();
+    if (state === 'inherited') {
+      return 'Inherited lyrics from reference track (click to edit)';
+    }
+    if (state === 'match_ref') {
+      return 'Matching reference audio lyrics (click to override)';
+    }
+    if (state === 'edited') {
+      return this.baselineLyrics() !== null
+        ? 'Edited lyrics from reference track'
+        : 'Custom Lyrics';
+    }
+    return 'Write custom Lyrics';
+  });
+
+  readonly hasEditedIterationChips = computed(
+    () =>
+      Boolean(this.referenceAudioSignal()) &&
+      (this.tempoChipState() === 'edited' ||
+        this.isKeyMeterEdited() ||
+        (this.lyriaSupportsVocals() && this.vocalChipState() === 'edited') ||
+        (this.lyriaSupportsLyrics() && this.lyricsChipState() === 'edited')),
+  );
 
   readonly selectedLanguage = signal<LanguageEnum>(LanguageEnum.EN_US);
   readonly selectedVoice = signal<VoiceEnum | string>(VoiceEnum.PUCK);
@@ -302,11 +583,13 @@ export class AudioComponent implements OnInit {
   promptBoxHost?: ElementRef<HTMLElement>;
 
   private readonly destroyRef = inject(DestroyRef);
+  private saveStateTimer: ReturnType<typeof setTimeout> | null = null;
 
   private pendingRemixState?: {
     lyriaModel?: string;
     referenceAudio?: AudioReferenceSelection;
     parentMediaItemId?: number | null;
+    baselines?: Partial<LyriaChipValues> | null;
   };
 
   constructor(
@@ -322,6 +605,7 @@ export class AudioComponent implements OnInit {
     private sourceAssetService: SourceAssetService,
   ) {
     this.activeAudioJob$ = this.searchService.activeAudioJob$;
+    this.destroyRef.onDestroy(() => this.flushPendingSaveState());
     const navigation = this.router.getCurrentNavigation?.();
     const remixState =
       navigation?.extras?.state?.['remixState'] ||
@@ -334,7 +618,7 @@ export class AudioComponent implements OnInit {
   ngOnInit() {
     this.restoreState();
     if (this.pendingRemixState?.referenceAudio) {
-      const {referenceAudio, lyriaModel, parentMediaItemId} =
+      const {referenceAudio, lyriaModel, parentMediaItemId, baselines} =
         this.pendingRemixState;
       this.pendingRemixState = undefined;
       if (typeof history !== 'undefined' && history.state?.remixState) {
@@ -344,23 +628,59 @@ export class AudioComponent implements OnInit {
       const resolvedParentId =
         parentMediaItemId ??
         (referenceAudio.type === 'media_item' ? referenceAudio.id : null);
-      this.applyAudioIteration(referenceAudio, lyriaModel, resolvedParentId);
+      this.applyAudioIteration(
+        referenceAudio,
+        lyriaModel,
+        resolvedParentId,
+        baselines ?? null,
+      );
     }
   }
 
   saveState() {
+    if (this.saveStateTimer !== null) {
+      clearTimeout(this.saveStateTimer);
+      this.saveStateTimer = null;
+    }
+    const inherited = this.getInheritedChipFlags(
+      Boolean(this.referenceAudioSignal()),
+    );
     this.audioStateService.updateState({
       model: this.selectedModel,
       lyriaModel: this.lyriaModel,
       ttsModel: this.ttsModel(),
       prompt: this.prompt,
       negativePrompt: this.negativePrompt,
+      bpm: inherited.bpm ? null : this.bpm(),
+      keySignature: inherited.key ? null : this.keySignature(),
+      timeSignature: inherited.meter ? null : this.timeSignature(),
+      vocalMode: inherited.vocals ? null : this.vocalMode(),
+      vocalStyle: inherited.vocals ? null : this.vocalStyle(),
+      lyrics: inherited.lyrics ? null : this.lyrics(),
       seed: this.seed,
       sampleCount: this.sampleCount,
       enhancePrompt: this.enhancePrompt,
       selectedLanguage: this.selectedLanguage(),
       selectedVoice: this.selectedVoice(),
     });
+  }
+
+  private scheduleSaveState(delayMs = 250): void {
+    if (this.saveStateTimer !== null) {
+      clearTimeout(this.saveStateTimer);
+    }
+    this.saveStateTimer = setTimeout(() => {
+      this.saveStateTimer = null;
+      this.saveState();
+    }, delayMs);
+  }
+
+  private flushPendingSaveState(): void {
+    if (this.saveStateTimer !== null) {
+      clearTimeout(this.saveStateTimer);
+      this.saveStateTimer = null;
+      this.saveState();
+    }
   }
 
   private restoreState() {
@@ -381,6 +701,15 @@ export class AudioComponent implements OnInit {
           .map(p => p.trim())
           .filter(Boolean)
       : [];
+    this.applyBpmValue(state.bpm ?? null, false);
+    this.applyKeyValue(state.keySignature ?? null, false);
+    this.applyTimeSignatureValue(state.timeSignature ?? null, false);
+    this.applyVocalValues(
+      state.vocalMode ?? null,
+      state.vocalStyle ?? null,
+      false,
+    );
+    this.applyLyricsValue(state.lyrics ?? null, false);
     this.seed = state.seed;
     this.sampleCount = state.sampleCount;
     this.enhancePrompt = Boolean(state.enhancePrompt);
@@ -402,6 +731,326 @@ export class AudioComponent implements OnInit {
 
   get lyriaModelHint(): string {
     return LYRIA_MODEL_HINTS[this.lyriaModel] ?? '';
+  }
+
+  setBpm(value: number | string | null): void {
+    const normalized = normalizeBpm(value);
+    this.applyBpmValue(normalized, true);
+  }
+
+  onBpmDraftInput(raw: string | number | null): void {
+    const str = raw === null || raw === undefined ? '' : String(raw);
+    this.bpmDraft.set(str);
+    const trimmed = str.trim();
+    if (!trimmed) {
+      this.bpm.set(this.baselineBpm());
+      this.saveState();
+      return;
+    }
+    const normalized = normalizeBpm(trimmed);
+    if (normalized !== null) {
+      this.bpm.set(normalized);
+      this.saveState();
+    }
+  }
+
+  commitBpmDraft(): void {
+    const trimmed = this.bpmDraft().trim();
+    if (!trimmed) {
+      this.applyBpmValue(this.baselineBpm(), true);
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      this.applyBpmValue(this.bpm(), false);
+      return;
+    }
+    const clamped = Math.min(
+      MAX_LYRIA_BPM,
+      Math.max(MIN_LYRIA_BPM, Math.round(parsed)),
+    );
+    this.applyBpmValue(clamped, true);
+  }
+
+  resetChip(chip: LyriaChipId): void {
+    switch (chip) {
+      case 'tempo':
+        this.resetTempo();
+        break;
+      case 'key':
+        this.resetKey();
+        break;
+      case 'meter':
+        this.resetTimeSignature();
+        break;
+      case 'vocals':
+        this.resetVocals();
+        break;
+      case 'lyrics':
+        this.resetLyrics();
+        break;
+    }
+  }
+
+  clearChip(chip: LyriaChipId): void {
+    switch (chip) {
+      case 'tempo':
+        this.clearTempo();
+        break;
+      case 'key':
+        this.clearKey();
+        break;
+      case 'meter':
+        this.clearTimeSignature();
+        break;
+      case 'vocals':
+        this.clearVocals();
+        break;
+      case 'lyrics':
+        this.clearLyrics();
+        break;
+    }
+  }
+
+  clearTempo(): void {
+    this.applyBpmValue(null, true);
+  }
+
+  resetTempo(): void {
+    this.applyBpmValue(this.baselineBpm(), true);
+  }
+
+  selectKeyRoot(root: string): void {
+    const mode = this.parsedKey()?.mode ?? this.preferredKeyMode();
+    const next = normalizeKeySignature(`${root} ${mode}`);
+    if (
+      next &&
+      areEquivalentKeySignatures(this.keySignature(), next) &&
+      this.baselineKey() === null
+    ) {
+      this.applyKeyValue(null, true);
+      return;
+    }
+    if (
+      next &&
+      this.baselineKey() !== null &&
+      areEquivalentKeySignatures(next, this.baselineKey())
+    ) {
+      this.applyKeyValue(this.baselineKey(), true);
+      return;
+    }
+    this.applyKeyValue(next, true);
+  }
+
+  selectKeyMode(mode: KeyScaleMode): void {
+    this.preferredKeyMode.set(mode);
+    const parsed = this.parsedKey();
+    if (parsed) {
+      const next = `${parsed.gridRoot} ${mode}`;
+      if (
+        this.baselineKey() !== null &&
+        areEquivalentKeySignatures(next, this.baselineKey())
+      ) {
+        this.applyKeyValue(this.baselineKey(), true);
+        return;
+      }
+      this.applyKeyValue(next, true);
+    }
+  }
+
+  clearKey(): void {
+    this.applyKeyValue(null, true);
+  }
+
+  resetKey(): void {
+    this.applyKeyValue(this.baselineKey(), true);
+  }
+
+  selectTimeSignature(meter: string): void {
+    const normalized = normalizeTimeSignature(meter);
+    if (
+      normalized &&
+      this.timeSignature() === normalized &&
+      this.baselineTimeSignature() === null
+    ) {
+      this.applyTimeSignatureValue(null, true);
+      return;
+    }
+    this.applyTimeSignatureValue(normalized, true);
+  }
+
+  clearTimeSignature(): void {
+    this.applyTimeSignatureValue(null, true);
+  }
+
+  resetTimeSignature(): void {
+    this.applyTimeSignatureValue(this.baselineTimeSignature(), true);
+  }
+
+  selectVocalMode(mode: LyriaVocalMode): void {
+    if (!this.lyriaSupportsVocals()) {
+      return;
+    }
+    if (this.vocalMode() === mode && this.baselineVocalMode() === null) {
+      this.applyVocalValues(null, null, true);
+      return;
+    }
+    if (mode === 'instrumental') {
+      this.applyVocalValues('instrumental', null, true);
+      return;
+    }
+    this.applyVocalValues('vocals', this.vocalStyle(), true);
+  }
+
+  selectVocalPreset(preset: string | null): void {
+    if (!this.lyriaSupportsVocals()) return;
+    const normalized = normalizeVocalStyle(preset);
+    if (
+      normalized !== null &&
+      this.vocalMode() === 'vocals' &&
+      this.vocalStyle() === normalized
+    ) {
+      this.applyVocalValues('vocals', null, true);
+      return;
+    }
+    this.applyVocalValues('vocals', normalized, true);
+  }
+
+  onCustomVocalStyleInput(raw: string | null): void {
+    if (!this.lyriaSupportsVocals()) return;
+    const str = raw ?? '';
+    this.vocalStyleDraft.set(str);
+    const normalized = normalizeVocalStyle(str);
+    if (normalized !== null) {
+      this.vocalMode.set('vocals');
+      this.vocalStyle.set(normalized);
+    } else if (this.vocalMode() === 'vocals') {
+      this.vocalStyle.set(null);
+    }
+    this.scheduleSaveState();
+  }
+
+  commitVocalStyleDraft(): void {
+    this.vocalStyleDraft.set(this.vocalStyle() ?? '');
+    this.flushPendingSaveState();
+  }
+
+  clearVocals(): void {
+    this.applyVocalValues(null, null, true);
+  }
+
+  resetVocals(): void {
+    this.applyVocalValues(
+      this.baselineVocalMode(),
+      this.baselineVocalStyle(),
+      true,
+    );
+  }
+
+  onLyricsInput(raw: string | null): void {
+    if (!this.lyriaSupportsVocals()) return;
+    const str = raw ?? '';
+    const clamped =
+      str.length > MAX_LYRIA_LYRICS_LENGTH
+        ? str.slice(0, MAX_LYRIA_LYRICS_LENGTH)
+        : str;
+    this.lyricsDraft.set(clamped);
+    const normalized = normalizeLyrics(clamped);
+    if (normalized !== null) {
+      if (this.vocalMode() === 'instrumental') {
+        this.applyVocalValues('vocals', this.vocalStyle(), false);
+      }
+      this.lyrics.set(normalized);
+    } else {
+      this.lyrics.set(this.baselineLyrics());
+    }
+    this.scheduleSaveState();
+  }
+
+  commitLyricsDraft(): void {
+    const trimmed = this.lyricsDraft().trim();
+    if (!trimmed) {
+      this.applyLyricsValue(this.baselineLyrics(), true);
+      return;
+    }
+    this.lyricsDraft.set(this.lyrics() ?? '');
+    this.flushPendingSaveState();
+  }
+
+  insertLyricsSectionTag(tag: string): void {
+    if (!this.lyriaSupportsVocals()) return;
+    if (this.vocalMode() === 'instrumental') {
+      this.applyVocalValues('vocals', this.vocalStyle(), false);
+    }
+    const existing = this.lyricsDraft().replace(/[ \t]+$/g, '');
+    const prefix =
+      existing.trim().length > 0 ? `${existing.trimEnd()}\n\n` : '';
+    const next = `${prefix}${tag}\n`;
+    if (next.length > MAX_LYRIA_LYRICS_LENGTH) {
+      return;
+    }
+    this.lyricsDraft.set(next);
+    this.lyrics.set(normalizeLyrics(next));
+    this.saveState();
+  }
+
+  clearLyrics(): void {
+    this.applyLyricsValue(null, true);
+  }
+
+  resetLyrics(): void {
+    this.applyLyricsValue(this.baselineLyrics(), true);
+  }
+
+  private applyBpmValue(value: number | null, persist: boolean): void {
+    this.bpm.set(value);
+    this.bpmDraft.set(value !== null ? String(value) : '');
+    if (persist) {
+      this.saveState();
+    }
+  }
+
+  private applyKeyValue(value: string | null, persist: boolean): void {
+    this.keySignature.set(value);
+    const parsed = parseStandardKeySignature(value);
+    if (parsed) {
+      this.preferredKeyMode.set(parsed.mode);
+    }
+    if (persist) {
+      this.saveState();
+    }
+  }
+
+  private applyTimeSignatureValue(
+    value: string | null,
+    persist: boolean,
+  ): void {
+    this.timeSignature.set(value);
+    if (persist) {
+      this.saveState();
+    }
+  }
+
+  private applyVocalValues(
+    mode: LyriaVocalMode | null,
+    style: string | null,
+    persist: boolean,
+  ): void {
+    const cleanStyle = mode === 'vocals' ? style : null;
+    this.vocalMode.set(mode);
+    this.vocalStyle.set(cleanStyle);
+    this.vocalStyleDraft.set(cleanStyle ?? '');
+    if (persist) {
+      this.saveState();
+    }
+  }
+
+  private applyLyricsValue(value: string | null, persist: boolean): void {
+    this.lyrics.set(value);
+    this.lyricsDraft.set(value ?? '');
+    if (persist) {
+      this.saveState();
+    }
   }
 
   addNegativePhrase(event: MatChipInputEvent): void {
@@ -628,6 +1277,7 @@ export class AudioComponent implements OnInit {
       const res = Array.isArray(result) ? result[0] : result;
       if (!res) return;
 
+      const previousHadRef = Boolean(this.referenceAudioSignal());
       if ('gcsUri' in res) {
         this.parentMediaItemId = null;
         this.referenceAudio = {
@@ -640,6 +1290,11 @@ export class AudioComponent implements OnInit {
             'Audio Reference',
           index: 0,
         };
+        this.applyIterationBaselines(null, {
+          persist: true,
+          preserveUserEdits: true,
+          previousHadRef,
+        });
       } else if (res.mediaItem?.id) {
         this.parentMediaItemId = null;
         const index = res.selectedIndex ?? 0;
@@ -653,6 +1308,14 @@ export class AudioComponent implements OnInit {
             'Audio Reference',
           index,
         };
+        this.applyIterationBaselines(
+          extractTrackChipBaselines(res.mediaItem, index),
+          {
+            persist: true,
+            preserveUserEdits: true,
+            previousHadRef,
+          },
+        );
       }
     });
   }
@@ -700,6 +1363,7 @@ export class AudioComponent implements OnInit {
       .subscribe({
         next: (asset: SourceAssetResponseDto) => {
           if (asset?.id && this.selectedModel === 'lyria') {
+            const previousHadRef = Boolean(this.referenceAudioSignal());
             this.parentMediaItemId = null;
             this.referenceAudio = {
               id: asset.id,
@@ -711,6 +1375,11 @@ export class AudioComponent implements OnInit {
                 'Audio Reference',
               index: 0,
             };
+            this.applyIterationBaselines(null, {
+              persist: true,
+              preserveUserEdits: true,
+              previousHadRef,
+            });
           }
         },
         error: err =>
@@ -720,8 +1389,41 @@ export class AudioComponent implements OnInit {
 
   clearReferenceAudio(event: Event): void {
     event.stopPropagation();
+    const inherited = this.getInheritedChipFlags(
+      Boolean(this.referenceAudioSignal()),
+    );
     this.referenceAudio = null;
     this.parentMediaItemId = null;
+    this.baselineBpm.set(null);
+    this.baselineKey.set(null);
+    this.baselineTimeSignature.set(null);
+    this.baselineVocalMode.set(null);
+    this.baselineVocalStyle.set(null);
+    this.baselineLyrics.set(null);
+    if (inherited.bpm) {
+      this.applyBpmValue(null, false);
+    }
+    if (inherited.key) {
+      this.applyKeyValue(null, false);
+    }
+    if (inherited.meter) {
+      this.applyTimeSignatureValue(null, false);
+    }
+    if (inherited.vocals) {
+      this.applyVocalValues(null, null, false);
+    }
+    if (inherited.lyrics) {
+      this.applyLyricsValue(null, false);
+    }
+    if (
+      inherited.bpm ||
+      inherited.key ||
+      inherited.meter ||
+      inherited.vocals ||
+      inherited.lyrics
+    ) {
+      this.saveState();
+    }
   }
 
   private normalizeDroppedAudioFile(file: File): File | null {
@@ -773,10 +1475,47 @@ export class AudioComponent implements OnInit {
       );
       return;
     }
-    if (!this.prompt.trim()) {
+
+    const isLyria = this.selectedModel === 'lyria';
+    const supportsVocals = this.lyriaSupportsVocals();
+    const supportsLyrics = this.lyriaSupportsLyrics();
+    const compiledPrompt = isLyria
+      ? buildLyriaChipsPromptPayload({
+          userPrompt: this.prompt,
+          current: {
+            bpm: this.bpm(),
+            keySignature: this.keySignature(),
+            timeSignature: this.timeSignature(),
+            vocalMode: supportsVocals ? this.vocalMode() : null,
+            vocalStyle: supportsVocals ? this.vocalStyle() : null,
+            lyrics: supportsLyrics ? this.lyrics() : null,
+          },
+          baseline: {
+            bpm: this.baselineBpm(),
+            keySignature: this.baselineKey(),
+            timeSignature: this.baselineTimeSignature(),
+            vocalMode: supportsVocals ? this.baselineVocalMode() : null,
+            vocalStyle: supportsVocals ? this.baselineVocalStyle() : null,
+            lyrics: supportsLyrics ? this.baselineLyrics() : null,
+          },
+          hasReferenceAudio: Boolean(this.referenceAudio),
+        })
+      : this.prompt;
+
+    if (!compiledPrompt.trim()) {
       handleInfoSnackbar(
         this.snackBar,
-        'Please enter a prompt to generate audio.',
+        isLyria && this.referenceAudio
+          ? 'Please describe a change or adjust a musical control to iterate.'
+          : 'Please enter a prompt to generate audio.',
+      );
+      return;
+    }
+
+    if (isLyria && compiledPrompt.length > MAX_LYRIA_PROMPT_LENGTH) {
+      handleInfoSnackbar(
+        this.snackBar,
+        `Combined prompt and lyrics exceed the ${MAX_LYRIA_PROMPT_LENGTH.toLocaleString()}-character limit (${compiledPrompt.length.toLocaleString()}). Please shorten your prompt or lyrics.`,
       );
       return;
     }
@@ -795,7 +1534,6 @@ export class AudioComponent implements OnInit {
       return;
     }
 
-    const isLyria = this.selectedModel === 'lyria';
     const backendModel = (
       isLyria
         ? this.lyriaModel
@@ -823,7 +1561,7 @@ export class AudioComponent implements OnInit {
 
     const request: CreateAudioDto = {
       model: backendModel,
-      prompt: this.prompt,
+      prompt: compiledPrompt,
       workspaceId,
       negativePrompt: isLyria ? this.negativePrompt : undefined,
       seed:
@@ -864,17 +1602,17 @@ export class AudioComponent implements OnInit {
   }
 
   rewritePrompt() {
-    const promptToSend = this.prompt.trim();
+    const rawPrompt = this.prompt.trim();
     if (
       this.selectedModel !== 'lyria' ||
-      !promptToSend ||
+      !rawPrompt ||
       this.isLoading ||
       this.isRewritingPrompt ||
       this.uploadingReferenceCount > 0
     ) {
       return;
     }
-    if (promptToSend.length < 2) {
+    if (rawPrompt.length < 2) {
       handleInfoSnackbar(
         this.snackBar,
         'Please enter at least 2 characters to rewrite.',
@@ -884,7 +1622,7 @@ export class AudioComponent implements OnInit {
 
     this.isRewritingPrompt = true;
     this.searchService
-      .rewritePrompt({targetType: 'audio', userPrompt: promptToSend})
+      .rewritePrompt({targetType: 'audio', userPrompt: rawPrompt})
       .pipe(
         finalize(() => (this.isRewritingPrompt = false)),
         takeUntilDestroyed(this.destroyRef),
@@ -912,14 +1650,16 @@ export class AudioComponent implements OnInit {
   }): void {
     if (!event.mediaItem?.id) return;
     const {referenceAudio, lyriaModel, parentMediaItemId} =
-      buildAudioIterationRemixState(
-        event.mediaItem as any,
-        event.selectedIndex,
-      );
+      buildAudioIterationRemixState(event.mediaItem, event.selectedIndex);
+    const baselines =
+      referenceAudio.type === 'media_item'
+        ? extractTrackChipBaselines(event.mediaItem, event.selectedIndex)
+        : null;
     this.applyAudioIteration(
       referenceAudio,
       lyriaModel,
       parentMediaItemId ?? null,
+      baselines,
     );
     handleInfoSnackbar(
       this.snackBar,
@@ -927,11 +1667,50 @@ export class AudioComponent implements OnInit {
     );
   }
 
+  private getInheritedChipFlags(hasReferenceAudio: boolean) {
+    return {
+      bpm:
+        resolveScalarChipState({
+          value: this.bpm(),
+          baseline: this.baselineBpm(),
+          hasReferenceAudio,
+        }) === 'inherited',
+      key:
+        resolveKeyChipState({
+          keySignature: this.keySignature(),
+          baselineKey: this.baselineKey(),
+          hasReferenceAudio,
+        }) === 'inherited',
+      meter:
+        resolveScalarChipState({
+          value: this.timeSignature(),
+          baseline: this.baselineTimeSignature(),
+          hasReferenceAudio,
+        }) === 'inherited',
+      vocals:
+        resolveVocalChipState({
+          vocalMode: this.vocalMode(),
+          vocalStyle: this.vocalStyle(),
+          baselineVocalMode: this.baselineVocalMode(),
+          baselineVocalStyle: this.baselineVocalStyle(),
+          hasReferenceAudio,
+        }) === 'inherited',
+      lyrics:
+        resolveScalarChipState({
+          value: this.lyrics(),
+          baseline: this.baselineLyrics(),
+          hasReferenceAudio,
+        }) === 'inherited',
+    };
+  }
+
   private applyAudioIteration(
     referenceAudio: AudioReferenceSelection,
     lyriaModel?: string,
     parentMediaItemId: number | null = null,
+    baselines?: Partial<LyriaChipValues> | null,
   ): void {
+    const previousHadRef = Boolean(this.referenceAudioSignal());
     this.selectedModel = 'lyria';
     if (lyriaModel && this.lyriaModels.some(m => m.value === lyriaModel)) {
       this.onLyriaModelChange(lyriaModel);
@@ -944,8 +1723,69 @@ export class AudioComponent implements OnInit {
     this.referenceImages = [];
     this.prompt = '';
     this.seed = undefined;
+    this.applyIterationBaselines(
+      referenceAudio.type === 'media_item' ? (baselines ?? null) : null,
+      {persist: false, preserveUserEdits: false, previousHadRef},
+    );
     this.saveState();
     this.focusPromptBox();
+  }
+
+  private applyIterationBaselines(
+    baselines: Partial<LyriaChipValues> | null,
+    options: {
+      persist: boolean;
+      preserveUserEdits: boolean;
+      previousHadRef: boolean;
+    },
+  ): void {
+    const {persist, preserveUserEdits, previousHadRef} = options;
+    const prevInherited = this.getInheritedChipFlags(previousHadRef);
+    const keepBpm =
+      preserveUserEdits && this.bpm() !== null && !prevInherited.bpm;
+    const keepKey =
+      preserveUserEdits && this.keySignature() !== null && !prevInherited.key;
+    const keepMeter =
+      preserveUserEdits &&
+      this.timeSignature() !== null &&
+      !prevInherited.meter;
+    const keepVocals =
+      preserveUserEdits && this.vocalMode() !== null && !prevInherited.vocals;
+    const keepLyrics =
+      preserveUserEdits && this.lyrics() !== null && !prevInherited.lyrics;
+
+    const next = baselines
+      ? normalizeLyriaChipValues(baselines)
+      : EMPTY_LYRIA_CHIP_VALUES;
+    this.baselineBpm.set(next.bpm);
+    this.baselineKey.set(next.keySignature);
+    this.baselineTimeSignature.set(next.timeSignature);
+    this.baselineVocalMode.set(next.vocalMode);
+    this.baselineVocalStyle.set(next.vocalStyle);
+    this.baselineLyrics.set(next.lyrics);
+
+    if (!keepBpm) {
+      this.applyBpmValue(next.bpm, false);
+    }
+    if (!keepKey) {
+      this.applyKeyValue(next.keySignature, false);
+    }
+    if (!keepMeter) {
+      this.applyTimeSignatureValue(next.timeSignature, false);
+    }
+    if (!keepVocals) {
+      if (keepLyrics && next.vocalMode === 'instrumental') {
+        this.applyVocalValues('vocals', null, false);
+      } else {
+        this.applyVocalValues(next.vocalMode, next.vocalStyle, false);
+      }
+    }
+    if (!keepLyrics) {
+      this.applyLyricsValue(next.lyrics, false);
+    }
+    if (persist) {
+      this.saveState();
+    }
   }
 
   private focusPromptBox(): void {

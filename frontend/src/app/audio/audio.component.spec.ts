@@ -16,7 +16,11 @@
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormsModule, ReactiveFormsModule} from '@angular/forms';
-import {MatDialog, MatDialogModule} from '@angular/material/dialog';
+import {
+  MatDialog,
+  MatDialogModule,
+  MatDialogRef,
+} from '@angular/material/dialog';
 import {MatSnackBar, MatSnackBarModule} from '@angular/material/snack-bar';
 import {MatButtonModule} from '@angular/material/button';
 import {MatChipInputEvent, MatChipsModule} from '@angular/material/chips';
@@ -49,8 +53,13 @@ import {
   DEFAULT_LYRIA_MODEL,
 } from '../services/audio-state.service';
 import {GalleryService} from '../gallery/gallery.service';
-import {SourceAssetService} from '../common/services/source-asset.service';
+import {
+  SourceAssetResponseDto,
+  SourceAssetService,
+} from '../common/services/source-asset.service';
 import {GenerationModelEnum} from '../services/audio/audio.service';
+import {NotificationService} from '../common/services/notification.service';
+import {useTestBedAppInjector} from '../testing/app-injector.testing';
 
 describe('AudioComponent', () => {
   let component: AudioComponent;
@@ -157,6 +166,7 @@ describe('AudioComponent', () => {
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
+    useTestBedAppInjector();
     fixture = TestBed.createComponent(AudioComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -252,7 +262,7 @@ describe('AudioComponent', () => {
     expect(
       fixture.debugElement.queryAll(By.css('.control-options button[mat-fab]'))
         .length,
-    ).toBe(1);
+    ).toBe(5);
 
     const chipEvent = (value: string) =>
       ({
@@ -965,5 +975,759 @@ describe('AudioComponent', () => {
       [{id: 505, type: 'media_item'}],
       11,
     );
+  });
+
+  it('should render Tempo FAB in Lyria mode, prepend BPM on generate/rewrite, clamp draft input on blur, and clear', () => {
+    const trigger = fixture.nativeElement.querySelector(
+      '[data-testid="tempo-chip-trigger"]',
+    ) as HTMLButtonElement | null;
+    const label = fixture.nativeElement.querySelector(
+      '[data-testid="tempo-chip-label"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    expect(label?.textContent?.trim()).toBe('Tempo');
+    expect(component.tempoChipState()).toBe('unset');
+
+    // Partial typing ('1', '11') keeps draft without resetting before '118'
+    component.onBpmDraftInput('1');
+    expect(component.bpm()).toBeNull();
+    expect(component.bpmDraft()).toBe('1');
+    component.onBpmDraftInput('118');
+    fixture.detectChanges();
+    expect(component.bpm()).toBe(118);
+    expect(component.tempoChipState()).toBe('edited');
+    expect(label?.textContent?.trim()).toBe('118 BPM');
+    expect(trigger?.classList.contains('!shadow-none')).toBeTrue();
+
+    // Out-of-range draft clamps on blur
+    component.onBpmDraftInput('15');
+    component.commitBpmDraft();
+    expect(component.bpm()).toBe(40);
+    component.setBpm(118);
+
+    // Rewrite sends raw prompt without baking chip headers into the text box (D3)
+    component.prompt = 'Driving synthwave';
+    component.rewritePrompt();
+    expect(searchServiceSpy.rewritePrompt).toHaveBeenCalledWith({
+      targetType: 'audio',
+      userPrompt: 'Driving synthwave',
+    });
+
+    // Changing BPM after rewrite produces a single tempo header on generate
+    component.setBpm(100);
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('100 BPM. Rewritten music prompt');
+
+    // Clear resets back to unset
+    component.clearTempo();
+    fixture.detectChanges();
+    expect(component.bpm()).toBeNull();
+    expect(component.tempoChipState()).toBe('unset');
+    expect(label?.textContent?.trim()).toBe('Tempo');
+  });
+
+  it('should pre-fill inherited BPM on gallery Iterate, allow chip-only generation on edit, reset, and clean up on detach', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 801,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        titles: ['Ocean Storm'],
+        audioAnalysis: {
+          tracks: [
+            {
+              musical_profile: {bpm: 89.7},
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+    fixture.detectChanges();
+
+    expect(component.baselineBpm()).toBe(90);
+    expect(component.bpm()).toBe(90);
+    expect(component.tempoChipState()).toBe('inherited');
+
+    // Untouched inherited BPM with empty prompt does not submit
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.generate();
+    expect(searchServiceSpy.startAudioGeneration).not.toHaveBeenCalled();
+
+    // Untouched inherited BPM with text prompt sends only user prompt
+    component.prompt = 'Add warm cello';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Add warm cello');
+
+    // Editing BPM enables chip-only generation with empty prompt box
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.prompt = '';
+    component.setBpm(112);
+    fixture.detectChanges();
+    expect(component.tempoChipState()).toBe('edited');
+    expect(component.hasEditedIterationChips()).toBeTrue();
+    component.generate();
+    expect(searchServiceSpy.startAudioGeneration).toHaveBeenCalledTimes(1);
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Change tempo from 90 BPM to 112 BPM.');
+
+    // Reset snaps back to inherited baseline (90 BPM), and detaching clears inherited BPM
+    component.resetTempo();
+    expect(component.tempoChipState()).toBe('inherited');
+    expect(component.bpm()).toBe(90);
+
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.bpm()).toBeNull();
+    expect(component.baselineBpm()).toBeNull();
+    expect(component.tempoChipState()).toBe('unset');
+  });
+
+  it('should use Match Ref state for uploaded source_asset audio and preserve user-edited BPM on detach', () => {
+    sourceAssetServiceSpy.uploadAsset.and.returnValue(
+      of({
+        id: 910,
+        gcsUri: 'gs://bucket/demo.mp3',
+        originalFilename: 'demo.mp3',
+      } as any),
+    );
+    component.onReferenceAudioDrop(
+      makeDropEvent(new File(['mp3'], 'demo.mp3', {type: 'audio/mpeg'})),
+    );
+    fixture.detectChanges();
+
+    expect(component.tempoChipState()).toBe('match_ref');
+    expect(component.tempoChipLabel()).toBe('Tempo: Match');
+
+    component.setBpm(128);
+    component.prompt = '';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Set tempo to 128 BPM.');
+
+    // Detaching when edited preserves user-chosen 128 BPM for fresh generation
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.bpm()).toBe(128);
+    expect(component.tempoChipState()).toBe('edited');
+  });
+
+  it('should select Key root/mode and Time Signature, toggle off in fresh mode, and prepend header on generate', () => {
+    const trigger = fixture.nativeElement.querySelector(
+      '[data-testid="key-meter-chip-trigger"]',
+    ) as HTMLButtonElement | null;
+    const label = fixture.nativeElement.querySelector(
+      '[data-testid="key-meter-chip-label"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    expect(label?.textContent?.trim()).toBe('Key & Meter');
+
+    component.selectKeyRoot('A');
+    expect(component.keySignature()).toBe('A Major');
+    component.selectKeyMode('Minor');
+    expect(component.keySignature()).toBe('A Minor');
+    component.selectTimeSignature('6/8');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('A Minor · 6/8');
+
+    component.setBpm(96);
+    component.prompt = 'Acoustic folk ballad';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('96 BPM, A Minor, 6/8 time signature. Acoustic folk ballad');
+
+    // Clicking the already-selected root and meter in fresh mode toggles them off
+    component.selectKeyRoot('A');
+    expect(component.keySignature()).toBeNull();
+    component.selectTimeSignature('6/8');
+    expect(component.timeSignature()).toBeNull();
+  });
+
+  it('should pre-fill modal/standard Key & Meter on Iterate, emit targeted deltas, reset, and clean up inherited values on detach', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 880,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        titles: ['Modal Groove'],
+        audioAnalysis: {
+          tracks: [
+            {
+              musical_profile: {
+                bpm: 100,
+                key_signature: 'D Dorian',
+                time_signature: '5/4',
+              },
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+    fixture.detectChanges();
+
+    expect(component.baselineKey()).toBe('D Dorian');
+    expect(component.customModalKey()).toBe('D Dorian');
+    expect(component.baselineTimeSignature()).toBe('5/4');
+    expect(component.keyMeterChipLabel()).toBe('D Dorian · 5/4');
+    expect(component.hasEditedIterationChips()).toBeFalse();
+
+    // Edit only Key while leaving BPM and 5/4 Meter inherited
+    component.selectKeyMode('Minor');
+    component.selectKeyRoot('F#');
+    expect(component.keySignature()).toBe('F# Minor');
+    expect(component.keyChipState()).toBe('edited');
+    expect(component.meterChipState()).toBe('inherited');
+    expect(component.hasEditedIterationChips()).toBeTrue();
+
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.prompt = '';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Change key from D Dorian to F# Minor.');
+
+    // Resetting Key returns to D Dorian; editing Meter then detaching keeps edited Meter while clearing inherited Key
+    component.resetKey();
+    expect(component.keySignature()).toBe('D Dorian');
+    expect(component.keyChipState()).toBe('inherited');
+
+    component.selectTimeSignature('4/4');
+    expect(component.meterChipState()).toBe('edited');
+
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.keySignature()).toBeNull();
+    expect(component.timeSignature()).toBe('4/4');
+  });
+
+  it('should steer Vocals in fresh mode, lock to Instrumental on Lyria 2 while preserving Lyria 3 selection, and support custom vocal styles', () => {
+    const trigger = fixture.nativeElement.querySelector(
+      '[data-testid="vocals-chip-trigger"]',
+    ) as HTMLButtonElement | null;
+    const label = fixture.nativeElement.querySelector(
+      '[data-testid="vocals-chip-label"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    expect(label?.textContent?.trim()).toBe('Vocals');
+
+    component.selectVocalMode('instrumental');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('Instrumental');
+    component.prompt = 'Lo-fi study hip hop';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Instrumental, no vocals. Lo-fi study hip hop');
+
+    // Toggle off instrumental in fresh mode, then choose a vocal preset
+    component.selectVocalMode('instrumental');
+    expect(component.vocalMode()).toBeNull();
+
+    component.selectVocalPreset('Female Alto');
+    fixture.detectChanges();
+    expect(component.vocalMode()).toBe('vocals');
+    expect(label?.textContent?.trim()).toBe('Female Alto');
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Lead vocals: Female Alto. Lo-fi study hip hop');
+
+    // Switching to Lyria 2 locks label to Instrumental and omits vocal header, while preserving Female Alto on return
+    component.onLyriaModelChange('lyria-002');
+    fixture.detectChanges();
+    expect(component.lyriaSupportsVocals()).toBeFalse();
+    expect(label?.textContent?.trim()).toBe('Instrumental');
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Lo-fi study hip hop');
+
+    component.onLyriaModelChange('lyria-3-pro-preview');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('Female Alto');
+
+    // Custom style input updates vocalStyle without eating spaces mid-draft
+    component.onCustomVocalStyleInput('Soulful rasp, Spanish ');
+    expect(component.vocalStyleDraft()).toBe('Soulful rasp, Spanish ');
+    expect(component.vocalStyle()).toBe('Soulful rasp, Spanish');
+    component.commitVocalStyleDraft();
+    expect(component.vocalStyleDraft()).toBe('Soulful rasp, Spanish');
+  });
+
+  it('should pre-fill Vocals on Iterate, emit targeted vocal deltas, reset, and clean up inherited vocals on detach', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 891,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        titles: ['Baritone Anthem'],
+        audioAnalysis: {
+          tracks: [
+            {
+              musical_profile: {
+                bpm: 110,
+                vocal_profile: 'Male Baritone',
+              },
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+    fixture.detectChanges();
+
+    expect(component.baselineVocalMode()).toBe('vocals');
+    expect(component.baselineVocalStyle()).toBe('Male Baritone');
+    expect(component.vocalChipState()).toBe('inherited');
+    expect(component.vocalChipLabel()).toBe('Male Baritone');
+    expect(component.hasEditedIterationChips()).toBeFalse();
+
+    // Flipping from Male Baritone to Instrumental enables chip-only generation
+    component.selectVocalMode('instrumental');
+    fixture.detectChanges();
+    expect(component.vocalChipState()).toBe('edited');
+    expect(component.hasEditedIterationChips()).toBeTrue();
+
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.prompt = '';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Convert to strictly instrumental with no vocals.');
+
+    // Reset restores Male Baritone; detaching clears inherited vocals
+    component.resetVocals();
+    expect(component.vocalChipState()).toBe('inherited');
+    expect(component.vocalStyle()).toBe('Male Baritone');
+
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.vocalMode()).toBeNull();
+    expect(component.vocalStyle()).toBeNull();
+    expect(component.baselineVocalMode()).toBeNull();
+  });
+
+  it('should edit Lyrics with section tags, keep rewritePrompt clean, lock on Lyria 2, and switch Vocals on when typing over Instrumental', () => {
+    const trigger = fixture.nativeElement.querySelector(
+      '[data-testid="lyrics-chip-trigger"]',
+    ) as HTMLButtonElement | null;
+    const label = fixture.nativeElement.querySelector(
+      '[data-testid="lyrics-chip-label"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    expect(label?.textContent?.trim()).toBe('Lyrics');
+    expect(component.lyricsChipState()).toBe('unset');
+
+    // Quick-insert section tag + custom lines
+    component.insertLyricsSectionTag('[Verse]');
+    component.onLyricsInput('[Verse]\nWalking under neon rain\n');
+    fixture.detectChanges();
+    expect(component.lyricsDraft()).toBe('[Verse]\nWalking under neon rain\n');
+    expect(component.lyrics()).toBe('[Verse]\nWalking under neon rain');
+    expect(component.lyricsLineCount()).toBe(2);
+    expect(label?.textContent?.trim()).toBe('Lyrics (2 lines)');
+    expect(component.lyricsChipState()).toBe('edited');
+
+    // Rewrite sends only the raw musical brief without injecting chips or lyrics (D3)
+    component.prompt = 'Dreamy synthpop';
+    component.rewritePrompt();
+    expect(searchServiceSpy.rewritePrompt).toHaveBeenCalledWith({
+      targetType: 'audio',
+      userPrompt: 'Dreamy synthpop',
+    });
+
+    // Generate appends a clean Lyrics: block onto the rewritten brief
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe(
+      'Rewritten music prompt\n\nLyrics:\n[Verse]\nWalking under neon rain',
+    );
+
+    // Switching to Lyria 2 locks label to Lyrics: Off and omits lyrics, preserving on return
+    component.onLyriaModelChange('lyria-002');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('Lyrics: Off');
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Rewritten music prompt');
+
+    component.onLyriaModelChange('lyria-3-pro-preview');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('Lyrics (2 lines)');
+
+    // Selecting Instrumental pauses Lyrics with accurate tooltip (D9); typing new lyrics switches Vocals back on
+    component.selectVocalMode('instrumental');
+    fixture.detectChanges();
+    expect(label?.textContent?.trim()).toBe('Lyrics: Off');
+    expect(component.lyricsChipTooltip()).toBe(
+      'Paused while Instrumental is selected (click to edit lyrics and switch Vocals on)',
+    );
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Instrumental, no vocals. Rewritten music prompt');
+
+    component.onLyricsInput('[Chorus]\nHold the midnight sky');
+    fixture.detectChanges();
+    expect(component.vocalMode()).toBe('vocals');
+    expect(label?.textContent?.trim()).toBe('Lyrics (2 lines)');
+
+    // Clear resets back to unset
+    component.clearLyrics();
+    fixture.detectChanges();
+    expect(component.lyrics()).toBeNull();
+    expect(label?.textContent?.trim()).toBe('Lyrics');
+  });
+
+  it('should inherit Lyrics on Iterate, emit targeted lyrics delta, suppress on Instrumental, reset, and clean up on detach', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 895,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        titles: ['Neon Echoes'],
+        audioAnalysis: {
+          tracks: [
+            {
+              lyrics: '[Verse 1]\nOld city lights\n\n[Chorus]\nFade away',
+              musical_profile: {
+                bpm: 112,
+                vocal_profile: 'Female Soprano',
+              },
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+    fixture.detectChanges();
+
+    expect(component.baselineLyrics()).toBe(
+      '[Verse 1]\nOld city lights\n\n[Chorus]\nFade away',
+    );
+    expect(component.lyrics()).toBe(component.baselineLyrics());
+    expect(component.lyricsChipState()).toBe('inherited');
+    expect(component.lyricsChipLabel()).toBe('Lyrics (4 lines)');
+    expect(component.hasEditedIterationChips()).toBeFalse();
+
+    // Untouched inherited lyrics with empty prompt does not submit
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.generate();
+    expect(searchServiceSpy.startAudioGeneration).not.toHaveBeenCalled();
+
+    // Editing lyrics enables chip-only iteration with Replace delta
+    component.onLyricsInput(
+      '[Verse 1]\nBright sunrise\n\n[Chorus]\nStay alive',
+    );
+    fixture.detectChanges();
+    expect(component.lyricsChipState()).toBe('edited');
+    expect(component.hasEditedIterationChips()).toBeTrue();
+
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe(
+      'Replace the sung lyrics with:\nLyrics:\n[Verse 1]\nBright sunrise\n\n[Chorus]\nStay alive',
+    );
+
+    // Flipping to Instrumental suppresses the edited lyrics delta
+    component.selectVocalMode('instrumental');
+    fixture.detectChanges();
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Convert to strictly instrumental with no vocals.');
+
+    // Resetting restores inherited lyrics; detaching clears inherited lyrics
+    component.resetVocals();
+    component.resetLyrics();
+    expect(component.lyricsChipState()).toBe('inherited');
+    expect(component.lyrics()).toBe(component.baselineLyrics());
+
+    component.clearReferenceAudio({
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+    } as unknown as Event);
+    expect(component.lyrics()).toBeNull();
+    expect(component.baselineLyrics()).toBeNull();
+    expect(component.lyricsChipState()).toBe('unset');
+  });
+
+  it('should not persist inherited reference baselines into AudioStateService on iterate or reload (D1)', () => {
+    const audioStateSvc = TestBed.inject(AudioStateService);
+    const updateSpy = audioStateSvc.updateState as jasmine.Spy;
+    updateSpy.calls.reset();
+
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 901,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        audioAnalysis: {
+          tracks: [
+            {
+              lyrics: '[Verse]\nInherited track lyrics',
+              musical_profile: {
+                bpm: 118,
+                key_signature: 'A Minor',
+                time_signature: '6/8',
+                vocal_profile: 'Female Alto',
+              },
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+
+    // All 5 chips are inherited -> persisted values must be null so a reload never leaks them
+    expect(updateSpy).toHaveBeenCalled();
+    const persisted = updateSpy.calls.mostRecent().args[0];
+    expect(persisted.bpm).toBeNull();
+    expect(persisted.keySignature).toBeNull();
+    expect(persisted.timeSignature).toBeNull();
+    expect(persisted.vocalMode).toBeNull();
+    expect(persisted.vocalStyle).toBeNull();
+    expect(persisted.lyrics).toBeNull();
+
+    // Editing BPM persists ONLY the user's edited BPM while keeping untouched inherited chips null
+    updateSpy.calls.reset();
+    component.setBpm(132);
+    const afterEdit = updateSpy.calls.mostRecent().args[0];
+    expect(afterEdit.bpm).toBe(132);
+    expect(afterEdit.keySignature).toBeNull();
+    expect(afterEdit.timeSignature).toBeNull();
+    expect(afterEdit.vocalMode).toBeNull();
+    expect(afterEdit.lyrics).toBeNull();
+  });
+
+  it('should preserve user-typed lyrics and custom chips when attaching or dropping reference audio while swapping inherited baselines (D2)', () => {
+    // User configures custom BPM and lyrics in fresh mode, then drops a source_asset audio file
+    component.setBpm(128);
+    component.onLyricsInput('[Verse]\nMy original lyrics');
+    component.commitLyricsDraft();
+
+    sourceAssetServiceSpy.uploadAsset.and.returnValue(
+      of({
+        id: 920,
+        gcsUri: 'gs://bucket/riff.wav',
+        originalFilename: 'riff.wav',
+      } as unknown as SourceAssetResponseDto),
+    );
+    component.onReferenceAudioDrop(
+      makeDropEvent(new File(['wav'], 'riff.wav', {type: 'audio/wav'})),
+    );
+
+    expect(component.referenceAudio?.id).toBe(920);
+    expect(component.bpm()).toBe(128);
+    expect(component.lyrics()).toBe('[Verse]\nMy original lyrics');
+
+    // Picking an instrumental media_item preserves custom BPM + lyrics, adopts untouched Key, and keeps Vocals active
+    dialogSpy.open.and.returnValue({
+      afterClosed: () =>
+        of({
+          mediaItem: makeAudioJob({
+            id: 921,
+            titles: ['Instrumental Backing'],
+            audioAnalysis: {
+              tracks: [
+                {
+                  musical_profile: {
+                    bpm: 100,
+                    key_signature: 'D Minor',
+                    vocal_profile: 'Instrumental',
+                  },
+                },
+              ],
+            },
+          }),
+          selectedIndex: 0,
+        }),
+    } as unknown as MatDialogRef<unknown>);
+    component.openAudioSelectorForReference();
+
+    expect(component.baselineBpm()).toBe(100);
+    expect(component.bpm()).toBe(128);
+    expect(component.tempoChipState()).toBe('edited');
+    expect(component.keySignature()).toBe('D Minor');
+    expect(component.keyChipState()).toBe('inherited');
+    expect(component.lyrics()).toBe('[Verse]\nMy original lyrics');
+    expect(component.vocalMode()).toBe('vocals');
+
+    // Swapping to another media_item replaces previously inherited Key ('D Minor' -> 'F# Minor') while keeping user's BPM
+    dialogSpy.open.and.returnValue({
+      afterClosed: () =>
+        of({
+          mediaItem: makeAudioJob({
+            id: 922,
+            titles: ['Second Reference'],
+            audioAnalysis: {
+              tracks: [
+                {
+                  musical_profile: {
+                    bpm: 95,
+                    key_signature: 'F# Minor',
+                  },
+                },
+              ],
+            },
+          }),
+          selectedIndex: 0,
+        }),
+    } as unknown as MatDialogRef<unknown>);
+    component.openAudioSelectorForReference();
+
+    expect(component.bpm()).toBe(128);
+    expect(component.keySignature()).toBe('F# Minor');
+    expect(component.keyChipState()).toBe('inherited');
+  });
+
+  it('should preserve enharmonic baseline spelling when re-clicking the highlighted grid root or mode (D5)', () => {
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 930,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        audioAnalysis: {
+          tracks: [{musical_profile: {key_signature: 'Db Major'}}],
+        },
+      }),
+      selectedIndex: 0,
+    });
+
+    expect(component.baselineKey()).toBe('Db Major');
+    expect(component.parsedKey()).toEqual({gridRoot: 'C#', mode: 'Major'});
+    expect(component.keyChipState()).toBe('inherited');
+
+    // Clicking the highlighted C# root or Major mode keeps 'Db Major' inherited with zero delta
+    component.selectKeyRoot('C#');
+    expect(component.keySignature()).toBe('Db Major');
+    expect(component.keyChipState()).toBe('inherited');
+
+    component.selectKeyMode('Major');
+    expect(component.keySignature()).toBe('Db Major');
+    expect(component.keyChipState()).toBe('inherited');
+
+    searchServiceSpy.startAudioGeneration.calls.reset();
+    component.prompt = 'Add warm pads';
+    component.generate();
+    expect(
+      searchServiceSpy.startAudioGeneration.calls.mostRecent().args[0].prompt,
+    ).toBe('Add warm pads');
+  });
+
+  it('should block Lyria generate() with an info snackbar when combined prompt and lyrics exceed 10,000 characters (D6)', () => {
+    const notifySpy = spyOn(TestBed.inject(NotificationService), 'show');
+    searchServiceSpy.startAudioGeneration.calls.reset();
+
+    component.prompt = 'a'.repeat(7000);
+    component.onLyricsInput('b'.repeat(3500));
+    component.commitLyricsDraft();
+    component.generate();
+
+    expect(searchServiceSpy.startAudioGeneration).not.toHaveBeenCalled();
+    expect(notifySpy).toHaveBeenCalledWith(
+      jasmine.stringMatching(/10,000/),
+      'info',
+      undefined,
+      'info',
+      5000,
+    );
+  });
+
+  it('should ignore selectVocalMode(instrumental) on Lyria 2 so hidden vocalMode cannot be toggled (D7)', () => {
+    component.selectVocalMode('instrumental');
+    expect(component.vocalMode()).toBe('instrumental');
+
+    component.onLyriaModelChange(GenerationModelEnum.LYRIA_002);
+    component.selectVocalMode('instrumental');
+    expect(component.vocalMode()).toBe('instrumental');
+
+    component.onLyriaModelChange(GenerationModelEnum.LYRIA_3_PRO_PREVIEW);
+    expect(component.vocalMode()).toBe('instrumental');
+  });
+
+  it('should debounce localStorage persistence while typing lyrics and flush on commitLyricsDraft', () => {
+    const audioStateSvc = TestBed.inject(AudioStateService);
+    const updateSpy = audioStateSvc.updateState as jasmine.Spy;
+    updateSpy.calls.reset();
+
+    component.onLyricsInput('[Verse]\nLine 1');
+    component.onLyricsInput('[Verse]\nLine 1\nLine 2');
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    component.commitLyricsDraft();
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy.calls.mostRecent().args[0].lyrics).toBe(
+      '[Verse]\nLine 1\nLine 2',
+    );
+  });
+
+  it('should dispatch resetChip and clearChip across all five Lyria chips (E1)', () => {
+    component.setBpm(120);
+    component.selectKeyRoot('A');
+    component.selectTimeSignature('6/8');
+    component.selectVocalPreset('Female Alto');
+    component.onLyricsInput('[Verse]\nHello');
+    component.commitLyricsDraft();
+
+    component.clearChip('tempo');
+    component.clearChip('key');
+    component.clearChip('meter');
+    component.clearChip('vocals');
+    component.clearChip('lyrics');
+
+    expect(component.bpm()).toBeNull();
+    expect(component.keySignature()).toBeNull();
+    expect(component.timeSignature()).toBeNull();
+    expect(component.vocalMode()).toBeNull();
+    expect(component.lyrics()).toBeNull();
+
+    component.handleIterateAudio({
+      mediaItem: makeAudioJob({
+        id: 940,
+        model: GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        audioAnalysis: {
+          tracks: [
+            {
+              lyrics: '[Verse]\nBase',
+              musical_profile: {
+                bpm: 100,
+                key_signature: 'C Major',
+                time_signature: '4/4',
+                vocal_profile: 'Male Tenor',
+              },
+            },
+          ],
+        },
+      }),
+      selectedIndex: 0,
+    });
+
+    component.setBpm(130);
+    component.selectKeyRoot('G');
+    component.selectTimeSignature('3/4');
+    component.selectVocalMode('instrumental');
+    component.onLyricsInput('[Verse]\nChanged');
+    component.commitLyricsDraft();
+
+    component.resetChip('tempo');
+    component.resetChip('key');
+    component.resetChip('meter');
+    component.resetChip('vocals');
+    component.resetChip('lyrics');
+
+    expect(component.bpm()).toBe(100);
+    expect(component.keySignature()).toBe('C Major');
+    expect(component.timeSignature()).toBe('4/4');
+    expect(component.vocalStyle()).toBe('Male Tenor');
+    expect(component.lyrics()).toBe('[Verse]\nBase');
   });
 });

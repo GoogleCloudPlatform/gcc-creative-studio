@@ -154,4 +154,76 @@ describe('AudioStateService', () => {
     );
     expect(service.getState().model).toBe('lyria');
   });
+
+  it('should persist valid bpm values and normalize invalid persisted bpm values to null', () => {
+    expect(service.getState().bpm).toBeNull();
+
+    service.updateState({bpm: 118});
+    expect(service.getState().bpm).toBe(118);
+
+    localStorage.setItem('audio_generation_state', JSON.stringify({bpm: 84.6}));
+    expect(service.getState().bpm).toBe(85);
+
+    localStorage.setItem('audio_generation_state', JSON.stringify({bpm: 9999}));
+    expect(service.getState().bpm).toBeNull();
+  });
+
+  it('should persist valid keySignature and timeSignature values and normalize invalid ones to null', () => {
+    expect(service.getState().keySignature).toBeNull();
+    expect(service.getState().timeSignature).toBeNull();
+
+    service.updateState({keySignature: 'bb minor', timeSignature: '6/8'});
+    expect(service.getState().keySignature).toBe('Bb Minor');
+    expect(service.getState().timeSignature).toBe('6/8');
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({keySignature: 'Unknown', timeSignature: 'invalid'}),
+    );
+    expect(service.getState().keySignature).toBeNull();
+    expect(service.getState().timeSignature).toBeNull();
+  });
+
+  it('should persist valid vocalMode and vocalStyle values and clear invalid or instrumental vocalStyle', () => {
+    expect(service.getState().vocalMode).toBeNull();
+    expect(service.getState().vocalStyle).toBeNull();
+
+    service.updateState({
+      vocalMode: 'vocals',
+      vocalStyle: '  Female   Alto  ',
+    });
+    expect(service.getState().vocalMode).toBe('vocals');
+    expect(service.getState().vocalStyle).toBe('Female Alto');
+
+    service.updateState({
+      vocalMode: 'instrumental',
+      vocalStyle: 'Female Alto',
+    });
+    expect(service.getState().vocalMode).toBe('instrumental');
+    expect(service.getState().vocalStyle).toBeNull();
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({vocalMode: 'auto', vocalStyle: 'Instrumental'}),
+    );
+    expect(service.getState().vocalMode).toBeNull();
+    expect(service.getState().vocalStyle).toBeNull();
+  });
+
+  it('should persist valid lyrics and normalize line endings or blank strings to null', () => {
+    expect(service.getState().lyrics).toBeNull();
+
+    service.updateState({
+      lyrics: '  [Verse 1]  \r\nNeon rain\r\n\r\n\r\n[Chorus]\r\nHold on  ',
+    });
+    expect(service.getState().lyrics).toBe(
+      '[Verse 1]\nNeon rain\n\n[Chorus]\nHold on',
+    );
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({lyrics: '   \n\t  '}),
+    );
+    expect(service.getState().lyrics).toBeNull();
+  });
 });
