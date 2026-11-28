@@ -52,6 +52,10 @@
   background: linear-gradient(to right, #3b82f6, #8b5cf6, #f87171);
 }
 
+::ng-deep .audio-chip-menu.mat-mdc-menu-panel {
+  max-width: none !important;
+}
+
 .model-hint {
   display: inline-flex;
   align-items: center;

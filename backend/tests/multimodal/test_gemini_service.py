@@ -1534,6 +1534,7 @@ async def test_enhance_prompt_from_audio_dto_variants(
         "unless the user explicitly asks for vocals"
         not in REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE
     )
+    assert "exact BPM tempo" in REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE
     assert "Lyrics:" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
     assert "Female Alto" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
 

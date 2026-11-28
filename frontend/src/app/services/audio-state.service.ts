@@ -16,6 +16,10 @@
 
 import {Injectable} from '@angular/core';
 import {MODEL_CONFIGS} from '../common/config/model-config';
+import {
+  LyriaVocalMode,
+  normalizeLyriaChipValues,
+} from '../audio/audio-chips.util';
 
 export interface AudioState {
   model: string;
@@ -26,6 +30,12 @@ export interface AudioState {
   prompt: string;
   negativePrompt: string;
   enhancePrompt?: boolean;
+  bpm?: number | null;
+  keySignature?: string | null;
+  timeSignature?: string | null;
+  vocalMode?: LyriaVocalMode | null;
+  vocalStyle?: string | null;
+  lyrics?: string | null;
   seed?: number;
   sampleCount: number;
   selectedLanguage: string;
@@ -48,6 +58,12 @@ export class AudioStateService {
     prompt: '',
     negativePrompt: '',
     enhancePrompt: false,
+    bpm: null,
+    keySignature: null,
+    timeSignature: null,
+    vocalMode: null,
+    vocalStyle: null,
+    lyrics: null,
     seed: undefined,
     sampleCount: 1,
     selectedLanguage: 'en-US',
@@ -110,6 +126,8 @@ export class AudioStateService {
         parsedState.ttsModel = isValidTtsModel
           ? loadedTtsModel
           : this.defaultState.ttsModel;
+
+        Object.assign(parsedState, normalizeLyriaChipValues(parsedState));
 
         return {...this.defaultState, ...parsedState};
       } catch (e) {
